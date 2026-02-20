@@ -82,7 +82,7 @@ def create_app(bot: Bot, dp: Dispatcher) -> web.Application:
 
 
 async def main():
-    bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
 
     # Регистрируем роутеры
