@@ -8,8 +8,8 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from dotenv import load_dotenv
 
 import start, transactions, payments, budget
-from scheduler.jobs import setup_scheduler
-from services.google_calendar import exchange_code
+from jobs import setup_scheduler
+from google_calendar import exchange_code
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
