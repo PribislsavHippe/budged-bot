@@ -65,6 +65,8 @@ def create_app(bot: Bot, dp: Dispatcher) -> web.Application:
     app = web.Application()
     app["bot"] = bot
 
+        app.router.add_get("/", health_check) 
+
     # Webhook handler
     webhook_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
     webhook_handler.register(app, path=WEBHOOK_PATH)
