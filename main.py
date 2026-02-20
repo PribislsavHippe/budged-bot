@@ -8,7 +8,7 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from aiogram.client.default import DefaultBotProperties
 from dotenv import load_dotenv
 
-import start, transactions, payments, budget
+import start, transactions, payments, budget, ai_handler
 from jobs import setup_scheduler
 from google_calendar import exchange_code
 
@@ -93,6 +93,7 @@ async def main():
     dp.include_router(transactions.router)
     dp.include_router(payments.router)
     dp.include_router(budget.router)
+    dp.include_router(ai_handler.router)
 
     # Запускаем планировщик
     scheduler = setup_scheduler(bot)

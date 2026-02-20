@@ -8,6 +8,7 @@ from db import (
     get_transactions, get_stats, get_budgets
 )
 from google_calendar import create_income_reminder
+from ai_service import generate_weekly_ai_report
 
 # Мотивационные сообщения
 MOTIVATION_MESSAGES = [
@@ -176,7 +177,7 @@ async def check_budget_alerts(bot):
 
 
 async def send_weekly_report(bot):
-    """Еженедельный отчёт (по воскресеньям)"""
+    """Еженедельный отчёт (по воскресеньям) с AI-анализом"""
     users = await get_all_active_users()
 
     for user in users:
@@ -188,17 +189,25 @@ async def send_weekly_report(bot):
 
         balance_emoji = "🟢" if stats["balance"] >= 0 else "🔴"
 
+        # Пробуем получить AI-анализ
+        ai_insight = await generate_weekly_ai_report(stats)
+
+        base_text = (
+            f"📊 <b>Итоги недели</b>\n\n"
+            f"💰 Доходы: {stats['income']:,.2f} ₽\n"
+            f"💸 Расходы: {stats['expenses']:,.2f} ₽\n"
+            f"{balance_emoji} Баланс: {stats['balance']:,.2f} ₽\n"
+            f"Записей за неделю: {stats['transactions_count']}"
+        )
+
+        if ai_insight:
+            full_text = base_text + f"\n\n🧠 <b>AI-анализ:</b>\n{ai_insight}"
+        else:
+            verdict = "💪 Отличная финансовая дисциплина!" if stats["balance"] >= 0 else "⚠️ В этот раз расходы превысили доходы. В следующую неделю будет лучше!"
+            full_text = base_text + f"\n\n{verdict}"
+
         try:
-            await bot.send_message(
-                user_id,
-                f"📊 <b>Итоги недели</b>\n\n"
-                f"💰 Доходы: {stats['income']:,.2f} ₽\n"
-                f"💸 Расходы: {stats['expenses']:,.2f} ₽\n"
-                f"{balance_emoji} Баланс: {stats['balance']:,.2f} ₽\n\n"
-                f"Записей за неделю: {stats['transactions_count']}\n\n"
-                f"{'💪 Отличная финансовая дисциплина!' if stats['balance'] >= 0 else '⚠️ В этот раз расходы превысили доходы. В следующую неделю будет лучше!'}",
-                parse_mode="HTML"
-            )
+            await bot.send_message(user_id, full_text, parse_mode="HTML")
         except Exception:
             pass
 
