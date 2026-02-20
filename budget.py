@@ -4,8 +4,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-from database.db import set_budget, get_budgets, get_stats
-from utils.keyboards import main_menu, EXPENSE_CATEGORIES
+from db import set_budget, get_budgets, get_stats
+from keyboards import main_menu, EXPENSE_CATEGORIES
 
 router = Router()
 

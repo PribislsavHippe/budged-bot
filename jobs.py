@@ -3,11 +3,11 @@ from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime
 import pytz
 
-from database.db import (
+from db import (
     get_all_active_users, get_payments_due_soon,
     get_transactions, get_stats, get_budgets
 )
-from services.google_calendar import create_income_reminder
+from google_calendar import create_income_reminder
 
 # Мотивационные сообщения
 MOTIVATION_MESSAGES = [

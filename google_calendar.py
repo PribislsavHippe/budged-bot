@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
-from database.db import get_google_token, save_google_token
+from db import get_google_token, save_google_token
 
 SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
 

@@ -3,9 +3,9 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from database.db import add_scheduled_payment, get_scheduled_payments, delete_scheduled_payment, add_transaction
-from utils.keyboards import main_menu, payments_menu_kb, payment_actions_kb
-from services.google_calendar import create_payment_event
+from db import add_scheduled_payment, get_scheduled_payments, delete_scheduled_payment, add_transaction
+from keyboards import main_menu, payments_menu_kb, payment_actions_kb
+from google_calendar import create_payment_event
 from datetime import datetime
 
 router = Router()

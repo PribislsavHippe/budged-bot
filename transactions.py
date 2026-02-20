@@ -3,8 +3,8 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from database.db import add_transaction, get_stats
-from utils.keyboards import main_menu, expense_categories_kb, income_categories_kb, stats_period_kb
+from db import add_transaction, get_stats
+from keyboards import main_menu, expense_categories_kb, income_categories_kb, stats_period_kb
 
 router = Router()
 
