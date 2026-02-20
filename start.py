@@ -6,7 +6,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 from db import get_or_create_user, get_user, update_user, get_google_token
 from keyboards import main_menu, settings_kb
-from services.google_calendar import get_auth_url
+from google_calendar import get_auth_url
 
 router = Router()
 
