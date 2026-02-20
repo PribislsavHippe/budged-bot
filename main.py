@@ -61,6 +61,8 @@ async def google_oauth_callback(request: web.Request) -> web.Response:
         logging.error(f"Google OAuth error: {e}")
         return web.Response(text="Ошибка при подключении Google Calendar", status=500)
 
+async def health_check(request):
+    return web.Response(text="Bot is running OK!", status=200)
 
 def create_app(bot: Bot, dp: Dispatcher) -> web.Application:
     app = web.Application()
