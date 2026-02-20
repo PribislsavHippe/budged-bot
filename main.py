@@ -7,7 +7,7 @@ from aiogram.enums import ParseMode
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from dotenv import load_dotenv
 
-from handlers import start, transactions, payments, budget
+import start, transactions, payments, budget
 from scheduler.jobs import setup_scheduler
 from services.google_calendar import exchange_code
 
