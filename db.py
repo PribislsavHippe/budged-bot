@@ -51,12 +51,16 @@ async def add_transaction(user_id: int, type_: str, amount: float, category: str
 
 async def get_transactions(user_id: int, period: str = "month"):
     """period: 'week', 'month', 'all'"""
+    from datetime import datetime, timedelta, timezone
     query = supabase.table("transactions").select("*").eq("user_id", user_id)
 
+    now = datetime.now(timezone.utc)
     if period == "week":
-        query = query.gte("created_at", "now() - interval '7 days'")
+        since = (now - timedelta(days=7)).isoformat()
+        query = query.gte("created_at", since)
     elif period == "month":
-        query = query.gte("created_at", "now() - interval '30 days'")
+        since = (now - timedelta(days=30)).isoformat()
+        query = query.gte("created_at", since)
 
     res = query.order("created_at", desc=True).execute()
     return res.data
