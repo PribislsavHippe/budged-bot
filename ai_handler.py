@@ -1,3 +1,4 @@
+import logging
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -16,22 +17,24 @@ class AIState(StatesGroup):
     confirming_transaction = State()
 
 
-# ─── AI СОВЕТНИК (кнопка в меню) ─────────────────────────────────────────────
+# ─── AI СОВЕТНИК ─────────────────────────────────────────────────────────────
 
 @router.message(F.text == "🤖 AI Советник")
 async def ai_advisor(message: Message):
     await message.answer("🤖 Анализирую твои финансы...")
+    try:
+        stats = await get_stats(message.from_user.id, "month")
+        advice = await get_ai_advice(stats, message.from_user.first_name or "друг")
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💬 Задать вопрос AI", callback_data="ai:chat")],
+        ])
+        await message.answer(f"🧠 <b>Персональный анализ:</b>\n\n{advice}", parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logging.error(f"ai_advisor error: {e}")
+        await message.answer(f"❌ Ошибка AI: {str(e)}")
 
-    stats = await get_stats(message.from_user.id, "month")
-    advice = await get_ai_advice(stats, message.from_user.first_name or "друг")
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💬 Задать вопрос AI", callback_data="ai:chat")],
-    ])
-    await message.answer(f"🧠 <b>Персональный анализ:</b>\n\n{advice}", parse_mode="HTML", reply_markup=kb)
-
-
-# ─── ОТКРЫТЬ СВОБОДНЫЙ ЧАТ ───────────────────────────────────────────────────
+# ─── СВОБОДНЫЙ ЧАТ ───────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "ai:chat")
 async def start_ai_chat(callback: CallbackQuery, state: FSMContext):
@@ -42,7 +45,7 @@ async def start_ai_chat(callback: CallbackQuery, state: FSMContext):
         "— «Хватит ли мне до зарплаты?»\n"
         "— «На что я трачу больше всего?»\n"
         "— «Как сэкономить на еде?»\n\n"
-        "Для выхода нажми /stop",
+        "Для выхода напиши /stop",
         parse_mode="HTML"
     )
     await callback.answer()
@@ -56,15 +59,17 @@ async def handle_ai_chat(message: Message, state: FSMContext):
         return
 
     await message.answer("🤔 Думаю...")
-    stats = await get_stats(message.from_user.id, "month")
-    payments = await get_scheduled_payments(message.from_user.id)
-    response = await chat_with_ai(message.text, stats, payments)
-    await message.answer(response)
+    try:
+        stats = await get_stats(message.from_user.id, "month")
+        payments = await get_scheduled_payments(message.from_user.id)
+        response = await chat_with_ai(message.text, stats, payments)
+        await message.answer(response)
+    except Exception as e:
+        logging.error(f"handle_ai_chat error: {e}")
+        await message.answer(f"❌ Ошибка AI: {str(e)}")
 
 
 # ─── УМНЫЙ ВВОД ──────────────────────────────────────────────────────────────
-# Ловит любое текстовое сообщение, которое не совпало с кнопками меню,
-# и пробует распознать его как транзакцию
 
 MENU_TEXTS = {
     "💸 Добавить расход", "💰 Добавить доход",
@@ -75,20 +80,20 @@ MENU_TEXTS = {
 
 @router.message(F.text)
 async def smart_input(message: Message, state: FSMContext):
-    # Пропускаем кнопки меню и команды
     if message.text in MENU_TEXTS or message.text.startswith("/"):
         return
 
-    # Не перехватываем если уже в каком-то состоянии
     current_state = await state.get_state()
     if current_state is not None:
         return
 
-    # Пробуем распознать транзакцию
-    result = await parse_transaction(message.text)
+    try:
+        result = await parse_transaction(message.text)
+    except Exception as e:
+        logging.error(f"smart_input parse error: {e}")
+        result = None
 
     if not result:
-        # Не похоже на транзакцию — предлагаем AI чат
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🤖 Спросить AI", callback_data="ai:chat")],
         ])
@@ -104,13 +109,11 @@ async def smart_input(message: Message, state: FSMContext):
         )
         return
 
-    # Распознали транзакцию — показываем на подтверждение
     t_type = "💸 Расход" if result["type"] == "expense" else "💰 Доход"
     amount = result.get("amount", 0)
     category = result.get("category", "🛒 Прочее")
     description = result.get("description", "")
 
-    # Сохраняем в state для подтверждения
     await state.update_data(
         ai_type=result["type"],
         ai_amount=amount,
@@ -141,22 +144,24 @@ async def smart_input(message: Message, state: FSMContext):
 @router.callback_query(F.data == "ai_tx:confirm")
 async def confirm_ai_transaction(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-
-    await add_transaction(
-        user_id=callback.from_user.id,
-        type_=data["ai_type"],
-        amount=data["ai_amount"],
-        category=data["ai_category"],
-        description=data.get("ai_description")
-    )
-
-    emoji = "💸" if data["ai_type"] == "expense" else "💰"
-    await callback.message.answer(
-        f"✅ {emoji} <b>Записано!</b>\n\n"
-        f"<b>{data['ai_amount']:,.0f} ₽</b> — {data['ai_category']}",
-        parse_mode="HTML",
-        reply_markup=main_menu()
-    )
+    try:
+        await add_transaction(
+            user_id=callback.from_user.id,
+            type_=data["ai_type"],
+            amount=data["ai_amount"],
+            category=data["ai_category"],
+            description=data.get("ai_description")
+        )
+        emoji = "💸" if data["ai_type"] == "expense" else "💰"
+        await callback.message.answer(
+            f"✅ {emoji} <b>Записано!</b>\n\n"
+            f"<b>{data['ai_amount']:,.0f} ₽</b> — {data['ai_category']}",
+            parse_mode="HTML",
+            reply_markup=main_menu()
+        )
+    except Exception as e:
+        logging.error(f"confirm_ai_transaction error: {e}")
+        await callback.message.answer(f"❌ Ошибка сохранения: {str(e)}")
     await state.clear()
     await callback.answer()
 
