@@ -7,7 +7,6 @@ def main_menu() -> ReplyKeyboardMarkup:
         [KeyboardButton(text="💸 Добавить расход"), KeyboardButton(text="💰 Добавить доход")],
         [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="📅 Платежи")],
         [KeyboardButton(text="🎯 Бюджеты"), KeyboardButton(text="⚙️ Настройки")],
-        [KeyboardButton(text="🤖 AI Советник")],
     ], resize_keyboard=True)
 
 
