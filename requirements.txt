@@ -1,8 +1,16 @@
 aiogram==3.7.0
 supabase==2.4.0
+postgrest==0.16.11
+gotrue==2.4.2
+storage3==0.7.7
+supafunc==0.4.5
+realtime==1.0.6
+httpx==0.25.2
 APScheduler==3.10.4
 google-api-python-client==2.118.0
 google-auth-httplib2==0.2.0
 google-auth-oauthlib==1.2.0
 python-dotenv==1.0.1
 pytz==2024.1
+aiohttp==3.9.3
+pydantic==2.6.4
