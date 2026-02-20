@@ -4,7 +4,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from database.db import get_or_create_user, get_user, update_user, get_google_token
+from db import get_or_create_user, get_user, update_user, get_google_token
 from utils.keyboards import main_menu, settings_kb
 from services.google_calendar import get_auth_url
 
