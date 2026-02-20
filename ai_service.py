@@ -4,7 +4,7 @@ import logging
 import google.generativeai as genai
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel("gemini-flash-latest")
+model = genai.GenerativeModel("gemini-1.5-flash")
 
 EXPENSE_CATEGORIES = [
     "🍕 Еда", "🚗 Транспорт", "🏠 Жильё", "🎮 Развлечения",
@@ -13,7 +13,8 @@ EXPENSE_CATEGORIES = [
 ]
 
 INCOME_CATEGORIES = [
-    "💼 Зарплата", "💰 Аванс", "💻 Фриланс", "🎁 Подарок", "📈 Прочее"
+    "💼 Зарплата", "💼 Оплата за неделю", "💰 Аванс", "💰 Частичная оплата",
+    "💻 Фриланс", "🤝 Подработка", "🎁 Подарок", "📈 Инвестиции", "📈 Прочее"
 ]
 
 

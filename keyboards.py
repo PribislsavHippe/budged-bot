@@ -19,7 +19,8 @@ EXPENSE_CATEGORIES = [
 ]
 
 INCOME_CATEGORIES = [
-    "💼 Зарплата", "💰 Аванс", "💻 Фриланс", "🎁 Подарок", "📈 Прочее"
+    "💼 Зарплата", "💼 Оплата за неделю", "💰 Аванс", "💰 Частичная оплата",
+    "💻 Фриланс", "🤝 Подработка", "🎁 Подарок", "📈 Инвестиции", "📈 Прочее"
 ]
 
 
@@ -39,8 +40,14 @@ def expense_categories_kb() -> InlineKeyboardMarkup:
 
 def income_categories_kb() -> InlineKeyboardMarkup:
     buttons = []
-    for cat in INCOME_CATEGORIES:
-        buttons.append([InlineKeyboardButton(text=cat, callback_data=f"cat_inc:{cat}")])
+    row = []
+    for i, cat in enumerate(INCOME_CATEGORIES):
+        row.append(InlineKeyboardButton(text=cat, callback_data=f"cat_inc:{cat}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
     buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
