@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import asyncio
 import google.generativeai as genai
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
@@ -15,6 +16,12 @@ EXPENSE_CATEGORIES = [
 INCOME_CATEGORIES = [
     "💼 Зарплата", "💰 Аванс", "💻 Фриланс", "🎁 Подарок", "📈 Прочее"
 ]
+
+
+def _generate(prompt: str) -> str:
+    """Синхронный вызов Gemini — запускается в отдельном потоке."""
+    response = model.generate_content(prompt)
+    return response.text.strip()
 
 
 async def parse_transaction(text: str) -> dict | None:
@@ -34,8 +41,8 @@ async def parse_transaction(text: str) -> dict | None:
 Отвечай ТОЛЬКО валидным JSON без пояснений и без markdown-блоков."""
 
     try:
-        response = model.generate_content(prompt)
-        raw = response.text.strip().replace("```json", "").replace("```", "").strip()
+        raw = await asyncio.to_thread(_generate, prompt)
+        raw = raw.replace("```json", "").replace("```", "").strip()
         result = json.loads(raw)
         return result if result.get("is_transaction") else None
     except Exception as e:
@@ -72,8 +79,7 @@ async def get_ai_advice(stats: dict, user_name: str = "друг") -> str:
 Пиши живо и по-человечески, без занудства. Используй эмодзи умеренно."""
 
     try:
-        response = model.generate_content(prompt)
-        return response.text.strip()
+        return await asyncio.to_thread(_generate, prompt)
     except Exception as e:
         logging.error(f"get_ai_advice error: {e}")
         return "😔 Не смог получить совет прямо сейчас. Попробуй чуть позже!"
@@ -109,8 +115,7 @@ async def chat_with_ai(user_message: str, stats: dict, payments: list) -> str:
 Будь дружелюбным и конкретным, используй цифры из данных пользователя."""
 
     try:
-        response = model.generate_content(prompt)
-        return response.text.strip()
+        return await asyncio.to_thread(_generate, prompt)
     except Exception as e:
         logging.error(f"chat_with_ai error: {e}")
         return "😔 Что-то пошло не так. Попробуй снова!"
@@ -134,8 +139,7 @@ async def generate_weekly_ai_report(stats: dict) -> str | None:
 Стиль: дружеский, с эмодзи, без занудства."""
 
     try:
-        response = model.generate_content(prompt)
-        return response.text.strip()
+        return await asyncio.to_thread(_generate, prompt)
     except Exception as e:
         logging.error(f"weekly report error: {e}")
         return None
