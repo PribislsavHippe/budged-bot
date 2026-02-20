@@ -41,7 +41,7 @@ def expense_categories_kb() -> InlineKeyboardMarkup:
 def income_categories_kb() -> InlineKeyboardMarkup:
     buttons = []
     row = []
-    for i, cat in enumerate(INCOME_CATEGORIES):
+    for cat in INCOME_CATEGORIES:
         row.append(InlineKeyboardButton(text=cat, callback_data=f"cat_inc:{cat}"))
         if len(row) == 2:
             buttons.append(row)
