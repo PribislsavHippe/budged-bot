@@ -7,14 +7,14 @@ genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = genai.GenerativeModel("gemini-2.5-flash-lite")
 
 EXPENSE_CATEGORIES = [
-    "🍕 Еда", "🚗 Транспорт", "🏠 Жильё", "🎮 Развлечения",
-    "💊 Здоровье", "👕 Одежда", "📱 Связь", "📚 Образование",
-    "💳 Обязательные", "🛒 Прочее"
+    "Еда", "Транспорт", "Жильё", "Развлечения",
+    "Здоровье", "Одежда", "Связь", "Образование",
+    "Обязательные", "Прочее"
 ]
 
 INCOME_CATEGORIES = [
-    "💼 Зарплата", "💼 Оплата за неделю", "💰 Аванс", "💰 Частичная оплата",
-    "💻 Фриланс", "🤝 Подработка", "🎁 Подарок", "📈 Инвестиции", "📈 Прочее"
+    "Зарплата", "Оплата за неделю", "Аванс", "Частичная оплата",
+    "Фриланс", "Подработка", "Подарок", "Инвестиции", "Прочее"
 ]
 
 
@@ -64,7 +64,7 @@ async def get_ai_advice(stats: dict, user_name: str = "друг") -> str:
     balance = stats.get("balance", 0)
 
     if not by_category and income == 0:
-        return "📊 Пока данных маловато для анализа. Вноси расходы каждый день — и через неделю дам подробный разбор!"
+        return "Цифр пока кот наплакал. Погоняй расходы пару дней — тогда разберём по косточкам."
 
     cat_list = "\n".join([f"- {cat}: {amt:,.0f} ₽" for cat, amt in by_category.items()])
 
@@ -83,13 +83,13 @@ async def get_ai_advice(stats: dict, user_name: str = "друг") -> str:
 3. Дай 1 практический совет на следующий месяц
 4. Заверши мотивирующей фразой
 
-Пиши живо и по-человечески, без занудства. Используй эмодзи умеренно."""
+Пиши живо и по-человечески, с лёгкой иронией. Без эмодзи."""
 
     try:
         return await _generate(prompt)
     except Exception as e:
         logging.error(f"get_ai_advice error: {e}")
-        return f"😔 Ошибка при получении совета: {str(e)}"
+        return f"Совет не выдали — что-то пошло не так: {str(e)}"
 
 
 async def chat_with_ai(user_message: str, stats: dict, payments: list) -> str:
@@ -125,7 +125,7 @@ async def chat_with_ai(user_message: str, stats: dict, payments: list) -> str:
         return await _generate(prompt)
     except Exception as e:
         logging.error(f"chat_with_ai error: {e}")
-        return f"😔 Ошибка: {str(e)}"
+        return f"Не срослось: {str(e)}"
 
 
 async def generate_weekly_ai_report(stats: dict) -> str | None:
@@ -143,7 +143,7 @@ async def generate_weekly_ai_report(stats: dict) -> str | None:
 Категории: {cat_list if cat_list else "нет данных"}
 
 Напиши краткий (3-4 предложения) еженедельный итог с одним конкретным советом на следующую неделю.
-Стиль: дружеский, с эмодзи, без занудства."""
+Стиль: дружеский, с лёгкой иронией. Без эмодзи."""
 
     try:
         return await _generate(prompt)

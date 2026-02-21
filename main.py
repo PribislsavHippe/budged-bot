@@ -49,12 +49,12 @@ async def google_oauth_callback(request: web.Request) -> web.Response:
         await exchange_code(user_id, code)
         await bot.send_message(
             user_id,
-            "✅ <b>Google Calendar подключён!</b>\n\n"
-            "Теперь я буду создавать события для платежей и напоминаний прямо в твоём календаре.",
+            "<b>Google Calendar приручен.</b>\n\n"
+            "Платежи и напоминания буду сыпать прямо в твой календарь — не забудешь.",
             parse_mode="HTML"
         )
         return web.Response(
-            text="<h2>✅ Успешно!</h2><p>Google Calendar подключён. Можешь вернуться в Telegram.</p>",
+            text="<h2>Готово</h2><p>Календарь подключён. Возвращайся в Telegram.</p>",
             content_type="text/html"
         )
     except Exception as e:

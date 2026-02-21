@@ -85,7 +85,7 @@ async def create_payment_event(user_id: int, payment_name: str, amount: float, d
     service = build("calendar", "v3", credentials=creds)
 
     event = {
-        "summary": f"💳 {payment_name} — {amount:,.0f} ₽",
+        "summary": f"{payment_name} — {amount:,.0f} ₽",
         "description": f"Обязательный платёж: {payment_name}\nСумма: {amount:,.2f} ₽\n\nДобавлено через Budget Bot",
         "start": {"date": date.strftime("%Y-%m-%d")},
         "end": {"date": date.strftime("%Y-%m-%d")},
@@ -112,7 +112,7 @@ async def create_income_reminder(user_id: int, date: datetime) -> bool:
     service = build("calendar", "v3", credentials=creds)
 
     event = {
-        "summary": "💰 День зарплаты — внеси доход в Budget Bot",
+        "summary": "День зарплаты — внеси доход в Budget Bot",
         "description": "Не забудь зафиксировать доход в Budget Bot!",
         "start": {"date": date.strftime("%Y-%m-%d")},
         "end": {"date": date.strftime("%Y-%m-%d")},

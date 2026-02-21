@@ -24,7 +24,7 @@ class TransactionState(StatesGroup):
 
 # ─── РАСХОДЫ ─────────────────────────────────────────────
 
-@router.message(F.text == "💸 Добавить расход")
+@router.message(F.text == "Добавить расход")
 async def add_expense_start(message: Message, state: FSMContext):
     await message.answer("Выбери категорию расхода:", reply_markup=expense_categories_kb())
     await state.set_state(TransactionState.choosing_expense_category)
@@ -53,7 +53,7 @@ async def expense_amount_entered(message: Message, state: FSMContext):
         await message.answer("Добавь описание или нажми /skip чтобы пропустить:")
         await state.set_state(TransactionState.entering_expense_desc)
     except ValueError:
-        await message.answer("❌ Введи корректную сумму, например: 350 или 1500.50")
+        await message.answer("Давай по-нормальному: число, например 350 или 1500.50.")
 
 
 @router.message(TransactionState.entering_expense_desc)
@@ -71,10 +71,10 @@ async def expense_desc_entered(message: Message, state: FSMContext):
     )
 
     await message.answer(
-        f"✅ <b>Расход записан!</b>\n\n"
-        f"📂 Категория: {data['category']}\n"
-        f"💸 Сумма: <b>{data['amount']:,.2f} ₽</b>\n"
-        f"{'📝 ' + desc if desc else ''}",
+        f"<b>Списано.</b>\n\n"
+        f"Категория: {data['category']}\n"
+        f"Сумма: <b>{data['amount']:,.2f} ₽</b>\n"
+        f"{desc if desc else ''}",
         parse_mode="HTML",
         reply_markup=main_menu()
     )
@@ -83,7 +83,7 @@ async def expense_desc_entered(message: Message, state: FSMContext):
 
 # ─── ДОХОДЫ ──────────────────────────────────────────────
 
-@router.message(F.text == "💰 Добавить доход")
+@router.message(F.text == "Добавить доход")
 async def add_income_start(message: Message, state: FSMContext):
     await message.answer("Выбери категорию дохода:", reply_markup=income_categories_kb())
     await state.set_state(TransactionState.choosing_income_category)
@@ -117,21 +117,20 @@ async def income_amount_entered(message: Message, state: FSMContext):
         )
 
         await message.answer(
-            f"✅ <b>Доход записан!</b>\n\n"
-            f"📂 Категория: {data['category']}\n"
-            f"💰 Сумма: <b>{amount:,.2f} ₽</b>\n\n"
-            f"Отличная работа! Продолжай фиксировать всё 💪",
+            f"<b>Принято.</b>\n\n"
+            f"Категория: {data['category']}\n"
+            f"Сумма: <b>{amount:,.2f} ₽</b>",
             parse_mode="HTML",
             reply_markup=main_menu()
         )
         await state.clear()
     except ValueError:
-        await message.answer("❌ Введи корректную сумму")
+        await message.answer("Нужна нормальная сумма, не буквы.")
 
 
 # ─── СТАТИСТИКА ───────────────────────────────────────────
 
-@router.message(F.text == "📊 Статистика")
+@router.message(F.text == "Статистика")
 async def stats_menu(message: Message):
     await message.answer("Выбери период для статистики:", reply_markup=stats_period_kb())
 
@@ -159,18 +158,16 @@ async def show_stats(callback: CallbackQuery):
             cat_text += f"\n{cat}: <b>{amount:,.0f} ₽</b> ({pct:.0f}%)\n{bar}\n"
 
         balance = stats.get("balance", 0)
-        balance_emoji = "🟢" if balance >= 0 else "🔴"
 
-        # ИСПРАВЛЕНИЕ ОШИБКИ: Выносим логику текста категории наружу
         if not cat_text:
-            cat_text = "\nПока нет данных"
+            cat_text = "\nПока пусто"
 
         await callback.message.answer(
-            f"📊 <b>Статистика — {period_label}</b>\n\n"
-            f"💰 Доходы: <b>{stats.get('income', 0):,.2f} ₽</b>\n"
-            f"💸 Расходы: <b>{stats.get('expenses', 0):,.2f} ₽</b>\n"
-            f"{balance_emoji} Баланс: <b>{balance:,.2f} ₽</b>\n\n"
-            f"<b>Расходы по категориям:</b>{cat_text}",
+            f"<b>Статистика — {period_label}</b>\n\n"
+            f"Доходы: <b>{stats.get('income', 0):,.2f} ₽</b>\n"
+            f"Расходы: <b>{stats.get('expenses', 0):,.2f} ₽</b>\n"
+            f"Баланс: <b>{balance:,.2f} ₽</b>\n\n"
+            f"<b>По категориям:</b>{cat_text}",
             parse_mode="HTML"
         )
         await callback.answer()

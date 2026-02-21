@@ -19,9 +19,9 @@ class PaymentState(StatesGroup):
 
 # ─── МЕНЮ ПЛАТЕЖЕЙ ───────────────────────────────────────
 
-@router.message(F.text == "📅 Платежи")
+@router.message(F.text == "Платежи")
 async def payments_menu(message: Message):
-    await message.answer("📅 <b>Обязательные платежи</b>", parse_mode="HTML", reply_markup=payments_menu_kb())
+    await message.answer("<b>Обязательные платежи</b>", parse_mode="HTML", reply_markup=payments_menu_kb())
 
 
 @router.callback_query(F.data == "payment:list")
@@ -30,18 +30,16 @@ async def list_payments(callback: CallbackQuery):
 
     if not payments:
         await callback.message.answer(
-            "У тебя нет обязательных платежей.\n"
-            "Добавь аренду, подписки и другие регулярные расходы!"
+            "Платежей пока нет. Можешь добавить аренду, подписки и прочие радости жизни."
         )
         await callback.answer()
         return
 
     for p in payments:
         await callback.message.answer(
-            f"💳 <b>{p['name']}</b>\n"
-            f"💰 Сумма: {p['amount']:,.2f} ₽\n"
-            f"📅 День оплаты: {p['day_of_month']}-е число\n"
-            f"🔔 Напомню за {p['remind_days_before']} дн.",
+            f"<b>{p['name']}</b>\n"
+            f"Сумма: {p['amount']:,.2f} ₽\n"
+            f"День: {p['day_of_month']}-е число. Напомню за {p['remind_days_before']} дн.",
             parse_mode="HTML",
             reply_markup=payment_actions_kb(p["id"])
         )
@@ -75,7 +73,7 @@ async def payment_amount_entered(message: Message, state: FSMContext):
         await message.answer("В какой день месяца нужно оплачивать? (1–31)")
         await state.set_state(PaymentState.waiting_day)
     except ValueError:
-        await message.answer("❌ Введи корректную сумму")
+        await message.answer("Сумма должна быть числом. Попробуй ещё раз.")
 
 
 @router.message(PaymentState.waiting_day)
@@ -103,19 +101,16 @@ async def payment_day_entered(message: Message, state: FSMContext):
             date=event_date
         )
 
-        calendar_note = " (и создал событие в Google Calendar 📅)" if calendar_created else ""
+        calendar_note = " Плюс кинул в твой Google Calendar." if calendar_created else ""
         await message.answer(
-            f"✅ <b>Платёж добавлен{calendar_note}</b>\n\n"
-            f"💳 {data['name']}\n"
-            f"💰 {data['amount']:,.2f} ₽\n"
-            f"📅 {day}-е число каждого месяца\n"
-            f"🔔 Напомню за 2 дня до оплаты",
+            f"<b>Платёж в деле.{calendar_note}</b>\n\n"
+            f"{data['name']} — {data['amount']:,.2f} ₽, {day}-е число. Напомню за 2 дня.",
             parse_mode="HTML",
             reply_markup=main_menu()
         )
         await state.clear()
     except ValueError:
-        await message.answer("❌ Введи день от 1 до 31")
+        await message.answer("День месяца — число от 1 до 31. Не изобретай.")
 
 
 # ─── ДЕЙСТВИЯ С ПЛАТЕЖОМ ──────────────────────────────────
@@ -135,7 +130,7 @@ async def mark_payment_paid(callback: CallbackQuery):
             description=f"Обязательный платёж: {payment['name']}"
         )
         await callback.message.answer(
-            f"✅ Платёж <b>{payment['name']}</b> на {payment['amount']:,.2f} ₽ записан как расход!",
+            f"Платёж <b>{payment['name']}</b> на {payment['amount']:,.2f} ₽ списан. Чек в архиве.",
             parse_mode="HTML"
         )
     await callback.answer()
@@ -145,5 +140,5 @@ async def mark_payment_paid(callback: CallbackQuery):
 async def delete_payment(callback: CallbackQuery):
     payment_id = int(callback.data.split(":")[2])
     await delete_scheduled_payment(payment_id, callback.from_user.id)
-    await callback.message.answer("🗑 Платёж удалён")
+    await callback.message.answer("Платёж вычеркнул. Как будто и не было.")
     await callback.answer()

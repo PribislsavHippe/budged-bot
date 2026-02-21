@@ -28,34 +28,33 @@ def budget_categories_kb():
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-@router.message(F.text == "🎯 Бюджеты")
+@router.message(F.text == "Бюджеты")
 async def budgets_menu(message: Message):
     budgets = await get_budgets(message.from_user.id)
     stats = await get_stats(message.from_user.id, "month")
 
     if not budgets:
         await message.answer(
-            "🎯 <b>Бюджеты по категориям</b>\n\n"
-            "У тебя пока нет лимитов по категориям.\n"
-            "Установи лимит, и я буду предупреждать когда ты близко к нему!\n\n"
-            "Выбери категорию для установки лимита:",
+            "<b>Бюджеты по категориям</b>\n\n"
+            "Лимитов пока нет. Поставь — буду нервировать, когда будешь подбираться к потолку.\n\n"
+            "Выбери категорию:",
             parse_mode="HTML",
             reply_markup=budget_categories_kb()
         )
         return
 
-    text = "🎯 <b>Твои бюджеты на месяц:</b>\n\n"
+    text = "<b>Твои лимиты на месяц:</b>\n\n"
     for b in budgets:
         spent = stats["by_category"].get(b["category"], 0)
         limit = b["limit_amount"]
         pct = min(spent / limit * 100, 100) if limit > 0 else 0
 
         if pct >= 100:
-            status = "🔴 ПРЕВЫШЕН"
+            status = "ПРЕВЫШЕН"
         elif pct >= 80:
-            status = "🟡 Почти лимит"
+            status = "Почти лимит"
         else:
-            status = "🟢 В норме"
+            status = "В норме"
 
         bar_filled = int(pct / 10)
         bar = "█" * bar_filled + "░" * (10 - bar_filled)
@@ -68,7 +67,7 @@ async def budgets_menu(message: Message):
 
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Добавить/изменить лимит", callback_data="budget:add")]
+        [InlineKeyboardButton(text="Добавить или изменить лимит", callback_data="budget:add")]
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
@@ -96,12 +95,11 @@ async def budget_limit_entered(message: Message, state: FSMContext):
         data = await state.get_data()
         await set_budget(message.from_user.id, data["category"], limit)
         await message.answer(
-            f"✅ Лимит установлен!\n\n"
-            f"📂 {data['category']}: <b>{limit:,.0f} ₽/месяц</b>\n\n"
-            f"Буду предупреждать когда израсходуешь 80% и 100%",
+            f"<b>Лимит поставлен.</b> {data['category']}: <b>{limit:,.0f} ₽/месяц</b>. "
+            f"Пилить буду на 80% и когда перейдёшь черту.",
             parse_mode="HTML",
             reply_markup=main_menu()
         )
         await state.clear()
     except ValueError:
-        await message.answer("❌ Введи корректную сумму")
+        await message.answer("Нужна сумма числом. Без фантазий.")

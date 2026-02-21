@@ -32,15 +32,14 @@ def clean_markdown(text: str) -> str:
 
 
 def format_confirmation(result: dict) -> str:
-    emoji = "💸" if result["type"] == "expense" else "💰"
     type_label = "Расход" if result["type"] == "expense" else "Доход"
     desc = result.get("description", "")
-    desc_line = f"\n📝 {desc[:60]}" if desc else ""
+    desc_line = f"\n{desc[:60]}" if desc else ""
     return (
-        f"{emoji} <b>{type_label}: {result['amount']:,.0f} ₽</b>\n"
-        f"📂 {result['category']}"
+        f"<b>{type_label}: {result['amount']:,.0f} ₽</b>\n"
+        f"Категория: {result['category']}"
         f"{desc_line}\n\n"
-        f"Всё верно?"
+        f"Записываем так?"
     )
 
 
@@ -50,12 +49,12 @@ def format_confirmation(result: dict) -> str:
 async def start_ai_chat(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AIState.chatting)
     await callback.message.answer(
-        "💬 <b>Чат с AI</b>\n\n"
-        "Задай вопрос о своих финансах или просто напиши что потратил:\n"
+        "<b>Чат с AI</b>\n\n"
+        "Спрашивай про финансы или пиши что потратил — разберу. Например:\n"
         "— «Хватит ли до зарплаты?»\n"
-        "— «На что я трачу больше всего?»\n"
+        "— «На что улетает больше всего?»\n"
         "— «Купил кофе 180»\n\n"
-        "Для выхода напиши /stop",
+        "Выйти: /stop",
         parse_mode="HTML"
     )
     await callback.answer()
@@ -65,7 +64,7 @@ async def start_ai_chat(callback: CallbackQuery, state: FSMContext):
 async def handle_ai_chat(message: Message, state: FSMContext):
     if message.text == "/stop":
         await state.clear()
-        await message.answer("Вышли из чата.", reply_markup=main_menu())
+        await message.answer("Чату конец. Возвращайся когда понадоблюсь.", reply_markup=main_menu())
         return
 
     # Сначала проверяем локально (быстро, без AI)
@@ -99,7 +98,7 @@ async def handle_ai_chat(message: Message, state: FSMContext):
         return
 
     # Обычный вопрос — отвечаем через AI
-    await message.answer("🤔 Думаю...")
+    await message.answer("Щас подумаю...")
     try:
         from ai_service import chat_with_ai
         stats = await get_stats(message.from_user.id, "month")
@@ -108,7 +107,7 @@ async def handle_ai_chat(message: Message, state: FSMContext):
         await message.answer(clean_markdown(response))
     except Exception as e:
         logging.error(f"chat error: {e}")
-        await message.answer(f"❌ Ошибка: {str(e)}")
+        await message.answer(f"Не вышло: {str(e)}")
 
 
 # ─── ПОДТВЕРЖДЕНИЕ / РЕДАКТИРОВАНИЕ КАТЕГОРИИ ────────────────────────────────
@@ -124,10 +123,8 @@ async def confirm_transaction(callback: CallbackQuery, state: FSMContext):
             category=data["ai_category"],
             description=data.get("ai_description")
         )
-        emoji = "💸" if data["ai_type"] == "expense" else "💰"
         await callback.message.answer(
-            f"✅ {emoji} <b>Записано!</b>\n"
-            f"{data['ai_amount']:,.0f} ₽ — {data['ai_category']}",
+            f"<b>Готово.</b> {data['ai_amount']:,.0f} ₽ — {data['ai_category']}",
             parse_mode="HTML",
             reply_markup=main_menu() if callback.data == "ai_tx:confirm_exit" else None
         )
@@ -136,7 +133,7 @@ async def confirm_transaction(callback: CallbackQuery, state: FSMContext):
         else:
             await state.clear()
     except Exception as e:
-        await callback.message.answer(f"❌ Ошибка: {str(e)}")
+        await callback.message.answer(f"Сломалось: {str(e)}")
         await state.clear()
     await callback.answer()
 
@@ -178,7 +175,7 @@ async def apply_edited_category(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "ai_tx:cancel_chat")
 async def cancel_chat(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AIState.chatting)
-    await callback.message.answer("Ок, не записываю 👂")
+    await callback.message.answer("Ок, в архив не попадёт.")
     await callback.answer()
 
 
@@ -192,8 +189,8 @@ async def cancel_exit(callback: CallbackQuery, state: FSMContext):
 # ─── УМНЫЙ ВВОД (вне чата и вне других состояний) ───────────────────────────
 
 MENU_TEXTS = {
-    "📊 Статистика", "📅 Платежи", "🎯 Бюджеты", "⚙️ Настройки",
-    "💸 Добавить расход", "💰 Добавить доход",
+    "Статистика", "Платежи", "Бюджеты", "Настройки",
+    "Добавить расход", "Добавить доход",
     "/start", "/help", "/stop", "/skip"
 }
 
@@ -220,13 +217,12 @@ async def smart_input(message: Message, state: FSMContext):
     if not result:
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💬 Спросить AI", callback_data="ai:chat")]
+            [InlineKeyboardButton(text="Спросить AI", callback_data="ai:chat")]
         ])
         await message.answer(
-            "Не понял что записать 🤔\n\n"
-            "Напиши например:\n"
-            "<i>«купил кофе 180»</i> или <i>«получил зарплату 50000»</i>\n\n"
-            "Или задай вопрос AI:",
+            "Не въехал, что записать.\n\n"
+            "Пиши по-человечески: <i>«купил кофе 180»</i> или <i>«получил зарплату 50000»</i>. "
+            "Или жми ниже — разберём через AI:",
             parse_mode="HTML",
             reply_markup=kb
         )

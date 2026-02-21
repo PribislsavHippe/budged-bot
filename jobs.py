@@ -12,10 +12,10 @@ from google_calendar import create_income_reminder
 from ai_service import generate_weekly_ai_report
 
 MOTIVATION_MESSAGES = [
-    "💪 Фиксируй расходы сегодня — завтра скажешь себе спасибо!",
-    "📊 Контроль над деньгами = контроль над жизнью. Как прошёл день?",
-    "💰 Те, кто считает деньги, имеют больше денег. Внеси сегодняшние расходы!",
-    "📈 Финансовая дисциплина формируется каждый день.",
+    "Учёт ведётся сегодня. Завтра сам себе скажешь спасибо — или не скажешь.",
+    "Кто считает — у того и остаётся. Как день прошёл?",
+    "Деньги любят счёт. Внеси расходы — проверим, насколько они тебя любят.",
+    "Дисциплина по копейкам. Каждый день считаем.",
 ]
 
 
@@ -40,11 +40,11 @@ async def check_expense_reminders(bot):
         try:
             if not today_transactions:
                 msg = random.choice(MOTIVATION_MESSAGES)
-                await bot.send_message(user_id, msg + "\n\n⚠️ Ты ещё не вносил расходы сегодня!")
+                await bot.send_message(user_id, msg + "\n\nРасходы за сегодня в базу ещё не попали.")
             else:
                 await bot.send_message(
                     user_id,
-                    f"✅ Сегодня внесено записей: {len(today_transactions)}. Молодец!"
+                    f"Сегодня записей: {len(today_transactions)}. Так держать."
                 )
         except Exception:
             pass
@@ -71,20 +71,18 @@ async def check_payment_reminders(bot):
             continue
 
         if days_left == 0:
-            urgency = "🚨 <b>СЕГОДНЯ</b> нужно оплатить:"
+            urgency = "<b>Сегодня</b> как раз тот день — оплатить:"
         elif days_left == 1:
-            urgency = "⚠️ <b>ЗАВТРА</b> нужно оплатить:"
+            urgency = "<b>Завтра</b> срок. Оплатить:"
         else:
-            urgency = f"🔔 Через <b>{days_left} дня</b> нужно оплатить:"
+            urgency = f"Через <b>{days_left} дня</b> — напоминаю заранее. Оплатить:"
 
         from keyboards import payment_actions_kb
         try:
             await bot.send_message(
                 user_id,
                 f"{urgency}\n\n"
-                f"💳 <b>{payment['name']}</b>\n"
-                f"💰 Сумма: {payment['amount']:,.0f} ₽\n"
-                f"📅 {payment['day_of_month']}-е число",
+                f"<b>{payment['name']}</b> — {payment['amount']:,.0f} ₽, {payment['day_of_month']}-е число.",
                 parse_mode="HTML",
                 reply_markup=payment_actions_kb(payment["id"])
             )
@@ -116,9 +114,7 @@ async def check_salary_day_reminders(bot):
         try:
             await bot.send_message(
                 user_id,
-                f"🎉 <b>Сегодня день выплаты!</b>\n\n"
-                f"Не забудь зафиксировать доход — просто напиши мне, например:\n"
-                f"<i>«получил зарплату 45000»</i>",
+                f"<b>Сегодня день выплаты.</b> Не проспи — зафиксируй доход. Напиши, например: <i>«получил зарплату 45000»</i>",
                 parse_mode="HTML"
             )
         except Exception:
@@ -147,15 +143,13 @@ async def check_budget_alerts(bot):
                 if 80 <= pct < 85:
                     await bot.send_message(
                         user_id,
-                        f"⚠️ <b>{cat}</b>: использовано {pct:.0f}% бюджета\n"
-                        f"({spent:,.0f} из {limit:,.0f} ₽)",
+                        f"<b>{cat}</b>: сожрано {pct:.0f}% лимита ({spent:,.0f} из {limit:,.0f} ₽). Ещё чуть-чуть — и перебор.",
                         parse_mode="HTML"
                     )
                 elif pct >= 100:
                     await bot.send_message(
                         user_id,
-                        f"🔴 <b>Лимит превышен!</b> {cat}\n"
-                        f"Потрачено {spent:,.0f} ₽ при лимите {limit:,.0f} ₽",
+                        f"<b>Лимит перешагнут.</b> {cat}: {spent:,.0f} ₽ при лимите {limit:,.0f} ₽. Поздравляю.",
                         parse_mode="HTML"
                     )
             except Exception:
@@ -173,20 +167,19 @@ async def send_weekly_report(bot):
         if stats["transactions_count"] == 0:
             continue
 
-        balance_emoji = "🟢" if stats["balance"] >= 0 else "🔴"
         ai_insight = await generate_weekly_ai_report(stats)
 
         base = (
-            f"📊 <b>Итоги недели</b>\n\n"
-            f"💰 Доходы: {stats['income']:,.0f} ₽\n"
-            f"💸 Расходы: {stats['expenses']:,.0f} ₽\n"
-            f"{balance_emoji} Баланс: {stats['balance']:,.0f} ₽\n"
+            f"<b>Итоги недели</b>\n\n"
+            f"Доходы: {stats['income']:,.0f} ₽\n"
+            f"Расходы: {stats['expenses']:,.0f} ₽\n"
+            f"Баланс: {stats['balance']:,.0f} ₽\n"
             f"Записей: {stats['transactions_count']}"
         )
 
-        full = base + (f"\n\n🧠 <b>AI-анализ:</b>\n{ai_insight}" if ai_insight
-                       else ("\n\n💪 Отличная дисциплина!" if stats["balance"] >= 0
-                             else "\n\n⚠️ Расходы превысили доходы. В следующую неделю лучше!"))
+        full = base + (f"\n\n<b>AI-анализ:</b>\n{ai_insight}" if ai_insight
+                       else ("\n\nДисциплина на уровне. Почти как у взрослого." if stats["balance"] >= 0
+                             else "\n\nРасходы обогнали доходы. На следующую неделю есть куда стремиться."))
         try:
             await bot.send_message(user_id, full, parse_mode="HTML")
         except Exception:
@@ -206,17 +199,16 @@ async def send_monthly_report(bot):
 
         top = list(stats["by_category"].items())[:3]
         top_text = "\n".join([f"  {cat}: {amt:,.0f} ₽" for cat, amt in top])
-        balance_emoji = "🟢" if stats["balance"] >= 0 else "🔴"
 
         try:
             await bot.send_message(
                 user_id,
-                f"📈 <b>Итоги месяца</b>\n\n"
-                f"💰 Доходы: <b>{stats['income']:,.0f} ₽</b>\n"
-                f"💸 Расходы: <b>{stats['expenses']:,.0f} ₽</b>\n"
-                f"{balance_emoji} Итог: <b>{stats['balance']:,.0f} ₽</b>\n\n"
-                f"🏆 <b>Топ расходов:</b>\n{top_text}\n\n"
-                f"Новый месяц — новые возможности! 🎯",
+                f"<b>Итоги месяца</b>\n\n"
+                f"Доходы: <b>{stats['income']:,.0f} ₽</b>\n"
+                f"Расходы: <b>{stats['expenses']:,.0f} ₽</b>\n"
+                f"Итог: <b>{stats['balance']:,.0f} ₽</b>\n\n"
+                f"<b>Топ расходов:</b>\n{top_text}\n\n"
+                f"Новый месяц — новые цифры. Удачи.",
                 parse_mode="HTML"
             )
         except Exception:
@@ -271,7 +263,7 @@ async def send_smart_budget_advice(bot):
             if advice:
                 await bot.send_message(
                     user_id,
-                    f"💡 <b>Умный совет на неделю</b>\n\n{advice}",
+                    f"<b>Совет на неделю</b>\n\n{advice}",
                     parse_mode="HTML"
                 )
         except Exception as e:
