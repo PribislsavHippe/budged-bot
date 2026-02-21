@@ -1,5 +1,6 @@
 from supabase import create_client, Client
 import os
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -49,14 +50,25 @@ async def add_transaction(user_id: int, type_: str, amount: float, category: str
     return res.data[0]
 
 
+def _since_datetime(period: str) -> str | None:
+    """Возвращает ISO-дату с какого момента брать транзакции, или None для 'all'."""
+    now = datetime.now(timezone.utc)
+    if period == "week":
+        since = now - timedelta(days=7)
+    elif period == "month":
+        since = now - timedelta(days=30)
+    else:
+        return None
+    return since.isoformat()
+
+
 async def get_transactions(user_id: int, period: str = "month"):
     """period: 'week', 'month', 'all'"""
     query = supabase.table("transactions").select("*").eq("user_id", user_id)
 
-    if period == "week":
-        query = query.gte("created_at", "now() - interval '7 days'")
-    elif period == "month":
-        query = query.gte("created_at", "now() - interval '30 days'")
+    since = _since_datetime(period)
+    if since:
+        query = query.gte("created_at", since)
 
     res = query.order("created_at", desc=True).execute()
     return res.data
