@@ -219,8 +219,9 @@ MENU_TEXTS = {
 
 import re as _re
 
-def _looks_like_planned_input(text: str) -> bool:
-    """True if text starts with a date pattern like дд.мм or дд/мм."""
+
+def _looks_like_date_entry(text: str) -> bool:
+    """True if text starts with дд.мм / дд/мм — планируемая запись по дате."""
     return bool(_re.match(r'^\d{1,2}[./]\d{1,2}', text.strip()))
 
 
@@ -233,81 +234,87 @@ async def smart_input(message: Message, state: FSMContext):
     if current_state is not None:
         return
 
-    # If it looks like a planned income/expense entry (starts with date), ignore here
-    # — it will be handled by goals_income if user is in that state
-    # But if they're NOT in a state and type a date+amount, guide them
-    if _looks_like_planned_input(message.text):
+    text = message.text.strip()
+
+    # Дата в начале → это планируемая запись, перенаправляем в раздел Доходы
+    if _looks_like_date_entry(text):
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Добавить в планируемые", callback_data="planned_income:add")]
+            [InlineKeyboardButton(text="📅 Добавить запись по дате", callback_data="planned_income:add")]
         ])
         await message.answer(
-            "Похоже на планируемый доход/расход. Нажми кнопку и отправь эту строку ещё раз:",
-            reply_markup=kb
+            "Похоже на запись по дате. Нажми кнопку и введи ещё раз:\n"
+            "<i>Пример: 25.03 50000 зарплата</i>",
+            parse_mode="HTML",
+            reply_markup=kb,
         )
         return
 
-    # Вопросы — сразу в чат с ИИ, не предлагаем записать транзакцию
-    if looks_like_question(message.text):
-        result = None
-    else:
-        result = parse_transaction_local(message.text)
-        if not result:
-            try:
-                result = await ai_parse_transaction(message.text)
-            except Exception:
-                result = None
-
-    if not result:
-        if looks_like_question(message.text):
-            await message.answer("Щас подумаю...")
-            try:
-                from ai_service import chat_with_ai
-                stats = await get_stats(message.from_user.id, "month")
-                payments = await get_scheduled_payments(message.from_user.id)
-                salary_days = await get_salary_days(message.from_user.id)
-                budgets = await get_budgets(message.from_user.id)
-                now = date.today()
-                planned = await get_planned_income(message.from_user.id, from_date=now.isoformat(), to_date=(now + timedelta(days=365)).isoformat())
-                context_extra = _build_reminders_context(salary_days, payments)
-                response = await chat_with_ai(
-                    message.text, stats, payments,
-                    context_extra=context_extra,
-                    budgets=budgets,
-                    planned_income=planned[:20],
-                )
-                await message.answer(clean_markdown(response))
-            except Exception as e:
-                logging.error(f"smart_input chat error: {e}")
-                await message.answer(f"Не вышло: {str(e)}")
-        else:
-            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Спросить AI", callback_data="ai:chat")]
-            ])
-            await message.answer(
-                "Не въехал, что записать.\n\n"
-                "Пиши по-человечески: <i>«купил кофе 180»</i> или <i>«получил зарплату 50к»</i>. "
-                "Или жми ниже — разберём через AI:",
-                parse_mode="HTML",
-                reply_markup=kb
+    # Вопросы → ИИ-чат
+    if looks_like_question(text):
+        await message.answer("Щас подумаю...")
+        try:
+            from ai_service import chat_with_ai
+            stats = await get_stats(message.from_user.id, "month")
+            payments = await get_scheduled_payments(message.from_user.id)
+            salary_days = await get_salary_days(message.from_user.id)
+            budgets = await get_budgets(message.from_user.id)
+            now = date.today()
+            planned = await get_planned_income(
+                message.from_user.id,
+                from_date=now.isoformat(),
+                to_date=(now + timedelta(days=365)).isoformat()
             )
+            context_extra = _build_reminders_context(salary_days, payments)
+            response = await chat_with_ai(
+                text, stats, payments,
+                context_extra=context_extra,
+                budgets=budgets,
+                planned_income=planned[:20],
+            )
+            await message.answer(clean_markdown(response))
+        except Exception as e:
+            logging.error(f"smart_input chat error: {e}")
+            await message.answer(f"Не вышло: {str(e)}")
         return
 
-    await state.update_data(
-        ai_type=result["type"],
-        ai_amount=result["amount"],
-        ai_category=result["category"],
-        ai_description=result.get("description", ""),
-        prev_state="none"
-    )
-    await state.set_state(AIState.confirming_transaction)
-    await message.answer(
-        format_confirmation(result),
-        parse_mode="HTML",
-        reply_markup=confirm_transaction_kb(
-            confirm_cb="ai_tx:confirm_exit",
-            cancel_cb="ai_tx:cancel",
-            edit_cb="ai_tx:edit_exit"
+    # Попытка распознать транзакцию (название+сумма → расход по умолчанию)
+    result = parse_transaction_local(text)
+    if not result:
+        try:
+            result = await ai_parse_transaction(text)
+        except Exception:
+            result = None
+
+    if result:
+        await state.update_data(
+            ai_type=result["type"],
+            ai_amount=result["amount"],
+            ai_category=result["category"],
+            ai_description=result.get("description", ""),
+            prev_state="none"
         )
+        await state.set_state(AIState.confirming_transaction)
+        await message.answer(
+            format_confirmation(result),
+            parse_mode="HTML",
+            reply_markup=confirm_transaction_kb(
+                confirm_cb="ai_tx:confirm_exit",
+                cancel_cb="ai_tx:cancel",
+                edit_cb="ai_tx:edit_exit"
+            )
+        )
+        return
+
+    # Совсем не понял
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Спросить AI", callback_data="ai:chat")]
+    ])
+    await message.answer(
+        "Не въехал, что записать.\n\n"
+        "Пиши: <i>«штаны 7300»</i>, <i>«бар 2880»</i>, <i>«получил зарплату 50к»</i>.\n"
+        "Или жми кнопку ниже:",
+        parse_mode="HTML",
+        reply_markup=kb
     )

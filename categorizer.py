@@ -239,9 +239,20 @@ def detect_type(text: str) -> str | None:
                 income_score += 2
                 break
 
+    # Проверяем ключевые слова категорий расходов
+    for keywords in EXPENSE_RULES.values():
+        for kw in keywords:
+            if kw in text_lower:
+                expense_score += 2
+                break
+
     if income_score > expense_score and income_score > 0:
         return "income"
-    if expense_score > 0 or extract_amount(text) is not None:
+    if expense_score > 0:
+        return "expense"
+    # Если есть сумма но нет явного типа — скорее всего расход
+    # (пользователь пишет "штаны 7300", "бар 2880" = расход)
+    if extract_amount(text) is not None:
         return "expense"
     return None
 
@@ -271,8 +282,6 @@ def parse_transaction_local(text: str) -> dict | None:
     Пытается распознать транзакцию из текста без AI.
     Возвращает dict или None.
     """
-    text_lower = text.lower()
-
     if looks_like_question(text):
         return None
 
@@ -282,16 +291,21 @@ def parse_transaction_local(text: str) -> dict | None:
 
     type_ = detect_type(text)
     if type_ is None:
-        # Если есть сумма но нет явного типа — считаем расходом
         type_ = "expense"
 
     category = detect_category(text, type_)
+
+    # Чистое описание: убираем число из текста
+    import re
+    normalized = _normalize_amount_text(text)
+    desc_clean = re.sub(r'\b\d[\d\s]{0,6}(?:[.,]\d{1,2})?\b', '', normalized).strip()
+    desc_clean = re.sub(r'\s+', ' ', desc_clean).strip() or text[:80]
 
     return {
         "type": type_,
         "amount": amount,
         "category": category,
-        "description": text[:100]
+        "description": desc_clean[:100]
     }
 
 
