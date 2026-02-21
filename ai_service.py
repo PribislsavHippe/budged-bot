@@ -288,3 +288,103 @@ async def parse_onboarding_payments(text: str) -> list[dict]:
     except Exception as e:
         logging.error(f"parse_onboarding_payments error: {e}")
         return []
+
+
+async def parse_bulk_transactions(text: str) -> list[dict]:
+    """Парсит несколько транзакций из одного сообщения."""
+    prompt = f"""Пользователь написал: "{text}"
+
+Это может быть одна или несколько трат/доходов вперемешку.
+Разбей на отдельные транзакции. Для каждой:
+- type: "expense" или "income"
+- amount: сумма числом
+- category: из списка ниже
+- description: краткое описание (что куплено/за что)
+
+Категории расходов: {", ".join(EXPENSE_CATEGORIES)}
+Категории доходов: {", ".join(INCOME_CATEGORIES)}
+
+Верни JSON массив: [{{"type":"...","amount":0,"category":"...","description":"..."}}]
+Если ничего не распознал — верни: []
+Только JSON, без пояснений."""
+
+    try:
+        raw = await _generate(prompt)
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        result = json.loads(raw)
+        return result if isinstance(result, list) else []
+    except Exception as e:
+        logging.error(f"parse_bulk_transactions error: {e}")
+        return []
+
+
+async def transcribe_voice(audio_bytes: bytes, filename: str = "voice.ogg") -> str | None:
+    """Транскрибирует голосовое сообщение через Groq Whisper."""
+    try:
+        client = _get_client()
+        import io
+        audio_file = io.BytesIO(audio_bytes)
+        audio_file.name = filename
+        transcription = await client.audio.transcriptions.create(
+            model="whisper-large-v3-turbo",
+            file=audio_file,
+            language="ru",
+        )
+        return transcription.text.strip()
+    except Exception as e:
+        logging.error(f"transcribe_voice error: {e}")
+        return None
+
+
+async def get_smart_dashboard(stats: dict, payments: list, salary_days: list, balance_real: float = None) -> str:
+    """Умный дашборд — ответы вместо цифр."""
+    from datetime import date
+    today = date.today()
+    income = stats.get("income", 0)
+    expenses = stats.get("expenses", 0)
+    balance = stats.get("balance", 0)
+    by_category = stats.get("by_category", {})
+
+    future_payments = [p for p in (payments or []) if p["day_of_month"] > today.day]
+    future_sum = sum(p["amount"] for p in future_payments)
+
+    next_salary = None
+    days_until = None
+    if salary_days:
+        for d in sorted(salary_days):
+            if d > today.day:
+                next_salary = d
+                days_until = d - today.day
+                break
+        if next_salary is None:
+            next_salary = sorted(salary_days)[0]
+            days_until = 30 - today.day + next_salary
+
+    free = balance - future_sum
+    daily = free / days_until if days_until and days_until > 0 else None
+
+    cat_list = "
+".join([f"- {cat}: {amt:,.0f} ₽" for cat, amt in by_category.items()])
+
+    prompt = f"""Составь короткий умный дашборд для пользователя.
+
+Данные за текущий месяц:
+Доходы: {income:,.0f} ₽ | Расходы: {expenses:,.0f} ₽ | Баланс: {balance:,.0f} ₽
+Обязательные платежи впереди: {future_sum:,.0f} ₽
+{"До зарплаты (" + str(next_salary) + "-го): " + str(days_until) + " дн." if days_until else "Дни зарплаты не заданы"}
+{"Свободных денег: " + f"{free:,.0f} ₽" if days_until else ""}
+{"Дневной бюджет: " + f"{daily:,.0f} ₽/день" if daily and daily > 0 else ""}
+Расходы по категориям:
+{cat_list if cat_list else "Нет данных"}
+
+Напиши 5-8 строк. Структура:
+1. Главный вывод — хватит ли до зарплаты (с конкретной цифрой в день)
+2. Одна категория где пережимает — с цифрой
+3. Один конкретный совет что сделать сейчас
+Стиль: прямо, без эмодзи, на "ты". Без заголовков."""
+
+    try:
+        return await _generate(prompt, system="Финансовый советник. Конкретно, с цифрами, без воды.")
+    except Exception as e:
+        logging.error(f"smart dashboard error: {e}")
+        return None

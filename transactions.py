@@ -164,7 +164,15 @@ async def income_amount_entered(message: Message, state: FSMContext):
 
 @router.message(F.text == "Статистика")
 async def stats_menu(message: Message):
-    await message.answer("Выбери период:", reply_markup=stats_period_kb())
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="За неделю", callback_data="stats:week"),
+            InlineKeyboardButton(text="За месяц",  callback_data="stats:month"),
+        ],
+        [InlineKeyboardButton(text="Всё время", callback_data="stats:all")],
+        [InlineKeyboardButton(text="Умный анализ", callback_data="stats:dashboard")],
+    ])
+    await message.answer("Выбери:", reply_markup=kb)
 
 
 def _bar(pct: float, width: int = 10) -> str:
