@@ -1,16 +1,15 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 
-# ─── ГЛАВНОЕ МЕНЮ ────────────────────────────────────────
+# ─── ГЛАВНОЕ МЕНЮ (упрощённое) ───────────────────────────────────────────────
 
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="💸 Добавить расход"), KeyboardButton(text="💰 Добавить доход")],
         [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="📅 Платежи")],
-        [KeyboardButton(text="🎯 Бюджеты"), KeyboardButton(text="⚙️ Настройки")],
+        [KeyboardButton(text="🎯 Бюджеты"),   KeyboardButton(text="⚙️ Настройки")],
     ], resize_keyboard=True)
 
 
-# ─── КАТЕГОРИИ РАСХОДОВ ───────────────────────────────────
+# ─── КАТЕГОРИИ ────────────────────────────────────────────────────────────────
 
 EXPENSE_CATEGORIES = [
     "🍕 Еда", "🚗 Транспорт", "🏠 Жильё", "🎮 Развлечения",
@@ -24,11 +23,11 @@ INCOME_CATEGORIES = [
 ]
 
 
-def expense_categories_kb() -> InlineKeyboardMarkup:
+def expense_categories_kb(prefix: str = "cat_exp") -> InlineKeyboardMarkup:
     buttons = []
     row = []
-    for i, cat in enumerate(EXPENSE_CATEGORIES):
-        row.append(InlineKeyboardButton(text=cat, callback_data=f"cat_exp:{cat}"))
+    for cat in EXPENSE_CATEGORIES:
+        row.append(InlineKeyboardButton(text=cat, callback_data=f"{prefix}:{cat}"))
         if len(row) == 2:
             buttons.append(row)
             row = []
@@ -38,11 +37,11 @@ def expense_categories_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def income_categories_kb() -> InlineKeyboardMarkup:
+def income_categories_kb(prefix: str = "cat_inc") -> InlineKeyboardMarkup:
     buttons = []
     row = []
     for cat in INCOME_CATEGORIES:
-        row.append(InlineKeyboardButton(text=cat, callback_data=f"cat_inc:{cat}"))
+        row.append(InlineKeyboardButton(text=cat, callback_data=f"{prefix}:{cat}"))
         if len(row) == 2:
             buttons.append(row)
             row = []
@@ -52,24 +51,24 @@ def income_categories_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-# ─── СТАТИСТИКА ───────────────────────────────────────────
+# ─── СТАТИСТИКА ───────────────────────────────────────────────────────────────
 
 def stats_period_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="📅 За неделю", callback_data="stats:week"),
-            InlineKeyboardButton(text="📆 За месяц", callback_data="stats:month"),
+            InlineKeyboardButton(text="📆 За месяц",  callback_data="stats:month"),
         ],
-        [InlineKeyboardButton(text="📋 Все транзакции", callback_data="stats:all")]
+        [InlineKeyboardButton(text="📋 Всё время", callback_data="stats:all")]
     ])
 
 
-# ─── ПЛАТЕЖИ ─────────────────────────────────────────────
+# ─── ПЛАТЕЖИ ─────────────────────────────────────────────────────────────────
 
 def payments_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Добавить платёж", callback_data="payment:add")],
-        [InlineKeyboardButton(text="📋 Мои платежи", callback_data="payment:list")],
+        [InlineKeyboardButton(text="📋 Мои платежи",     callback_data="payment:list")],
     ])
 
 
@@ -77,27 +76,28 @@ def payment_actions_kb(payment_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✅ Оплачено", callback_data=f"payment:paid:{payment_id}"),
-            InlineKeyboardButton(text="🗑 Удалить", callback_data=f"payment:delete:{payment_id}"),
+            InlineKeyboardButton(text="🗑 Удалить",  callback_data=f"payment:delete:{payment_id}"),
         ]
     ])
 
 
-# ─── ПОДТВЕРЖДЕНИЕ ───────────────────────────────────────
+# ─── ПОДТВЕРЖДЕНИЕ ТРАНЗАКЦИИ ─────────────────────────────────────────────────
 
-def confirm_kb(action: str) -> InlineKeyboardMarkup:
+def confirm_transaction_kb(confirm_cb: str, cancel_cb: str, edit_cb: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅ Да", callback_data=f"confirm:{action}"),
-            InlineKeyboardButton(text="❌ Нет", callback_data="cancel"),
+            InlineKeyboardButton(text="✅ Верно", callback_data=confirm_cb),
+            InlineKeyboardButton(text="✏️ Категория", callback_data=edit_cb),
+            InlineKeyboardButton(text="❌", callback_data=cancel_cb),
         ]
     ])
 
 
-# ─── НАСТРОЙКИ ───────────────────────────────────────────
+# ─── НАСТРОЙКИ ───────────────────────────────────────────────────────────────
 
 def settings_kb(has_google: bool = False) -> InlineKeyboardMarkup:
     buttons = [
-        [InlineKeyboardButton(text="📅 День зарплаты", callback_data="settings:salary_day")],
+        [InlineKeyboardButton(text="📅 Дни зарплаты",    callback_data="settings:salary_day")],
         [InlineKeyboardButton(text="🔔 Час напоминаний", callback_data="settings:reminder_hour")],
     ]
     if has_google:

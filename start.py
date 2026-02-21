@@ -4,7 +4,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from db import get_or_create_user, get_user, update_user, get_google_token
+from db import get_or_create_user, get_user, update_user, get_google_token, get_salary_days, set_salary_days
 from keyboards import main_menu, settings_kb
 from google_calendar import get_auth_url
 
@@ -68,12 +68,13 @@ async def settings_menu(message: Message):
     token = await get_google_token(message.from_user.id)
     user = await get_user(message.from_user.id)
 
-    salary_day = user.get("salary_day", "не задан")
+    salary_days = await get_salary_days(message.from_user.id)
+    salary_str = ", ".join(str(d) for d in salary_days) if salary_days else "не задан"
     reminder_hour = user.get("expense_reminder_hour", 21)
 
     await message.answer(
         f"⚙️ <b>Настройки</b>\n\n"
-        f"📅 День зарплаты: <b>{salary_day}</b>\n"
+        f"📅 Дни зарплаты: <b>{salary_str}</b>\n"
         f"🔔 Час напоминаний: <b>{reminder_hour}:00</b>\n"
         f"📅 Google Calendar: <b>{'подключён ✅' if token else 'не подключён ❌'}</b>",
         parse_mode="HTML",
@@ -83,22 +84,37 @@ async def settings_menu(message: Message):
 
 @router.callback_query(F.data == "settings:salary_day")
 async def ask_salary_day(callback: CallbackQuery, state: FSMContext):
-    await callback.message.answer("📅 Введи день месяца получения зарплаты (1–31):")
+    current = await get_salary_days(callback.from_user.id)
+    current_str = ", ".join(str(d) for d in current) if current else "не задан"
+    await callback.message.answer(
+        f"📅 Текущие дни зарплаты: <b>{current_str}</b>
+
+"
+        f"Введи дни через запятую или пробел:
+"
+        f"Например: <i>9, 18, 23, 28</i> или <i>1 и 15</i>",
+        parse_mode="HTML"
+    )
     await state.set_state(SettingsState.waiting_salary_day)
     await callback.answer()
 
 
 @router.message(SettingsState.waiting_salary_day)
 async def save_salary_day(message: Message, state: FSMContext):
-    try:
-        day = int(message.text.strip())
-        if not 1 <= day <= 31:
-            raise ValueError
-        await update_user(message.from_user.id, {"salary_day": day})
-        await message.answer(f"✅ Готово! День зарплаты: <b>{day}</b>-е число", parse_mode="HTML")
-        await state.clear()
-    except ValueError:
-        await message.answer("❌ Введи число от 1 до 31")
+    from categorizer import parse_salary_days
+    days = parse_salary_days(message.text)
+    if not days:
+        await message.answer("❌ Не нашёл дней. Напиши числа от 1 до 31, например: 9, 18, 23")
+        return
+    await set_salary_days(message.from_user.id, days)
+    days_str = ", ".join(str(d) for d in days)
+    await message.answer(
+        f"✅ Дни зарплаты сохранены: <b>{days_str}</b>
+"
+        f"Напомню в каждый из этих дней!",
+        parse_mode="HTML"
+    )
+    await state.clear()
 
 
 @router.callback_query(F.data == "settings:reminder_hour")

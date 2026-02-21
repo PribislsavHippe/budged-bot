@@ -150,3 +150,37 @@ async def generate_weekly_ai_report(stats: dict) -> str | None:
     except Exception as e:
         logging.error(f"weekly report error: {e}")
         return None
+
+
+async def get_smart_budget_advice(stats: dict, days_until_salary: int, mandatory_expenses: float, salary_day: int) -> str:
+    """Умный план бюджета до зарплаты."""
+    balance = stats.get("balance", 0)
+    expenses = stats.get("expenses", 0)
+    by_category = stats.get("by_category", {})
+    cat_list = "\n".join([f"- {cat}: {amt:,.0f} ₽" for cat, amt in by_category.items()])
+
+    free_money = balance - mandatory_expenses
+    daily_budget = free_money / days_until_salary if days_until_salary > 0 else 0
+
+    prompt = f"""Ты финансовый советник. Составь короткий практичный план бюджета.
+
+Данные:
+- Текущий баланс (доходы минус расходы за месяц): {balance:,.0f} ₽
+- Дней до следующей зарплаты ({salary_day}-е число): {days_until_salary}
+- Обязательные платежи до зарплаты: {mandatory_expenses:,.0f} ₽
+- Свободные деньги: {free_money:,.0f} ₽
+- Дневной бюджет: {daily_budget:,.0f} ₽/день
+- Расходы по категориям за месяц:
+{cat_list if cat_list else "нет данных"}
+
+Напиши совет (4-5 предложений):
+1. Сколько можно тратить в день
+2. На какой категории стоит сэкономить (на основе данных)
+3. Сколько отложить если есть возможность
+Стиль: дружеский, конкретный, без занудства. Используй цифры."""
+
+    try:
+        return await _generate(prompt)
+    except Exception as e:
+        logging.error(f"smart budget advice error: {e}")
+        return None

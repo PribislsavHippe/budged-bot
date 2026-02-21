@@ -51,16 +51,12 @@ async def add_transaction(user_id: int, type_: str, amount: float, category: str
 
 async def get_transactions(user_id: int, period: str = "month"):
     """period: 'week', 'month', 'all'"""
-    from datetime import datetime, timedelta, timezone
     query = supabase.table("transactions").select("*").eq("user_id", user_id)
 
-    now = datetime.now(timezone.utc)
     if period == "week":
-        since = (now - timedelta(days=7)).isoformat()
-        query = query.gte("created_at", since)
+        query = query.gte("created_at", "now() - interval '7 days'")
     elif period == "month":
-        since = (now - timedelta(days=30)).isoformat()
-        query = query.gte("created_at", since)
+        query = query.gte("created_at", "now() - interval '30 days'")
 
     res = query.order("created_at", desc=True).execute()
     return res.data
@@ -158,3 +154,30 @@ async def save_google_token(user_id: int, access_token: str, refresh_token: str,
 async def get_google_token(user_id: int):
     res = supabase.table("google_tokens").select("*").eq("user_id", user_id).execute()
     return res.data[0] if res.data else None
+
+
+# ─── SALARY DAYS ─────────────────────────────────────────
+
+async def get_salary_days(user_id: int) -> list[int]:
+    """Возвращает список дней зарплаты пользователя."""
+    user = await get_user(user_id)
+    if not user:
+        return []
+    
+    # Сначала проверяем новое поле salary_days
+    days_str = user.get("salary_days", "")
+    if days_str:
+        try:
+            return [int(d.strip()) for d in days_str.split(",") if d.strip().isdigit()]
+        except Exception:
+            pass
+    
+    # Fallback на старое поле salary_day
+    day = user.get("salary_day")
+    return [day] if day else []
+
+
+async def set_salary_days(user_id: int, days: list[int]):
+    """Сохраняет дни зарплаты."""
+    days_str = ",".join(str(d) for d in sorted(days))
+    await update_user(user_id, {"salary_days": days_str, "salary_day": days[0] if days else None})

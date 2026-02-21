@@ -1,28 +1,26 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import pytz
+import logging
 
 from db import (
     get_all_active_users, get_payments_due_soon,
-    get_transactions, get_stats, get_budgets
+    get_transactions, get_stats, get_budgets, get_salary_days
 )
 from google_calendar import create_income_reminder
 from ai_service import generate_weekly_ai_report
 
-# Мотивационные сообщения
 MOTIVATION_MESSAGES = [
-    "💪 Каждая рубль на счету — фиксируй расходы сегодня!",
+    "💪 Фиксируй расходы сегодня — завтра скажешь себе спасибо!",
     "📊 Контроль над деньгами = контроль над жизнью. Как прошёл день?",
-    "🎯 Маленький шаг — записать расход. Большой результат — финансовая свобода!",
-    "💰 Те, кто считает деньги, имеют больше денег. Не забудь внести сегодняшние расходы!",
-    "🔥 Продолжай в том же духе! Финансовая дисциплина формируется каждый день.",
-    "📈 Знаешь куда уходят деньги? Запиши расходы за сегодня!",
+    "💰 Те, кто считает деньги, имеют больше денег. Внеси сегодняшние расходы!",
+    "📈 Финансовая дисциплина формируется каждый день.",
 ]
 
 
 async def check_expense_reminders(bot):
-    """Ежедневное напоминание внести расходы"""
+    """Ежедневное напоминание внести расходы."""
     import random
     users = await get_all_active_users()
     now = datetime.now()
@@ -33,31 +31,27 @@ async def check_expense_reminders(bot):
             continue
 
         user_id = user["id"]
-        # Проверяем, были ли расходы сегодня
         transactions = await get_transactions(user_id, "week")
         today_transactions = [
             t for t in transactions
             if t["created_at"][:10] == now.strftime("%Y-%m-%d")
         ]
 
-        if not today_transactions:
-            msg = random.choice(MOTIVATION_MESSAGES)
-            streak_msg = "\n\n⚠️ Ты ещё не вносил расходы сегодня — самое время!" if not today_transactions else ""
-            try:
-                await bot.send_message(user_id, msg + streak_msg)
-            except Exception:
-                pass
-        else:
-            # Пользователь молодец — краткая мотивация
-            msg = f"✅ Сегодня ты уже внёс {len(today_transactions)} запис(ей). Молодец!"
-            try:
-                await bot.send_message(user_id, msg)
-            except Exception:
-                pass
+        try:
+            if not today_transactions:
+                msg = random.choice(MOTIVATION_MESSAGES)
+                await bot.send_message(user_id, msg + "\n\n⚠️ Ты ещё не вносил расходы сегодня!")
+            else:
+                await bot.send_message(
+                    user_id,
+                    f"✅ Сегодня внесено записей: {len(today_transactions)}. Молодец!"
+                )
+        except Exception:
+            pass
 
 
 async def check_payment_reminders(bot):
-    """Напоминания об обязательных платежах"""
+    """Напоминания об обязательных платежах."""
     payments = await get_payments_due_soon(days_ahead=3)
 
     for payment in payments:
@@ -73,67 +67,66 @@ async def check_payment_reminders(bot):
             continue
 
         remind_days = payment.get("remind_days_before", 2)
-        if days_left <= remind_days:
-            if days_left == 0:
-                urgency = "🚨 <b>СЕГОДНЯ</b> нужно оплатить:"
-            elif days_left == 1:
-                urgency = "⚠️ <b>ЗАВТРА</b> нужно оплатить:"
-            else:
-                urgency = f"🔔 Через <b>{days_left} дня</b> нужно оплатить:"
+        if days_left > remind_days:
+            continue
 
-            from utils.keyboards import payment_actions_kb
-            try:
-                await bot.send_message(
-                    user_id,
-                    f"{urgency}\n\n"
-                    f"💳 <b>{payment['name']}</b>\n"
-                    f"💰 Сумма: {payment['amount']:,.2f} ₽\n"
-                    f"📅 {payment['day_of_month']}-е число\n\n"
-                    f"Нажми 'Оплачено' когда внесёшь платёж",
-                    parse_mode="HTML",
-                    reply_markup=payment_actions_kb(payment["id"])
-                )
-            except Exception:
-                pass
+        if days_left == 0:
+            urgency = "🚨 <b>СЕГОДНЯ</b> нужно оплатить:"
+        elif days_left == 1:
+            urgency = "⚠️ <b>ЗАВТРА</b> нужно оплатить:"
+        else:
+            urgency = f"🔔 Через <b>{days_left} дня</b> нужно оплатить:"
+
+        from keyboards import payment_actions_kb
+        try:
+            await bot.send_message(
+                user_id,
+                f"{urgency}\n\n"
+                f"💳 <b>{payment['name']}</b>\n"
+                f"💰 Сумма: {payment['amount']:,.0f} ₽\n"
+                f"📅 {payment['day_of_month']}-е число",
+                parse_mode="HTML",
+                reply_markup=payment_actions_kb(payment["id"])
+            )
+        except Exception:
+            pass
 
 
 async def check_salary_day_reminders(bot):
-    """Напоминание внести доход в день зарплаты"""
+    """Напоминание внести доход во все дни зарплаты."""
     users = await get_all_active_users()
     now = datetime.now()
 
     for user in users:
         user_id = user["id"]
-        salary_day = user.get("salary_day")
+        salary_days = await get_salary_days(user_id)
 
-        if not salary_day or now.day != salary_day:
+        if not salary_days or now.day not in salary_days:
             continue
 
-        # Проверяем, вносил ли уже доход сегодня
         transactions = await get_transactions(user_id, "week")
         today_income = [
             t for t in transactions
             if t["type"] == "income" and t["created_at"][:10] == now.strftime("%Y-%m-%d")
         ]
 
-        if not today_income:
-            try:
-                await bot.send_message(
-                    user_id,
-                    f"🎉 <b>Сегодня день зарплаты!</b>\n\n"
-                    f"Не забудь зафиксировать доход в боте.\n"
-                    f"Нажми 💰 Добавить доход в главном меню.",
-                    parse_mode="HTML"
-                )
-                # Создаём событие в Google Calendar на следующий месяц
-                next_month = now.replace(month=now.month % 12 + 1)
-                await create_income_reminder(user_id, next_month.replace(day=salary_day))
-            except Exception:
-                pass
+        if today_income:
+            continue
+
+        try:
+            await bot.send_message(
+                user_id,
+                f"🎉 <b>Сегодня день выплаты!</b>\n\n"
+                f"Не забудь зафиксировать доход — просто напиши мне, например:\n"
+                f"<i>«получил зарплату 45000»</i>",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
 
 
 async def check_budget_alerts(bot):
-    """Предупреждения о превышении бюджета"""
+    """Предупреждения о превышении бюджета."""
     users = await get_all_active_users()
 
     for user in users:
@@ -150,34 +143,27 @@ async def check_budget_alerts(bot):
             limit = budget["limit_amount"]
             pct = spent / limit * 100 if limit > 0 else 0
 
-            # Предупреждаем при 80% и 100%
-            if 80 <= pct < 85:
-                try:
+            try:
+                if 80 <= pct < 85:
                     await bot.send_message(
                         user_id,
-                        f"⚠️ <b>Внимание!</b> По категории <b>{cat}</b>\n"
-                        f"израсходовано {pct:.0f}% от лимита\n"
-                        f"({spent:,.0f} из {limit:,.0f} ₽)\n\n"
-                        f"Будь осторожен с тратами в этой категории!",
+                        f"⚠️ <b>{cat}</b>: использовано {pct:.0f}% бюджета\n"
+                        f"({spent:,.0f} из {limit:,.0f} ₽)",
                         parse_mode="HTML"
                     )
-                except Exception:
-                    pass
-            elif pct >= 100:
-                try:
+                elif pct >= 100:
                     await bot.send_message(
                         user_id,
-                        f"🔴 <b>Лимит превышен!</b> Категория <b>{cat}</b>\n"
-                        f"Потрачено {spent:,.0f} ₽ при лимите {limit:,.0f} ₽\n"
-                        f"Превышение: <b>{spent - limit:,.0f} ₽</b>",
+                        f"🔴 <b>Лимит превышен!</b> {cat}\n"
+                        f"Потрачено {spent:,.0f} ₽ при лимите {limit:,.0f} ₽",
                         parse_mode="HTML"
                     )
-                except Exception:
-                    pass
+            except Exception:
+                pass
 
 
 async def send_weekly_report(bot):
-    """Еженедельный отчёт (по воскресеньям) с AI-анализом"""
+    """Еженедельный отчёт по воскресеньям с AI-анализом."""
     users = await get_all_active_users()
 
     for user in users:
@@ -188,32 +174,27 @@ async def send_weekly_report(bot):
             continue
 
         balance_emoji = "🟢" if stats["balance"] >= 0 else "🔴"
-
-        # Пробуем получить AI-анализ
         ai_insight = await generate_weekly_ai_report(stats)
 
-        base_text = (
+        base = (
             f"📊 <b>Итоги недели</b>\n\n"
-            f"💰 Доходы: {stats['income']:,.2f} ₽\n"
-            f"💸 Расходы: {stats['expenses']:,.2f} ₽\n"
-            f"{balance_emoji} Баланс: {stats['balance']:,.2f} ₽\n"
-            f"Записей за неделю: {stats['transactions_count']}"
+            f"💰 Доходы: {stats['income']:,.0f} ₽\n"
+            f"💸 Расходы: {stats['expenses']:,.0f} ₽\n"
+            f"{balance_emoji} Баланс: {stats['balance']:,.0f} ₽\n"
+            f"Записей: {stats['transactions_count']}"
         )
 
-        if ai_insight:
-            full_text = base_text + f"\n\n🧠 <b>AI-анализ:</b>\n{ai_insight}"
-        else:
-            verdict = "💪 Отличная финансовая дисциплина!" if stats["balance"] >= 0 else "⚠️ В этот раз расходы превысили доходы. В следующую неделю будет лучше!"
-            full_text = base_text + f"\n\n{verdict}"
-
+        full = base + (f"\n\n🧠 <b>AI-анализ:</b>\n{ai_insight}" if ai_insight
+                       else ("\n\n💪 Отличная дисциплина!" if stats["balance"] >= 0
+                             else "\n\n⚠️ Расходы превысили доходы. В следующую неделю лучше!"))
         try:
-            await bot.send_message(user_id, full_text, parse_mode="HTML")
+            await bot.send_message(user_id, full, parse_mode="HTML")
         except Exception:
             pass
 
 
 async def send_monthly_report(bot):
-    """Месячный отчёт (1-го числа)"""
+    """Месячный отчёт 1-го числа."""
     users = await get_all_active_users()
 
     for user in users:
@@ -223,44 +204,102 @@ async def send_monthly_report(bot):
         if stats["transactions_count"] == 0:
             continue
 
-        top_categories = list(stats["by_category"].items())[:3]
-        top_text = "\n".join([f"  {cat}: {amt:,.0f} ₽" for cat, amt in top_categories])
+        top = list(stats["by_category"].items())[:3]
+        top_text = "\n".join([f"  {cat}: {amt:,.0f} ₽" for cat, amt in top])
         balance_emoji = "🟢" if stats["balance"] >= 0 else "🔴"
 
         try:
             await bot.send_message(
                 user_id,
-                f"📈 <b>Итоги прошлого месяца</b>\n\n"
-                f"💰 Доходы: <b>{stats['income']:,.2f} ₽</b>\n"
-                f"💸 Расходы: <b>{stats['expenses']:,.2f} ₽</b>\n"
-                f"{balance_emoji} Итог: <b>{stats['balance']:,.2f} ₽</b>\n\n"
+                f"📈 <b>Итоги месяца</b>\n\n"
+                f"💰 Доходы: <b>{stats['income']:,.0f} ₽</b>\n"
+                f"💸 Расходы: <b>{stats['expenses']:,.0f} ₽</b>\n"
+                f"{balance_emoji} Итог: <b>{stats['balance']:,.0f} ₽</b>\n\n"
                 f"🏆 <b>Топ расходов:</b>\n{top_text}\n\n"
-                f"Новый месяц — новые возможности! Поставь финансовые цели 🎯",
+                f"Новый месяц — новые возможности! 🎯",
                 parse_mode="HTML"
             )
         except Exception:
             pass
 
 
+async def send_smart_budget_advice(bot):
+    """
+    Умные советы по бюджету — каждый понедельник.
+    AI считает: сколько дней до зарплаты, какой баланс,
+    и даёт конкретный план по категориям.
+    """
+    users = await get_all_active_users()
+    now = datetime.now()
+
+    for user in users:
+        user_id = user["id"]
+        stats = await get_stats(user_id, "month")
+
+        # Находим ближайший день зарплаты
+        salary_days = await get_salary_days(user_id)
+        if not salary_days:
+            continue
+
+        today = now.day
+        next_salary_day = None
+        for d in sorted(salary_days):
+            if d > today:
+                next_salary_day = d
+                break
+        if next_salary_day is None:
+            next_salary_day = sorted(salary_days)[0]  # следующий месяц
+
+        days_until_salary = (next_salary_day - today) if next_salary_day > today else (30 - today + next_salary_day)
+
+        # Считаем обязательные платежи до зарплаты
+        from db import get_scheduled_payments
+        payments = await get_scheduled_payments(user_id)
+        mandatory_before_salary = sum(
+            p["amount"] for p in payments
+            if today < p["day_of_month"] <= next_salary_day
+        )
+
+        try:
+            from ai_service import get_smart_budget_advice
+            advice = await get_smart_budget_advice(
+                stats=stats,
+                days_until_salary=days_until_salary,
+                mandatory_expenses=mandatory_before_salary,
+                salary_day=next_salary_day
+            )
+            if advice:
+                await bot.send_message(
+                    user_id,
+                    f"💡 <b>Умный совет на неделю</b>\n\n{advice}",
+                    parse_mode="HTML"
+                )
+        except Exception as e:
+            logging.error(f"smart advice error for {user_id}: {e}")
+
+
 def setup_scheduler(bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=pytz.timezone("Europe/Moscow"))
 
-    # Напоминание вносить расходы — каждый час проверяем у кого настроен этот час
+    # Напоминание вносить расходы — каждый час
     scheduler.add_job(check_expense_reminders, "interval", hours=1, args=[bot])
 
-    # Проверка платежей — каждый день в 9:00
+    # Платежи — каждый день в 9:00
     scheduler.add_job(check_payment_reminders, CronTrigger(hour=9, minute=0), args=[bot])
 
-    # Проверка дня зарплаты — каждый день в 10:00
+    # День зарплаты — каждый день в 10:00
     scheduler.add_job(check_salary_day_reminders, CronTrigger(hour=10, minute=0), args=[bot])
 
-    # Проверка бюджетов — каждый день в 12:00
+    # Бюджеты — каждый день в 12:00
     scheduler.add_job(check_budget_alerts, CronTrigger(hour=12, minute=0), args=[bot])
 
-    # Еженедельный отчёт — воскресенье в 18:00
-    scheduler.add_job(send_weekly_report, CronTrigger(day_of_week="sun", hour=18, minute=0), args=[bot])
+    # Еженедельный отчёт — воскресенье 18:00
+    scheduler.add_job(send_weekly_report, CronTrigger(day_of_week="sun", hour=18), args=[bot])
 
-    # Месячный отчёт — 1-е число в 10:00
-    scheduler.add_job(send_monthly_report, CronTrigger(day=1, hour=10, minute=0), args=[bot])
+    # Месячный отчёт — 1-е число 10:00
+    scheduler.add_job(send_monthly_report, CronTrigger(day=1, hour=10), args=[bot])
+
+    # Умные советы — каждый понедельник 9:00
+    scheduler.add_job(send_smart_budget_advice, CronTrigger(day_of_week="mon", hour=9), args=[bot])
 
     return scheduler
