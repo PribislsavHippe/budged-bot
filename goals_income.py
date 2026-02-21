@@ -1,4 +1,4 @@
-"""Планируемые доходы и цели накопления."""
+"""Планируемые доходы/расходы и цели накопления."""
 import re
 from datetime import datetime, date, timedelta
 from aiogram import Router, F
@@ -7,19 +7,15 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from db import (
-    get_planned_income,
-    add_planned_income,
-    delete_planned_income,
-    get_goals,
-    add_goal,
-    set_goal_inactive,
-    get_scheduled_payments,
-    add_scheduled_payment,
-    get_salary_days,
-    get_stats,
+    get_planned_income, add_planned_income, delete_planned_income,
+    get_goals, add_goal, set_goal_inactive,
+    get_scheduled_payments, add_scheduled_payment,
+    get_salary_days, get_stats,
 )
-
-from keyboards import main_menu, planned_income_menu_kb, planned_income_actions_kb, goals_menu_kb, goal_actions_kb
+from keyboards import (
+    main_menu, income_menu_kb, planned_income_actions_kb,
+    goals_menu_kb, goal_actions_kb
+)
 
 router = Router()
 
@@ -75,34 +71,22 @@ def _extract_amount(text: str) -> float | None:
 
 
 def _parse_planned_entry(text: str):
-    """
-    'дд.мм сумма описание' → (date, amount, description_or_None)
-    Дата вырезается из текста ДО поиска суммы — чтобы цифры даты не путались с суммой.
-    Returns None if not recognized.
-    """
+    """'дд.мм сумма описание' → (date, amount, description_or_None)"""
     text = text.strip()
-    # Дата должна быть в начале строки
     m = re.match(r'^(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)\s+(.+)$', text)
     if not m:
         return None
-
     date_str = m.group(1)
-    rest = m.group(2).strip()   # всё ПОСЛЕ даты — здесь ищем сумму
-
+    rest = m.group(2).strip()
     parsed_date = _parse_date(date_str)
     if not parsed_date:
         return None
-
-    # Ищем сумму только в rest (дата уже отрезана)
     amount = _extract_amount(rest)
     if not amount:
         return None
-
-    # Описание — rest без числа суммы
     normalized_rest = _normalize_amount(rest)
     desc = re.sub(r'\b\d[\d\s]{0,6}(?:[.,]\d{1,2})?\b', '', normalized_rest).strip()
     desc = re.sub(r'\s+', ' ', desc).strip() or None
-
     return parsed_date, amount, desc
 
 
@@ -113,12 +97,12 @@ def _detect_type_from_desc(desc: str) -> str:
 
 def ask_type_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="📥 Доход", callback_data="pi_type:income"),
-        InlineKeyboardButton(text="📤 Расход", callback_data="pi_type:expense"),
+        InlineKeyboardButton(text="Доход", callback_data="pi_type:income"),
+        InlineKeyboardButton(text="Расход", callback_data="pi_type:expense"),
     ]])
 
 
-# ─── PLANNED INCOME HANDLERS ─────────────────────────────────────────────────
+# ─── РАЗДЕЛ ДОХОДОВ — ЕДИНООБРАЗНЫЙ ИНТЕРФЕЙС ────────────────────────────────
 
 class PlannedIncomeState(StatesGroup):
     waiting_input = State()
@@ -126,18 +110,15 @@ class PlannedIncomeState(StatesGroup):
 
 
 @router.message(F.text == "Доходы")
-async def planned_income_menu(message: Message, state: FSMContext):
+async def income_menu(message: Message, state: FSMContext):
+    """Меню раздела Доходы — по образцу Платежей."""
     await state.clear()
     await message.answer(
-        "<b>Планируемые записи</b>\n\n"
-        "Вноси ожидаемые доходы и расходы по датам.\n"
-        "Напиши одной строкой: <b>дд.мм сумма назначение</b>\n\n"
-        "Примеры:\n"
-        "• <i>25.03 50000 зарплата</i>\n"
-        "• <i>10.04 15000 аренда</i>\n"
-        "• <i>01.05 8000</i> — уточню тип",
+        "<b>Планируемые доходы и расходы</b>\n\n"
+        "Здесь можно записать ожидаемые поступления и траты по датам — "
+        "чтобы видеть прогноз сколько будет денег.",
         parse_mode="HTML",
-        reply_markup=planned_income_menu_kb(),
+        reply_markup=income_menu_kb(),
     )
 
 
@@ -148,15 +129,27 @@ async def planned_income_list(callback: CallbackQuery):
     to = now + timedelta(days=90)
     items = await get_planned_income(user_id, from_date=now.isoformat(), to_date=to.isoformat())
     if not items:
-        await callback.message.answer("Планируемых записей на ближайшие 90 дней нет.")
+        await callback.message.answer(
+            "Планируемых записей на ближайшие 90 дней нет.\n\n"
+            "Добавь ожидаемую зарплату, аренду или другие платежи — "
+            "тогда статистика покажет реальный прогноз."
+        )
         await callback.answer()
         return
+
+    await callback.message.answer("<b>Ожидаемые доходы и расходы:</b>", parse_mode="HTML")
     for item in items:
         exp = item["expected_date"][:10] if isinstance(item["expected_date"], str) else str(item["expected_date"])
-        desc = f"\n{item['description']}" if item.get("description") else ""
-        type_icon = "📥" if item.get("type") == "income" else "📤" if item.get("type") == "expense" else "📋"
+        desc_raw = item.get("description", "") or ""
+        # Убираем служебный префикс [Доход]/[Расход]
+        desc_clean = re.sub(r'^\[(Доход|Расход)\]\s*', '', desc_raw)
+        is_income = "[Доход]" in desc_raw
+        is_expense = "[Расход]" in desc_raw
+        type_icon = "📥" if is_income else "📤" if is_expense else "📋"
+
+        desc_line = f"\n{desc_clean}" if desc_clean else ""
         await callback.message.answer(
-            f"{type_icon} <b>{exp}</b> — {item['amount']:,.0f} ₽{desc}",
+            f"{type_icon} <b>{exp}</b> — {item['amount']:,.0f} ₽{desc_line}",
             parse_mode="HTML",
             reply_markup=planned_income_actions_kb(item["id"]),
         )
@@ -169,9 +162,9 @@ async def planned_income_add_start(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
         "Напиши одной строкой: <b>дата сумма назначение</b>\n\n"
         "Примеры:\n"
-        "• <i>25.03 50000 зарплата</i>\n"
-        "• <i>10.04 15000 аренда</i>\n"
-        "• <i>01.05 8000</i> — уточню тип",
+        "  <i>25.03 50000 зарплата</i>\n"
+        "  <i>10.04 15000 аренда</i>\n"
+        "  <i>01.05 8000</i> — уточню тип",
         parse_mode="HTML",
     )
     await callback.answer()
@@ -180,7 +173,6 @@ async def planned_income_add_start(callback: CallbackQuery, state: FSMContext):
 @router.message(PlannedIncomeState.waiting_input)
 async def planned_income_text_input(message: Message, state: FSMContext):
     parsed = _parse_planned_entry(message.text or "")
-
     if not parsed:
         await message.answer(
             "Не разобрал. Напиши: <i>25.03 50000 зарплата</i> или <i>25.03 50000</i>",
@@ -189,24 +181,18 @@ async def planned_income_text_input(message: Message, state: FSMContext):
         return
 
     parsed_date, amount, desc = parsed
-
     if parsed_date < date.today():
-        await message.answer("Дата уже прошла. Укажи будущую дату, например 25.03.")
+        await message.answer("Дата уже прошла. Укажи будущую дату.")
         return
 
-    await state.update_data(
-        expected_date=parsed_date.isoformat(),
-        amount=amount,
-        description=desc,
-    )
+    await state.update_data(expected_date=parsed_date.isoformat(), amount=amount, description=desc)
 
     if desc:
         type_ = _detect_type_from_desc(desc)
         await _save_planned(message, state, type_=type_)
     else:
         await message.answer(
-            f"Дата: <b>{parsed_date.strftime('%d.%m.%Y')}</b>, сумма: <b>{amount:,.0f} ₽</b>\n\n"
-            "Это доход или расход?",
+            f"<b>{parsed_date.strftime('%d.%m.%Y')}</b> — {amount:,.0f} ₽\n\nЭто доход или расход?",
             parse_mode="HTML",
             reply_markup=ask_type_kb(),
         )
@@ -214,7 +200,6 @@ async def planned_income_text_input(message: Message, state: FSMContext):
 
 
 async def _save_planned(msg_or_cb, state: FSMContext, type_: str):
-    """Сохраняет планируемую запись."""
     is_cb = isinstance(msg_or_cb, CallbackQuery)
     user_id = msg_or_cb.from_user.id
     send = msg_or_cb.message.answer if is_cb else msg_or_cb.answer
@@ -227,17 +212,14 @@ async def _save_planned(msg_or_cb, state: FSMContext, type_: str):
     try:
         type_label = "Доход" if type_ == "income" else "Расход"
         icon = "📥" if type_ == "income" else "📤"
-        # Храним тип в description, т.к. в таблице нет поля type
         stored_desc = f"[{type_label}] {desc}" if desc else f"[{type_label}]"
         await add_planned_income(
-            user_id=user_id,
-            amount=amount,
-            expected_date=expected_date,
-            description=stored_desc,
+            user_id=user_id, amount=amount,
+            expected_date=expected_date, description=stored_desc,
         )
+        desc_str = f" ({desc})" if desc else ""
         await send(
-            f"{icon} <b>Добавлено как {type_label.lower()}.</b>\n"
-            f"{expected_date} — {amount:,.0f} ₽" + (f" ({desc})" if desc else ""),
+            f"{icon} <b>Добавлено.</b> {expected_date} — {amount:,.0f} ₽{desc_str}",
             parse_mode="HTML",
             reply_markup=main_menu(),
         )
@@ -260,15 +242,14 @@ async def planned_income_delete(callback: CallbackQuery):
     await delete_planned_income(income_id, callback.from_user.id)
     try:
         await callback.message.edit_text(
-            callback.message.text + "\n\n<s>Удалено</s>",
-            parse_mode="HTML"
+            callback.message.text + "\n\n<s>Удалено</s>", parse_mode="HTML"
         )
     except Exception:
         await callback.message.answer("Удалено.")
     await callback.answer("Удалено")
 
 
-# ─── GOALS ───────────────────────────────────────────────────────────────────
+# ─── ЦЕЛИ ────────────────────────────────────────────────────────────────────
 
 class GoalState(StatesGroup):
     waiting_name = State()
@@ -280,7 +261,7 @@ class GoalState(StatesGroup):
 async def goals_menu(message: Message):
     await message.answer(
         "<b>Цели накопления</b>\n\n"
-        "Ставь цель — накопить сумму за N месяцев. ИИ оценит реалистичность.",
+        "Поставь цель — накопить сумму за N месяцев. ИИ оценит, реалистично ли это.",
         parse_mode="HTML",
         reply_markup=goals_menu_kb(),
     )
@@ -296,8 +277,8 @@ async def goals_list(callback: CallbackQuery):
     for g in goals:
         await callback.message.answer(
             f"<b>{g['name']}</b>\n"
-            f"Цель: {g['target_amount']:,.0f} ₽ за {g['target_months']} мес. "
-            f"В месяц: {g['monthly_amount']:,.0f} ₽",
+            f"Цель: {g['target_amount']:,.0f} ₽ за {g['target_months']} мес.\n"
+            f"Откладывать: {g['monthly_amount']:,.0f} ₽/мес",
             parse_mode="HTML",
             reply_markup=goal_actions_kb(g["id"]),
         )
@@ -306,7 +287,7 @@ async def goals_list(callback: CallbackQuery):
 
 @router.callback_query(F.data == "goal:add")
 async def goal_add_start(callback: CallbackQuery, state: FSMContext):
-    await callback.message.answer("Название цели (например: «Отпуск», «Ноутбук»):")
+    await callback.message.answer("Название цели (например: «Отпуск», «Ноутбук», «Машина»):")
     await state.set_state(GoalState.waiting_name)
     await callback.answer()
 
@@ -314,7 +295,7 @@ async def goal_add_start(callback: CallbackQuery, state: FSMContext):
 @router.message(GoalState.waiting_name)
 async def goal_name_entered(message: Message, state: FSMContext):
     await state.update_data(name=message.text.strip())
-    await message.answer("Сумма, которую хочешь накопить (руб):")
+    await message.answer("Сколько нужно накопить? (рублей)")
     await state.set_state(GoalState.waiting_amount)
 
 
@@ -338,7 +319,7 @@ async def goal_amount_entered(message: Message, state: FSMContext):
         await message.answer("Введи число, например 100000 или 50к.")
         return
     await state.update_data(target_amount=amount)
-    await message.answer("За сколько месяцев хочешь накопить? (число):")
+    await message.answer("За сколько месяцев хочешь накопить?")
     await state.set_state(GoalState.waiting_months)
 
 
@@ -349,11 +330,13 @@ async def goal_months_entered(message: Message, state: FSMContext):
         if months < 1 or months > 120:
             raise ValueError
     except ValueError:
-        await message.answer("Введи число месяцев от 1 до 120.")
+        await message.answer("Число месяцев от 1 до 120.")
         return
+
     data = await state.get_data()
     target = data["target_amount"]
     monthly = round(target / months, 2)
+
     try:
         from ai_service import evaluate_goal
         stats = await get_stats(message.from_user.id, "month")
@@ -372,23 +355,21 @@ async def goal_months_entered(message: Message, state: FSMContext):
         )
         await message.answer(
             f"<b>{data['name']}</b>\n"
-            f"Цель: {target:,.0f} ₽ за {months} мес. → <b>{monthly:,.0f} ₽/мес</b>\n\n{analysis}",
+            f"{target:,.0f} ₽ за {months} мес. → <b>{monthly:,.0f} ₽/мес</b>\n\n{analysis}",
             parse_mode="HTML",
         )
     except Exception:
         await message.answer(
             f"<b>{data['name']}</b>\n"
-            f"Цель: {target:,.0f} ₽ за {months} мес. → <b>{monthly:,.0f} ₽/мес</b>",
+            f"{target:,.0f} ₽ за {months} мес. → <b>{monthly:,.0f} ₽/мес</b>",
             parse_mode="HTML",
         )
+
     await add_goal(
         user_id=message.from_user.id, name=data["name"],
         target_amount=target, target_months=months, monthly_amount=monthly,
     )
-    await message.answer(
-        "Цель создана. Зайди в «Мои цели» — там можно выставить напоминания в дни зарплаты.",
-        reply_markup=main_menu()
-    )
+    await message.answer("Цель создана.", reply_markup=main_menu())
     await state.clear()
 
 
@@ -414,8 +395,7 @@ async def goal_create_reminders(callback: CallbackQuery):
             amount=per_day, day=day, category="Прочее", remind_days=0,
         )
     await callback.message.answer(
-        f"Готово. Поставил <b>{len(salary_days)}</b> напоминаний "
-        f"({', '.join(map(str, sorted(salary_days)))}-е числа): по {per_day:,.0f} ₽.",
+        f"Поставил напоминания на {', '.join(map(str, sorted(salary_days)))} числа: откладывать по {per_day:,.0f} ₽.",
         parse_mode="HTML",
     )
     await callback.answer()
@@ -425,5 +405,5 @@ async def goal_create_reminders(callback: CallbackQuery):
 async def goal_done(callback: CallbackQuery):
     goal_id = int(callback.data.split(":")[2])
     await set_goal_inactive(goal_id, callback.from_user.id)
-    await callback.message.answer("Цель отмечена как завершённая.")
+    await callback.message.answer("Цель закрыта. Хорошая работа.")
     await callback.answer()

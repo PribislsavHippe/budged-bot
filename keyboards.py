@@ -1,12 +1,12 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 
-# ─── ГЛАВНОЕ МЕНЮ (упрощённое) ───────────────────────────────────────────────
+# ─── ГЛАВНОЕ МЕНЮ ────────────────────────────────────────────────────────────
 
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="Статистика"), KeyboardButton(text="Платежи")],
-        [KeyboardButton(text="Бюджеты"),   KeyboardButton(text="Настройки")],
-        [KeyboardButton(text="Доходы"),    KeyboardButton(text="Цели")],
+        [KeyboardButton(text="Бюджеты"),    KeyboardButton(text="Настройки")],
+        [KeyboardButton(text="Доходы"),     KeyboardButton(text="Цели")],
         [KeyboardButton(text="История")],
     ], resize_keyboard=True)
 
@@ -69,8 +69,8 @@ def stats_period_kb() -> InlineKeyboardMarkup:
 
 def payments_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Добавить платёж", callback_data="payment:add")],
         [InlineKeyboardButton(text="Мои платежи",     callback_data="payment:list")],
+        [InlineKeyboardButton(text="Добавить платёж", callback_data="payment:add")],
     ])
 
 
@@ -83,14 +83,34 @@ def payment_actions_kb(payment_id: int) -> InlineKeyboardMarkup:
     ])
 
 
+# ─── ДОХОДЫ — ЕДИНООБРАЗНОЕ МЕНЮ ─────────────────────────────────────────────
+
+def income_menu_kb() -> InlineKeyboardMarkup:
+    """Меню раздела Доходы — по образцу Платежей."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Мои доходы",         callback_data="planned_income:list")],
+        [InlineKeyboardButton(text="Добавить доход/расход", callback_data="planned_income:add")],
+    ])
+
+
+def planned_income_actions_kb(income_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Удалить", callback_data=f"planned_income:delete:{income_id}")],
+    ])
+
+# Алиас для обратной совместимости
+def planned_income_menu_kb() -> InlineKeyboardMarkup:
+    return income_menu_kb()
+
+
 # ─── ПОДТВЕРЖДЕНИЕ ТРАНЗАКЦИИ ─────────────────────────────────────────────────
 
 def confirm_transaction_kb(confirm_cb: str, cancel_cb: str, edit_cb: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="Верно", callback_data=confirm_cb),
-            InlineKeyboardButton(text="Категория", callback_data=edit_cb),
-            InlineKeyboardButton(text="Нет", callback_data=cancel_cb),
+            InlineKeyboardButton(text="Верно",      callback_data=confirm_cb),
+            InlineKeyboardButton(text="Категория",  callback_data=edit_cb),
+            InlineKeyboardButton(text="Нет",        callback_data=cancel_cb),
         ]
     ])
 
@@ -109,38 +129,23 @@ def settings_kb(has_google: bool = False) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="Час напоминаний", callback_data="settings:reminder_hour")],
     ]
     if has_google:
-        buttons.append([InlineKeyboardButton(text="Google Calendar подключён", callback_data="settings:google_disconnect")])
+        buttons.append([InlineKeyboardButton(text="Google Calendar подключён ✓", callback_data="settings:google_info")])
     else:
         buttons.append([InlineKeyboardButton(text="Подключить Google Calendar", callback_data="settings:google_connect")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-# ─── ПЛАНИРУЕМЫЕ ДОХОДЫ ─────────────────────────────────────────────────────
-
-def planned_income_menu_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Добавить доход", callback_data="planned_income:add")],
-        [InlineKeyboardButton(text="Мои ожидаемые доходы", callback_data="planned_income:list")],
-    ])
-
-
-def planned_income_actions_kb(income_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Удалить", callback_data=f"planned_income:delete:{income_id}")],
-    ])
 
 
 # ─── ЦЕЛИ ───────────────────────────────────────────────────────────────────
 
 def goals_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Мои цели",   callback_data="goal:list")],
         [InlineKeyboardButton(text="Новая цель", callback_data="goal:add")],
-        [InlineKeyboardButton(text="Мои цели", callback_data="goal:list")],
     ])
 
 
 def goal_actions_kb(goal_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Выставить напоминания", callback_data=f"goal:create_reminders:{goal_id}")],
-        [InlineKeyboardButton(text="Завершить цель", callback_data=f"goal:done:{goal_id}")],
+        [InlineKeyboardButton(text="Цель достигнута",       callback_data=f"goal:done:{goal_id}")],
     ])

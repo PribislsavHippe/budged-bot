@@ -18,14 +18,13 @@ router = Router()
 
 
 def _build_reminders_context(salary_days: list, payments: list) -> str:
-    """Формирует строку про дни зарплаты и ближайшие платежи для контекста ИИ."""
     parts = []
     if salary_days:
-        parts.append(f"Дни зарплаты (напомнить внести доход): {', '.join(map(str, sorted(salary_days)))}-е число.")
+        parts.append(f"Дни зарплаты пользователя: {', '.join(map(str, sorted(salary_days)))}-е числа.")
     if payments:
         by_day = sorted(payments, key=lambda p: p["day_of_month"])
         lines = [f"{p['day_of_month']}-е: {p['name']} {p['amount']:,.0f} ₽" for p in by_day]
-        parts.append("Ближайшие платежи по дням месяца: " + "; ".join(lines))
+        parts.append("Регулярные платежи по дням месяца: " + "; ".join(lines))
     return " ".join(parts) if parts else ""
 
 
@@ -56,17 +55,31 @@ def format_confirmation(result: dict) -> str:
     )
 
 
+async def _get_ai_context(user_id: int):
+    """Собирает контекст для ИИ."""
+    stats = await get_stats(user_id, "month")
+    payments = await get_scheduled_payments(user_id)
+    salary_days = await get_salary_days(user_id)
+    budgets = await get_budgets(user_id)
+    now = date.today()
+    try:
+        planned = await get_planned_income(user_id, from_date=now.isoformat(), to_date=(now + timedelta(days=365)).isoformat())
+    except Exception:
+        planned = []
+    return stats, payments, salary_days, budgets, planned
+
+
 # ─── СВОБОДНЫЙ ЧАТ ───────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "ai:chat")
 async def start_ai_chat(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AIState.chatting)
     await callback.message.answer(
-        "<b>Чат с AI</b>\n\n"
-        "Спрашивай про финансы или пиши что потратил — разберу. Например:\n"
-        "— «Хватит ли до зарплаты?»\n"
-        "— «На что улетает больше всего?»\n"
-        "— «Купил кофе 180»\n\n"
+        "<b>Режим чата с ИИ</b>\n\n"
+        "Пиши что потратил или спрашивай про финансы:\n"
+        "— <i>«хватит ли до зарплаты?»</i>\n"
+        "— <i>«на что улетает больше всего?»</i>\n"
+        "— <i>«кофе 180»</i>\n\n"
         "Выйти: /stop",
         parse_mode="HTML"
     )
@@ -77,19 +90,23 @@ async def start_ai_chat(callback: CallbackQuery, state: FSMContext):
 async def handle_ai_chat(message: Message, state: FSMContext):
     if message.text == "/stop":
         await state.clear()
-        await message.answer("Чату конец. Возвращайся когда понадоблюсь.", reply_markup=main_menu())
+        await message.answer("Вышли из чата.", reply_markup=main_menu())
         return
 
-    # Вопросы и просьбы совета — только ответ ИИ, не предлагаем записать как транзакцию
-    if looks_like_question(message.text):
-        result = None
-    else:
-        result = parse_transaction_local(message.text)
-        if not result:
-            try:
-                result = await ai_parse_transaction(message.text)
-            except Exception:
-                result = None
+    text = message.text or ""
+
+    # Вопросы — сразу в ИИ
+    if looks_like_question(text):
+        await _answer_with_ai(message, text)
+        return
+
+    # Пробуем распознать транзакцию
+    result = parse_transaction_local(text)
+    if not result:
+        try:
+            result = await ai_parse_transaction(text)
+        except Exception:
+            result = None
 
     if result:
         await state.update_data(
@@ -111,27 +128,27 @@ async def handle_ai_chat(message: Message, state: FSMContext):
         )
         return
 
-    # Обычный вопрос — отвечаем через AI с контекстом даты и напоминаний
+    # Если не транзакция и не вопрос — всё равно спрашиваем ИИ
+    await _answer_with_ai(message, text)
+
+
+async def _answer_with_ai(message: Message, text: str):
+    """Отправляем вопрос в ИИ с контекстом."""
     await message.answer("Щас подумаю...")
     try:
-        from ai_service import chat_with_ai, build_datetime_context
-        stats = await get_stats(message.from_user.id, "month")
-        payments = await get_scheduled_payments(message.from_user.id)
-        salary_days = await get_salary_days(message.from_user.id)
-        budgets = await get_budgets(message.from_user.id)
-        now = date.today()
-        planned = await get_planned_income(message.from_user.id, from_date=now.isoformat(), to_date=(now + timedelta(days=365)).isoformat())
+        from ai_service import chat_with_ai
+        stats, payments, salary_days, budgets, planned = await _get_ai_context(message.from_user.id)
         context_extra = _build_reminders_context(salary_days, payments)
         response = await chat_with_ai(
-            message.text, stats, payments,
+            text, stats, payments,
             context_extra=context_extra,
             budgets=budgets,
             planned_income=planned[:20],
         )
         await message.answer(clean_markdown(response))
     except Exception as e:
-        logging.error(f"chat error: {e}")
-        await message.answer(f"Не вышло: {str(e)}")
+        logging.error(f"ai chat error: {e}")
+        await message.answer(f"Что-то пошло не так: {str(e)}")
 
 
 # ─── ПОДТВЕРЖДЕНИЕ / РЕДАКТИРОВАНИЕ КАТЕГОРИИ ────────────────────────────────
@@ -148,7 +165,7 @@ async def confirm_transaction(callback: CallbackQuery, state: FSMContext):
             description=data.get("ai_description")
         )
         await callback.message.answer(
-            f"<b>Готово.</b> {data['ai_amount']:,.0f} ₽ — {data['ai_category']}",
+            f"<b>Записал.</b> {data['ai_amount']:,.0f} ₽ — {data['ai_category']}",
             parse_mode="HTML",
             reply_markup=main_menu() if callback.data == "ai_tx:confirm_exit" else None
         )
@@ -199,7 +216,7 @@ async def apply_edited_category(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "ai_tx:cancel_chat")
 async def cancel_chat(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AIState.chatting)
-    await callback.message.answer("Ок, в архив не попадёт.")
+    await callback.message.answer("Не записал.")
     await callback.answer()
 
 
@@ -221,7 +238,6 @@ import re as _re
 
 
 def _looks_like_date_entry(text: str) -> bool:
-    """True if text starts with дд.мм / дд/мм — планируемая запись по дате."""
     return bool(_re.match(r'^\d{1,2}[./]\d{1,2}', text.strip()))
 
 
@@ -231,7 +247,6 @@ class PlannedEntryState(StatesGroup):
 
 @router.message(PlannedEntryState.waiting_description)
 async def planned_entry_description(message: Message, state: FSMContext):
-    """Ждём описание для уже сохранённой даты+суммы."""
     from goals_income import _detect_type_from_desc, _save_planned, ask_type_kb, PlannedIncomeState
     text = message.text.strip() if message.text else ""
     desc = None if text in ("/skip", "") else text
@@ -240,7 +255,6 @@ async def planned_entry_description(message: Message, state: FSMContext):
         type_ = _detect_type_from_desc(desc)
         await _save_planned(message, state, type_=type_)
     else:
-        # Нет описания — спрашиваем тип кнопками
         await message.answer("Это доход или расход?", reply_markup=ask_type_kb())
         await state.set_state(PlannedIncomeState.waiting_type)
 
@@ -256,7 +270,7 @@ async def smart_input(message: Message, state: FSMContext):
 
     text = message.text.strip()
 
-    # Дата в начале → парсим как планируемую запись
+    # Дата в начале → планируемая запись
     if _looks_like_date_entry(text):
         from goals_income import _parse_planned_entry, _detect_type_from_desc, _save_planned, ask_type_kb, PlannedIncomeState
         parsed = _parse_planned_entry(text)
@@ -268,19 +282,16 @@ async def smart_input(message: Message, state: FSMContext):
                 description=desc,
             )
             if desc:
-                # Полная строка — сохраняем сразу
                 type_ = _detect_type_from_desc(desc)
                 await _save_planned(message, state, type_=type_)
             else:
-                # Дата + сумма есть, нет описания — спрашиваем его прямо здесь
                 await state.set_state(PlannedEntryState.waiting_description)
                 await message.answer(
                     f"📅 <b>{found_date.strftime('%d.%m.%Y')}</b>  {amount:,.0f} ₽\n\n"
-                    "Что это? Напиши назначение (зарплата, аренда...) или /skip:",
+                    "Что это? Напиши назначение или /skip:",
                     parse_mode="HTML",
                 )
         else:
-            # Дата есть, но нет суммы
             await state.set_state(PlannedIncomeState.waiting_input)
             await message.answer(
                 "Не нашёл сумму. Напиши полностью: <i>25.03 50000 зарплата</i>",
@@ -288,38 +299,12 @@ async def smart_input(message: Message, state: FSMContext):
             )
         return
 
-    # Вопросы → ИИ-чат
+    # Вопросы и контекстные сообщения → ИИ
     if looks_like_question(text):
-        await message.answer("Щас подумаю...")
-        try:
-            from ai_service import chat_with_ai
-            stats = await get_stats(message.from_user.id, "month")
-            payments = await get_scheduled_payments(message.from_user.id)
-            salary_days = await get_salary_days(message.from_user.id)
-            budgets = await get_budgets(message.from_user.id)
-            now = date.today()
-            try:
-                planned = await get_planned_income(
-                    message.from_user.id,
-                    from_date=now.isoformat(),
-                    to_date=(now + timedelta(days=365)).isoformat()
-                )
-            except Exception:
-                planned = []
-            context_extra = _build_reminders_context(salary_days, payments)
-            response = await chat_with_ai(
-                text, stats, payments,
-                context_extra=context_extra,
-                budgets=budgets,
-                planned_income=planned[:20],
-            )
-            await message.answer(clean_markdown(response))
-        except Exception as e:
-            logging.error(f"smart_input chat error: {e}")
-            await message.answer(f"Не вышло: {str(e)}")
+        await _answer_with_ai(message, text)
         return
 
-    # Попытка распознать транзакцию (название+сумма → расход по умолчанию)
+    # Пробуем распознать транзакцию
     result = parse_transaction_local(text)
     if not result:
         try:
@@ -347,15 +332,5 @@ async def smart_input(message: Message, state: FSMContext):
         )
         return
 
-    # Совсем не понял
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Спросить AI", callback_data="ai:chat")]
-    ])
-    await message.answer(
-        "Не въехал, что записать.\n\n"
-        "Пиши: <i>«штаны 7300»</i>, <i>«бар 2880»</i>, <i>«получил зарплату 50к»</i>.\n"
-        "Или жми кнопку ниже:",
-        parse_mode="HTML",
-        reply_markup=kb
-    )
+    # Не распознали — всё равно идём к ИИ (убираем сообщение "не въехал")
+    await _answer_with_ai(message, text)
