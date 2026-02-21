@@ -7,6 +7,7 @@ def main_menu() -> ReplyKeyboardMarkup:
         [KeyboardButton(text="Статистика"), KeyboardButton(text="Платежи")],
         [KeyboardButton(text="Бюджеты"),   KeyboardButton(text="Настройки")],
         [KeyboardButton(text="Доходы"),    KeyboardButton(text="Цели")],
+        [KeyboardButton(text="История")],
     ], resize_keyboard=True)
 
 
@@ -91,6 +92,12 @@ def confirm_transaction_kb(confirm_cb: str, cancel_cb: str, edit_cb: str) -> Inl
             InlineKeyboardButton(text="Категория", callback_data=edit_cb),
             InlineKeyboardButton(text="Нет", callback_data=cancel_cb),
         ]
+    ])
+
+
+def delete_transaction_kb(transaction_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Удалить", callback_data=f"tx:delete:{transaction_id}")]
     ])
 
 

@@ -2,13 +2,11 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.filters import Command
 
 # Убедитесь, что db.py лежит в корне (рядом с main.py)
-from db import add_transaction, get_stats
-
-# !!! ВАЖНО: Если keyboards.py лежит в папке utils, раскомментируйте вторую строку и закомментируйте первую !!!
-from keyboards import main_menu, expense_categories_kb, income_categories_kb, stats_period_kb
-# from utils.keyboards import main_menu, expense_categories_kb, income_categories_kb, stats_period_kb
+from db import add_transaction, get_stats, get_recent_transactions, delete_transaction
+from keyboards import main_menu, expense_categories_kb, income_categories_kb, stats_period_kb, delete_transaction_kb
 
 router = Router()
 
@@ -192,3 +190,35 @@ async def show_stats(callback: CallbackQuery):
     except Exception as e:
         print(f"Ошибка в статистике: {e}")
         await callback.answer("Ошибка при получении статистики", show_alert=True)
+
+
+# ─── ИСТОРИЯ И УДАЛЕНИЕ ТРАНЗАКЦИЙ ───────────────────────────────────────────
+
+@router.message(F.text == "История")
+@router.message(Command("history"))
+async def show_history(message: Message):
+    txs = await get_recent_transactions(message.from_user.id, limit=10)
+    if not txs:
+        await message.answer("Пока ничего не записано.")
+        return
+    await message.answer("<b>Последние 10 записей:</b>", parse_mode="HTML")
+    for t in txs:
+        type_icon = "📤" if t["type"] == "expense" else "📥"
+        desc = f" — {t['description'][:30]}" if t.get("description") else ""
+        date_str = t["created_at"][:10] if t.get("created_at") else ""
+        await message.answer(
+            f"{type_icon} <b>{t['amount']:,.0f} ₽</b> · {t['category']}{desc}\n<i>{date_str}</i>",
+            parse_mode="HTML",
+            reply_markup=delete_transaction_kb(t["id"])
+        )
+
+
+@router.callback_query(F.data.startswith("tx:delete:"))
+async def delete_transaction_handler(callback: CallbackQuery):
+    tx_id = int(callback.data.split(":")[2])
+    await delete_transaction(tx_id, callback.from_user.id)
+    await callback.message.edit_text(
+        callback.message.text + "\n\n<s>Удалено</s>",
+        parse_mode="HTML"
+    )
+    await callback.answer("Удалено")

@@ -1,7 +1,7 @@
 """Планируемые доходы и цели накопления."""
 from datetime import datetime, date, timedelta
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -16,6 +16,7 @@ from db import (
     add_scheduled_payment,
     get_salary_days,
     get_stats,
+    add_transaction,
 )
 
 from keyboards import main_menu, planned_income_menu_kb, planned_income_actions_kb, goals_menu_kb, goal_actions_kb
@@ -26,16 +27,16 @@ router = Router()
 # ─── PLANNED INCOME ──────────────────────────────────────────────────────────
 
 class PlannedIncomeState(StatesGroup):
-    waiting_date = State()
-    waiting_amount = State()
-    waiting_description = State()
+    waiting_input = State()          # Принимаем дату+сумму+описание одной строкой
+    waiting_type = State()           # Спрашиваем расход или доход (если нет описания)
+    waiting_description = State()    # Старый шаг (если нужно)
 
 
 def _parse_date(s: str) -> date | None:
     """Парсит дату: дд.мм, дд.мм.гггг, дд/мм."""
     s = s.strip().replace(",", ".").replace("/", ".")
     parts = s.split(".")
-    if len(parts) == 2:  # дд.мм
+    if len(parts) == 2:
         try:
             d, m = int(parts[0]), int(parts[1])
             now = date.today()
@@ -43,7 +44,7 @@ def _parse_date(s: str) -> date | None:
             return date(year, m, d)
         except (ValueError, IndexError):
             pass
-    if len(parts) == 3:  # дд.мм.гггг
+    if len(parts) == 3:
         try:
             d, m, y = int(parts[0]), int(parts[1]), int(parts[2])
             if y < 100:
@@ -54,13 +55,83 @@ def _parse_date(s: str) -> date | None:
     return None
 
 
+def _parse_amount_from_text(text: str) -> float | None:
+    import re
+    # Normalize к/тысяч
+    t = text.lower().strip()
+    t = re.sub(r'(\d+(?:[.,]\d+)?)\s*(?:тысяч(?:и|а)?|тыс\.?|к)\b',
+               lambda m: str(int(float(m.group(1).replace(',', '.')) * 1000)), t)
+    # Find number
+    match = re.search(r'(\d[\d\s]*(?:[.,]\d{1,2})?)', t)
+    if match:
+        try:
+            val = float(match.group(1).strip().replace(' ', '').replace(',', '.'))
+            if 1 <= val <= 10_000_000:
+                return val
+        except Exception:
+            pass
+    return None
+
+
+def _parse_planned_input(text: str):
+    """
+    Разбирает строку вида 'дд.мм сумма' или 'дд.мм сумма описание'.
+    Возвращает (date, amount, description_or_None) или None если не распознано.
+    """
+    import re
+    text = text.strip()
+    # Ищем дату в начале
+    date_pattern = re.match(r'^(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)\s+(.+)$', text)
+    if not date_pattern:
+        return None
+    date_str = date_pattern.group(1)
+    rest = date_pattern.group(2).strip()
+    
+    parsed_date = _parse_date(date_str)
+    if not parsed_date:
+        return None
+    
+    # Из остатка вытаскиваем сумму и описание
+    # Сумма может быть в начале или в конце
+    amount_match = re.search(r'(\d[\d\s]*(?:[.,]\d{1,2})?(?:\s*(?:тысяч|тыс\.?|к))?)\b', rest, re.IGNORECASE)
+    if not amount_match:
+        return None
+    
+    amount = _parse_amount_from_text(amount_match.group(1))
+    if not amount:
+        return None
+    
+    # Описание — остаток без суммы
+    desc = rest[:amount_match.start()].strip() + ' ' + rest[amount_match.end():].strip()
+    desc = desc.strip()
+    if not desc:
+        desc = None
+    
+    return parsed_date, amount, desc
+
+
+def ask_type_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Доход 📥", callback_data="pi_type:income"),
+            InlineKeyboardButton(text="Расход 📤", callback_data="pi_type:expense"),
+        ]
+    ])
+
+
 @router.message(F.text == "Доходы")
 async def planned_income_menu(message: Message):
     await message.answer(
-        "<b>Планируемые доходы</b>\n\n"
-        "Добавляй ожидаемые поступления по датам — помогут в прогнозах и анализе.",
+        "<b>Планируемые доходы и расходы</b>\n\n"
+        "Введи данные одной строкой:\n"
+        "— <i>25.03 50000</i> — спрошу, доход или расход\n"
+        "— <i>25.03 50000 зарплата</i> — запишу сразу с категорией\n\n"
+        "Или выбери действие:",
         parse_mode="HTML",
         reply_markup=planned_income_menu_kb(),
+    )
+    await message.answer(
+        "Можно также просто написать дату и сумму сюда:",
     )
 
 
@@ -71,7 +142,7 @@ async def planned_income_list(callback: CallbackQuery):
     to = now + timedelta(days=90)
     items = await get_planned_income(user_id, from_date=now.isoformat(), to_date=to.isoformat())
     if not items:
-        await callback.message.answer("Ожидаемых доходов на ближайшие 90 дней нет. Добавь — помогу с прогнозом.")
+        await callback.message.answer("Ожидаемых поступлений на ближайшие 90 дней нет. Добавь — помогу с прогнозом.")
         await callback.answer()
         return
     for item in items:
@@ -88,54 +159,93 @@ async def planned_income_list(callback: CallbackQuery):
 @router.callback_query(F.data == "planned_income:add")
 async def planned_income_add_start(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
-        "Введи дату ожидаемого дохода: <i>дд.мм</i> или <i>дд.мм.гггг</i>. Например: 25.03 или 10.04.2025",
+        "Введи данные одной строкой:\n"
+        "— <i>25.03 50000</i> — спрошу, доход или расход\n"
+        "— <i>25.03 50000 зарплата</i> — запишу сразу автоматически",
         parse_mode="HTML",
     )
-    await state.set_state(PlannedIncomeState.waiting_date)
+    await state.set_state(PlannedIncomeState.waiting_input)
     await callback.answer()
 
 
-@router.message(PlannedIncomeState.waiting_date)
-async def planned_income_date_entered(message: Message, state: FSMContext):
-    d = _parse_date(message.text)
-    if not d or d < date.today():
-        await message.answer("Не похоже на дату в будущем. Напиши дд.мм или дд.мм.гггг.")
+@router.message(PlannedIncomeState.waiting_input)
+async def planned_income_input(message: Message, state: FSMContext):
+    parsed = _parse_planned_input(message.text)
+    if not parsed:
+        await message.answer(
+            "Не разобрал. Напиши так: <i>25.03 50000</i> или <i>25.03 50000 аванс</i>",
+            parse_mode="HTML"
+        )
         return
-    await state.update_data(expected_date=d.isoformat())
-    await message.answer("Сумма ожидаемого дохода (в рублях):")
-    await state.set_state(PlannedIncomeState.waiting_amount)
-
-
-@router.message(PlannedIncomeState.waiting_amount)
-async def planned_income_amount_entered(message: Message, state: FSMContext):
-    try:
-        amount = float(message.text.strip().replace(",", ".").replace(" ", ""))
-        if amount <= 0:
-            raise ValueError
-    except ValueError:
-        await message.answer("Введи число, например 50000.")
+    
+    parsed_date, amount, desc = parsed
+    if parsed_date < date.today():
+        await message.answer("Дата уже прошла. Укажи будущую дату.")
         return
-    await state.update_data(amount=amount)
-    await message.answer("Краткое описание (или /skip): например «Аванс», «Фриланс».")
-    await state.set_state(PlannedIncomeState.waiting_description)
+    
+    await state.update_data(expected_date=parsed_date.isoformat(), amount=amount, description=desc)
+    
+    if desc:
+        # Есть описание — определяем тип автоматически и сохраняем
+        await _save_planned_with_ai(message, state, desc, amount, parsed_date)
+    else:
+        # Нет описания — спрашиваем тип
+        await message.answer(
+            f"Дата: <b>{parsed_date.strftime('%d.%m.%Y')}</b>, сумма: <b>{amount:,.0f} ₽</b>\n\nЭто доход или расход?",
+            parse_mode="HTML",
+            reply_markup=ask_type_kb(),
+        )
+        await state.set_state(PlannedIncomeState.waiting_type)
 
 
-@router.message(PlannedIncomeState.waiting_description)
-async def planned_income_description_entered(message: Message, state: FSMContext):
-    data = await state.get_data()
-    desc = None if message.text == "/skip" else message.text.strip() or None
+async def _save_planned_with_ai(message: Message, state: FSMContext, desc: str, amount: float, expected_date):
+    """Автоопределяет тип по описанию и сохраняет."""
+    from categorizer import detect_type, detect_category
+    type_ = detect_type(desc) or "income"
+    # Если не понятно — пробуем через AI
+    if not type_:
+        try:
+            from ai_service import parse_transaction as ai_parse
+            result = await ai_parse(desc)
+            if result:
+                type_ = result.get("type", "income")
+        except Exception:
+            type_ = "income"
+    
     await add_planned_income(
         user_id=message.from_user.id,
-        amount=data["amount"],
-        expected_date=data["expected_date"],
+        amount=amount,
+        expected_date=expected_date,
         description=desc,
     )
+    type_label = "Доход" if type_ == "income" else "Расход"
     await message.answer(
-        f"<b>Добавлено.</b> {data['expected_date']} — {data['amount']:,.0f} ₽.",
+        f"<b>Добавлено как {type_label.lower()}.</b>\n{expected_date.strftime('%d.%m.%Y')} — {amount:,.0f} ₽ ({desc})",
         parse_mode="HTML",
         reply_markup=main_menu(),
     )
     await state.clear()
+
+
+@router.callback_query(F.data.in_({"pi_type:income", "pi_type:expense"}))
+async def planned_income_type_chosen(callback: CallbackQuery, state: FSMContext):
+    type_ = callback.data.split(":")[1]
+    data = await state.get_data()
+    
+    await add_planned_income(
+        user_id=callback.from_user.id,
+        amount=data["amount"],
+        expected_date=data["expected_date"],
+        description=("Доход" if type_ == "income" else "Расход"),
+    )
+    type_label = "Доход" if type_ == "income" else "Расход"
+    await callback.message.answer(
+        f"<b>Добавлено как {type_label.lower()}.</b>\n{data['expected_date']} — {data['amount']:,.0f} ₽",
+        parse_mode="HTML",
+        reply_markup=main_menu(),
+    )
+    await state.clear()
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("planned_income:delete:"))

@@ -213,9 +213,15 @@ async def cancel_exit(callback: CallbackQuery, state: FSMContext):
 # ─── УМНЫЙ ВВОД (вне чата и вне других состояний) ───────────────────────────
 
 MENU_TEXTS = {
-    "Статистика", "Платежи", "Бюджеты", "Настройки", "Доходы", "Цели",
-    "/start", "/help", "/stop", "/skip"
+    "Статистика", "Платежи", "Бюджеты", "Настройки", "Доходы", "Цели", "История",
+    "/start", "/help", "/stop", "/skip", "/history"
 }
+
+import re as _re
+
+def _looks_like_planned_input(text: str) -> bool:
+    """True if text starts with a date pattern like дд.мм or дд/мм."""
+    return bool(_re.match(r'^\d{1,2}[./]\d{1,2}', text.strip()))
 
 
 @router.message(F.text)
@@ -225,6 +231,20 @@ async def smart_input(message: Message, state: FSMContext):
 
     current_state = await state.get_state()
     if current_state is not None:
+        return
+
+    # If it looks like a planned income/expense entry (starts with date), ignore here
+    # — it will be handled by goals_income if user is in that state
+    # But if they're NOT in a state and type a date+amount, guide them
+    if _looks_like_planned_input(message.text):
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Добавить в планируемые", callback_data="planned_income:add")]
+        ])
+        await message.answer(
+            "Похоже на планируемый доход/расход. Нажми кнопку и отправь эту строку ещё раз:",
+            reply_markup=kb
+        )
         return
 
     # Вопросы — сразу в чат с ИИ, не предлагаем записать транзакцию

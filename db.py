@@ -50,6 +50,20 @@ async def add_transaction(user_id: int, type_: str, amount: float, category: str
     return res.data[0]
 
 
+async def delete_transaction(transaction_id: int, user_id: int):
+    supabase.table("transactions").delete()\
+        .eq("id", transaction_id).eq("user_id", user_id).execute()
+
+
+async def get_recent_transactions(user_id: int, limit: int = 10):
+    res = supabase.table("transactions").select("*")\
+        .eq("user_id", user_id)\
+        .order("created_at", desc=True)\
+        .limit(limit)\
+        .execute()
+    return res.data
+
+
 def _since_datetime(period: str) -> str | None:
     """Возвращает ISO-дату с какого момента брать транзакции, или None для 'all'."""
     now = datetime.now(timezone.utc)
