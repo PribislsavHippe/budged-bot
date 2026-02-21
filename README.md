@@ -135,3 +135,4 @@ budget_bot/
 | `WEBHOOK_PATH` | `/webhook` (по умолчанию) |
 | `WEBAPP_HOST` | `0.0.0.0` |
 | `WEBAPP_PORT` | `8080` |
+| `GROQ_API_KEY` | API-ключ [Groq](https://console.groq.com) для AI (распознавание транзакций, советы, отчёты) |

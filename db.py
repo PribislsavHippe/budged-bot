@@ -63,23 +63,27 @@ async def get_transactions(user_id: int, period: str = "month"):
 
 
 async def get_stats(user_id: int, period: str = "month") -> dict:
-    """Возвращает сводку доходов/расходов по категориям"""
+    """Возвращает сводку доходов/расходов по категориям."""
     transactions = await get_transactions(user_id, period)
 
     income = sum(t["amount"] for t in transactions if t["type"] == "income")
     expenses = sum(t["amount"] for t in transactions if t["type"] == "expense")
 
     by_category = {}
+    by_income_category = {}
     for t in transactions:
+        cat = t["category"]
         if t["type"] == "expense":
-            cat = t["category"]
             by_category[cat] = by_category.get(cat, 0) + t["amount"]
+        else:
+            by_income_category[cat] = by_income_category.get(cat, 0) + t["amount"]
 
     return {
         "income": income,
         "expenses": expenses,
         "balance": income - expenses,
         "by_category": dict(sorted(by_category.items(), key=lambda x: x[1], reverse=True)),
+        "by_income_category": dict(sorted(by_income_category.items(), key=lambda x: x[1], reverse=True)),
         "transactions_count": len(transactions)
     }
 

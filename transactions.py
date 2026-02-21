@@ -144,30 +144,43 @@ async def show_stats(callback: CallbackQuery):
         period_names = {"week": "За неделю", "month": "За месяц", "all": "Всё время"}
         period_label = period_names.get(period, "За период")
 
-        # Формируем разбивку по категориям
+        # Расходы по категориям
         cat_text = ""
-        for cat, amount in stats.get("by_category", {}).items():
-            total_exp = stats.get("expenses", 1) # Защита от деления на 0
-            if total_exp == 0: total_exp = 1
-            
+        by_category = stats.get("by_category", {})
+        total_exp = stats.get("expenses", 1)
+        if total_exp == 0:
+            total_exp = 1
+        for cat, amount in by_category.items():
             pct = (amount / total_exp * 100)
-            # Рисуем прогресс-бар (макс 10 квадратиков)
             bar_len = int(pct / 10)
             bar = "█" * bar_len + "░" * (10 - bar_len)
-            
             cat_text += f"\n{cat}: <b>{amount:,.0f} ₽</b> ({pct:.0f}%)\n{bar}\n"
 
-        balance = stats.get("balance", 0)
+        # Доходы по категориям
+        income_cat_text = ""
+        by_income = stats.get("by_income_category", {})
+        total_inc = stats.get("income", 1)
+        if total_inc == 0:
+            total_inc = 1
+        for cat, amount in by_income.items():
+            pct = (amount / total_inc * 100)
+            bar_len = int(pct / 10)
+            bar = "█" * bar_len + "░" * (10 - bar_len)
+            income_cat_text += f"\n{cat}: <b>{amount:,.0f} ₽</b> ({pct:.0f}%)\n{bar}\n"
 
+        balance = stats.get("balance", 0)
         if not cat_text:
             cat_text = "\nПока пусто"
+        if not income_cat_text:
+            income_cat_text = "\nПока пусто"
 
         await callback.message.answer(
             f"<b>Статистика — {period_label}</b>\n\n"
             f"Доходы: <b>{stats.get('income', 0):,.2f} ₽</b>\n"
             f"Расходы: <b>{stats.get('expenses', 0):,.2f} ₽</b>\n"
             f"Баланс: <b>{balance:,.2f} ₽</b>\n\n"
-            f"<b>По категориям:</b>{cat_text}",
+            f"<b>Расходы по категориям:</b>{cat_text}\n"
+            f"<b>Доходы по категориям:</b>{income_cat_text}",
             parse_mode="HTML"
         )
         await callback.answer()

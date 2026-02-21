@@ -1,10 +1,31 @@
 import os
 import json
 import logging
-import google.generativeai as genai
+from groq import AsyncGroq
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel("gemini-2.5-flash-lite")
+_client: AsyncGroq | None = None
+GROQ_MODEL = "openai/gpt-oss-20b"
+
+
+def _get_client() -> AsyncGroq:
+    global _client
+    if _client is None:
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise ValueError("GROQ_API_KEY не задан в окружении")
+        _client = AsyncGroq(api_key=api_key)
+    return _client
+
+
+async def _generate(prompt: str) -> str:
+    """Async вызов Groq (openai/gpt-oss-20b)."""
+    client = _get_client()
+    response = await client.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return (response.choices[0].message.content or "").strip()
+
 
 EXPENSE_CATEGORIES = [
     "Еда", "Транспорт", "Жильё", "Развлечения",
@@ -16,12 +37,6 @@ INCOME_CATEGORIES = [
     "Зарплата", "Оплата за неделю", "Аванс", "Частичная оплата",
     "Фриланс", "Подработка", "Подарок", "Инвестиции", "Прочее"
 ]
-
-
-async def _generate(prompt: str) -> str:
-    """Нативный async вызов Gemini."""
-    response = await model.generate_content_async(prompt)
-    return response.text.strip()
 
 
 async def parse_transaction(text: str) -> dict | None:
