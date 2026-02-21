@@ -65,7 +65,6 @@ async def get_recent_transactions(user_id: int, limit: int = 10):
 
 
 def _since_datetime(period: str) -> str | None:
-    """Возвращает ISO-дату с какого момента брать транзакции, или None для 'all'."""
     now = datetime.now(timezone.utc)
     if period == "week":
         since = now - timedelta(days=7)
@@ -77,19 +76,15 @@ def _since_datetime(period: str) -> str | None:
 
 
 async def get_transactions(user_id: int, period: str = "month"):
-    """period: 'week', 'month', 'all'"""
     query = supabase.table("transactions").select("*").eq("user_id", user_id)
-
     since = _since_datetime(period)
     if since:
         query = query.gte("created_at", since)
-
     res = query.order("created_at", desc=True).execute()
     return res.data
 
 
 async def get_stats(user_id: int, period: str = "month") -> dict:
-    """Возвращает сводку доходов/расходов по категориям."""
     transactions = await get_transactions(user_id, period)
 
     income = sum(t["amount"] for t in transactions if t["type"] == "income")
@@ -116,7 +111,8 @@ async def get_stats(user_id: int, period: str = "month") -> dict:
 
 # ─── SCHEDULED PAYMENTS ──────────────────────────────────
 
-async def add_scheduled_payment(user_id: int, name: str, amount: float, day: int, category: str = "Обязательные", remind_days: int = 2):
+async def add_scheduled_payment(user_id: int, name: str, amount: float, day: int,
+                                 category: str = "Обязательные", remind_days: int = 2):
     data = {
         "user_id": user_id,
         "name": name,
@@ -141,11 +137,9 @@ async def delete_scheduled_payment(payment_id: int, user_id: int):
 
 
 async def get_payments_due_soon(days_ahead: int = 3):
-    """Найти платежи, которые наступят через days_ahead дней"""
     from datetime import datetime
     today = datetime.now().day
     target_days = [(today + i - 1) % 31 + 1 for i in range(days_ahead + 1)]
-
     res = supabase.table("scheduled_payments").select("*, users(*)")\
         .in_("day_of_month", target_days).eq("is_active", True).execute()
     return res.data
@@ -189,46 +183,52 @@ async def get_google_token(user_id: int):
 # ─── SALARY DAYS ─────────────────────────────────────────
 
 async def get_salary_days(user_id: int) -> list[int]:
-    """Возвращает список дней зарплаты пользователя."""
     user = await get_user(user_id)
     if not user:
         return []
-    
-    # Сначала проверяем новое поле salary_days
     days_str = user.get("salary_days", "")
     if days_str:
         try:
             return [int(d.strip()) for d in days_str.split(",") if d.strip().isdigit()]
         except Exception:
             pass
-    
-    # Fallback на старое поле salary_day
     day = user.get("salary_day")
     return [day] if day else []
 
 
 async def set_salary_days(user_id: int, days: list[int]):
-    """Сохраняет дни зарплаты."""
     days_str = ",".join(str(d) for d in sorted(days))
     await update_user(user_id, {"salary_days": days_str, "salary_day": days[0] if days else None})
 
 
-# ─── PLANNED INCOME (планируемые доходы) ─────────────────────────────────────
+# ─── PLANNED INCOME (планируемые доходы/расходы по датам) ────────────────────
 
-async def add_planned_income(user_id: int, amount: float, expected_date: "datetime.date", description: str = None):
-    """Добавить ожидаемый доход на дату."""
+async def add_planned_income(
+    user_id: int,
+    amount: float,
+    expected_date,
+    description: str = None,
+    type_: str = "income",  # "income" или "expense"
+):
+    """Добавить планируемый доход или расход на дату."""
     data = {
         "user_id": user_id,
         "amount": amount,
         "expected_date": expected_date.isoformat() if hasattr(expected_date, "isoformat") else str(expected_date),
         "description": description,
     }
-    res = supabase.table("planned_income").insert(data).execute()
-    return res.data[0]
+    # Пробуем сохранить поле type — если столбца нет в БД, молча игнорируем
+    try:
+        data_with_type = {**data, "type": type_}
+        res = supabase.table("planned_income").insert(data_with_type).execute()
+        return res.data[0]
+    except Exception:
+        # Fallback без поля type (старая схема)
+        res = supabase.table("planned_income").insert(data).execute()
+        return res.data[0]
 
 
 async def get_planned_income(user_id: int, from_date: str = None, to_date: str = None):
-    """Планируемые доходы за период. Даты в ISO (YYYY-MM-DD)."""
     query = supabase.table("planned_income").select("*").eq("user_id", user_id)
     if from_date:
         query = query.gte("expected_date", from_date)

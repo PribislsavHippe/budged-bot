@@ -5,6 +5,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.filters import Command
 
 from db import add_transaction, get_stats, get_scheduled_payments, get_salary_days, get_budgets, get_planned_income
 from keyboards import (
@@ -56,7 +57,6 @@ def format_confirmation(result: dict) -> str:
 
 
 async def _get_ai_context(user_id: int):
-    """Собирает контекст для ИИ."""
     stats = await get_stats(user_id, "month")
     payments = await get_scheduled_payments(user_id)
     salary_days = await get_salary_days(user_id)
@@ -72,35 +72,53 @@ async def _get_ai_context(user_id: int):
 # ─── СВОБОДНЫЙ ЧАТ ───────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "ai:chat")
-async def start_ai_chat(callback: CallbackQuery, state: FSMContext):
+async def start_ai_chat_callback(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AIState.chatting)
     await callback.message.answer(
-        "<b>Режим чата с ИИ</b>\n\n"
+        "<b>Режим ИИ-чата</b>\n\n"
         "Пиши что потратил или спрашивай про финансы:\n"
         "— <i>«хватит ли до зарплаты?»</i>\n"
         "— <i>«на что улетает больше всего?»</i>\n"
         "— <i>«кофе 180»</i>\n\n"
-        "Выйти: /stop",
+        "Выйти: /stop или /cancel",
         parse_mode="HTML"
     )
     await callback.answer()
 
 
+@router.message(F.text == "ИИ-чат")
+async def start_ai_chat_button(message: Message, state: FSMContext):
+    current = await state.get_state()
+    if current == AIState.chatting:
+        await message.answer("Уже в режиме чата. Пиши что надо. /stop для выхода.")
+        return
+    await state.set_state(AIState.chatting)
+    await message.answer(
+        "<b>Режим ИИ-чата</b>\n\n"
+        "Пиши что потратил или спрашивай про финансы:\n"
+        "— <i>«хватит ли до зарплаты?»</i>\n"
+        "— <i>«на что улетает больше всего?»</i>\n"
+        "— <i>«кофе 180»</i>\n\n"
+        "Выйти: /stop или /cancel",
+        parse_mode="HTML"
+    )
+
+
+@router.message(Command("stop"), AIState.chatting)
+@router.message(Command("cancel"), AIState.chatting)
+async def stop_ai_chat(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Вышли из чата.", reply_markup=main_menu())
+
+
 @router.message(AIState.chatting)
 async def handle_ai_chat(message: Message, state: FSMContext):
-    if message.text == "/stop":
-        await state.clear()
-        await message.answer("Вышли из чата.", reply_markup=main_menu())
-        return
-
     text = message.text or ""
 
-    # Вопросы — сразу в ИИ
     if looks_like_question(text):
         await _answer_with_ai(message, text)
         return
 
-    # Пробуем распознать транзакцию
     result = parse_transaction_local(text)
     if not result:
         try:
@@ -128,12 +146,10 @@ async def handle_ai_chat(message: Message, state: FSMContext):
         )
         return
 
-    # Если не транзакция и не вопрос — всё равно спрашиваем ИИ
     await _answer_with_ai(message, text)
 
 
 async def _answer_with_ai(message: Message, text: str):
-    """Отправляем вопрос в ИИ с контекстом."""
     await message.answer("Щас подумаю...")
     try:
         from ai_service import chat_with_ai
@@ -216,7 +232,7 @@ async def apply_edited_category(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "ai_tx:cancel_chat")
 async def cancel_chat(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AIState.chatting)
-    await callback.message.answer("Не записал.")
+    await callback.message.answer("Не записал. Продолжай.")
     await callback.answer()
 
 
@@ -231,7 +247,7 @@ async def cancel_exit(callback: CallbackQuery, state: FSMContext):
 
 MENU_TEXTS = {
     "Статистика", "Платежи", "Бюджеты", "Настройки", "Доходы", "Цели", "История",
-    "/start", "/help", "/stop", "/skip", "/history"
+    "ИИ-чат", "/start", "/help", "/stop", "/skip", "/history", "/cancel"
 }
 
 import re as _re
@@ -299,7 +315,7 @@ async def smart_input(message: Message, state: FSMContext):
             )
         return
 
-    # Вопросы и контекстные сообщения → ИИ
+    # Вопросы → ИИ
     if looks_like_question(text):
         await _answer_with_ai(message, text)
         return
@@ -332,5 +348,5 @@ async def smart_input(message: Message, state: FSMContext):
         )
         return
 
-    # Не распознали — всё равно идём к ИИ (убираем сообщение "не въехал")
+    # Не распознали — идём к ИИ
     await _answer_with_ai(message, text)

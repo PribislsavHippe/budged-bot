@@ -5,7 +5,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from db import set_budget, get_budgets, get_stats
-from keyboards import main_menu, EXPENSE_CATEGORIES
+from keyboards import main_menu, EXPENSE_CATEGORIES, cancel_kb
 
 router = Router()
 
@@ -15,16 +15,17 @@ class BudgetState(StatesGroup):
     entering_limit = State()
 
 
-def budget_categories_kb():
+def budget_categories_kb() -> InlineKeyboardMarkup:
     buttons = []
     row = []
-    for i, cat in enumerate(EXPENSE_CATEGORIES):
+    for cat in EXPENSE_CATEGORIES:
         row.append(InlineKeyboardButton(text=cat, callback_data=f"budget_cat:{cat}"))
         if len(row) == 2:
             buttons.append(row)
             row = []
     if row:
         buttons.append(row)
+    buttons.append([InlineKeyboardButton(text="Отмена", callback_data="cancel")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -36,7 +37,7 @@ async def budgets_menu(message: Message):
     if not budgets:
         await message.answer(
             "<b>Бюджеты по категориям</b>\n\n"
-            "Лимитов пока нет. Поставь — буду нервировать, когда будешь подбираться к потолку.\n\n"
+            "Лимитов пока нет. Поставь — буду предупреждать когда будешь подбираться к потолку.\n\n"
             "Выбери категорию:",
             parse_mode="HTML",
             reply_markup=budget_categories_kb()
@@ -60,14 +61,13 @@ async def budgets_menu(message: Message):
         bar = "█" * bar_filled + "░" * (10 - bar_filled)
 
         text += (
-            f"{b['category']}\n"
+            f"<b>{b['category']}</b>\n"
             f"{bar} {status}\n"
             f"Потрачено: {spent:,.0f} / {limit:,.0f} ₽\n\n"
         )
 
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Добавить или изменить лимит", callback_data="budget:add")]
+        [InlineKeyboardButton(text="Добавить / изменить лимит", callback_data="budget:add")]
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
@@ -83,7 +83,11 @@ async def budget_add_start(callback: CallbackQuery, state: FSMContext):
 async def budget_category_chosen(callback: CallbackQuery, state: FSMContext):
     category = callback.data.split(":", 1)[1]
     await state.update_data(category=category)
-    await callback.message.answer(f"Категория: {category}\n\nВведи месячный лимит в рублях:")
+    await callback.message.answer(
+        f"Категория: <b>{category}</b>\n\nВведи месячный лимит в рублях:",
+        parse_mode="HTML",
+        reply_markup=cancel_kb()
+    )
     await state.set_state(BudgetState.entering_limit)
     await callback.answer()
 
@@ -92,14 +96,16 @@ async def budget_category_chosen(callback: CallbackQuery, state: FSMContext):
 async def budget_limit_entered(message: Message, state: FSMContext):
     try:
         limit = float(message.text.strip().replace(",", ".").replace(" ", ""))
+        if limit <= 0:
+            raise ValueError
         data = await state.get_data()
         await set_budget(message.from_user.id, data["category"], limit)
         await message.answer(
-            f"<b>Лимит поставлен.</b> {data['category']}: <b>{limit:,.0f} ₽/месяц</b>. "
-            f"Пилить буду на 80% и когда перейдёшь черту.",
+            f"<b>Лимит поставлен.</b> {data['category']}: <b>{limit:,.0f} ₽/месяц</b>.\n"
+            f"Буду предупреждать на 80% и при превышении.",
             parse_mode="HTML",
             reply_markup=main_menu()
         )
         await state.clear()
     except ValueError:
-        await message.answer("Нужна сумма числом. Без фантазий.")
+        await message.answer("Нужна сумма числом. Например: 15000", reply_markup=cancel_kb())

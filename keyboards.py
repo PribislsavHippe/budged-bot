@@ -7,7 +7,7 @@ def main_menu() -> ReplyKeyboardMarkup:
         [KeyboardButton(text="Статистика"), KeyboardButton(text="Платежи")],
         [KeyboardButton(text="Бюджеты"),    KeyboardButton(text="Настройки")],
         [KeyboardButton(text="Доходы"),     KeyboardButton(text="Цели")],
-        [KeyboardButton(text="История")],
+        [KeyboardButton(text="История"),    KeyboardButton(text="ИИ-чат")],
     ], resize_keyboard=True)
 
 
@@ -53,6 +53,25 @@ def income_categories_kb(prefix: str = "cat_inc") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+# ─── УНИВЕРСАЛЬНАЯ КНОПКА ОТМЕНЫ ─────────────────────────────────────────────
+
+def cancel_kb(text: str = "Отмена") -> InlineKeyboardMarkup:
+    """Одна кнопка «Отмена» — для любого шага ввода."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=text, callback_data="cancel")]
+    ])
+
+
+def skip_cancel_kb() -> InlineKeyboardMarkup:
+    """Кнопки «Пропустить» и «Отмена» — для необязательных шагов."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Пропустить", callback_data="skip"),
+            InlineKeyboardButton(text="Отмена",     callback_data="cancel"),
+        ]
+    ])
+
+
 # ─── СТАТИСТИКА ───────────────────────────────────────────────────────────────
 
 def stats_period_kb() -> InlineKeyboardMarkup:
@@ -88,7 +107,7 @@ def payment_actions_kb(payment_id: int) -> InlineKeyboardMarkup:
 def income_menu_kb() -> InlineKeyboardMarkup:
     """Меню раздела Доходы — по образцу Платежей."""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Мои доходы",         callback_data="planned_income:list")],
+        [InlineKeyboardButton(text="Мои записи",         callback_data="planned_income:list")],
         [InlineKeyboardButton(text="Добавить доход/расход", callback_data="planned_income:add")],
     ])
 
@@ -132,6 +151,7 @@ def settings_kb(has_google: bool = False) -> InlineKeyboardMarkup:
         buttons.append([InlineKeyboardButton(text="Google Calendar подключён ✓", callback_data="settings:google_info")])
     else:
         buttons.append([InlineKeyboardButton(text="Подключить Google Calendar", callback_data="settings:google_connect")])
+    buttons.append([InlineKeyboardButton(text="Пройти онбординг заново", callback_data="settings:restart_onboarding")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 

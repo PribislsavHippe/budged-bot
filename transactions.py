@@ -9,7 +9,10 @@ from db import (
     add_transaction, get_stats, get_recent_transactions, delete_transaction,
     get_scheduled_payments, get_planned_income, get_salary_days
 )
-from keyboards import main_menu, expense_categories_kb, income_categories_kb, stats_period_kb, delete_transaction_kb
+from keyboards import (
+    main_menu, expense_categories_kb, income_categories_kb,
+    stats_period_kb, delete_transaction_kb, cancel_kb, skip_cancel_kb
+)
 
 router = Router()
 
@@ -28,9 +31,12 @@ class TransactionState(StatesGroup):
 @router.message(F.text == "Добавить расход")
 async def add_expense_start(message: Message, state: FSMContext):
     await message.answer(
-        "Просто пиши в чат что потратил: <i>«кофе 200»</i>, <i>«такси 350»</i> — разберу сам.",
-        parse_mode="HTML"
+        "Просто пиши в чат что потратил: <i>«кофе 200»</i>, <i>«такси 350»</i> — разберу сам.\n\n"
+        "Или выбери категорию вручную:",
+        parse_mode="HTML",
+        reply_markup=expense_categories_kb()
     )
+    await state.set_state(TransactionState.choosing_expense_category)
 
 
 @router.callback_query(F.data.startswith("cat_exp:"))
@@ -38,7 +44,11 @@ async def expense_category_chosen(callback: CallbackQuery, state: FSMContext):
     try:
         category = callback.data.split(":", 1)[1]
         await state.update_data(category=category)
-        await callback.message.answer(f"Категория: {category}\n\nСумма:")
+        await callback.message.answer(
+            f"Категория: <b>{category}</b>\n\nСумма:",
+            parse_mode="HTML",
+            reply_markup=cancel_kb()
+        )
         await state.set_state(TransactionState.entering_expense_amount)
         await callback.answer()
     except IndexError:
@@ -52,10 +62,13 @@ async def expense_amount_entered(message: Message, state: FSMContext):
         if amount <= 0:
             raise ValueError
         await state.update_data(amount=amount)
-        await message.answer("Описание или /skip:")
+        await message.answer(
+            "Описание (необязательно):",
+            reply_markup=skip_cancel_kb()
+        )
         await state.set_state(TransactionState.entering_expense_desc)
     except ValueError:
-        await message.answer("Сумма числом, например 350.")
+        await message.answer("Сумма числом, например 350.", reply_markup=cancel_kb())
 
 
 @router.message(TransactionState.entering_expense_desc)
@@ -77,14 +90,35 @@ async def expense_desc_entered(message: Message, state: FSMContext):
     await state.clear()
 
 
+@router.callback_query(F.data == "skip", TransactionState.entering_expense_desc)
+async def expense_desc_skipped(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    await add_transaction(
+        user_id=callback.from_user.id,
+        type_="expense",
+        amount=data["amount"],
+        category=data["category"],
+    )
+    await callback.message.answer(
+        f"<b>Записал.</b> {data['category']}: <b>{data['amount']:,.2f} ₽</b>",
+        parse_mode="HTML",
+        reply_markup=main_menu()
+    )
+    await state.clear()
+    await callback.answer()
+
+
 # ─── ДОХОДЫ ──────────────────────────────────────────────────────────────────
 
 @router.message(F.text == "Добавить доход")
 async def add_income_start(message: Message, state: FSMContext):
     await message.answer(
-        "Пиши: <i>«получил зарплату 50к»</i>, <i>«аванс 15000»</i> — разберу сам.",
-        parse_mode="HTML"
+        "Пиши: <i>«получил зарплату 50к»</i>, <i>«аванс 15000»</i> — разберу сам.\n\n"
+        "Или выбери категорию вручную:",
+        parse_mode="HTML",
+        reply_markup=income_categories_kb()
     )
+    await state.set_state(TransactionState.choosing_income_category)
 
 
 @router.callback_query(F.data.startswith("cat_inc:"))
@@ -92,7 +126,11 @@ async def income_category_chosen(callback: CallbackQuery, state: FSMContext):
     try:
         category = callback.data.split(":", 1)[1]
         await state.update_data(category=category)
-        await callback.message.answer(f"Категория: {category}\n\nСумма:")
+        await callback.message.answer(
+            f"Категория: <b>{category}</b>\n\nСумма:",
+            parse_mode="HTML",
+            reply_markup=cancel_kb()
+        )
         await state.set_state(TransactionState.entering_income_amount)
         await callback.answer()
     except IndexError:
@@ -119,7 +157,7 @@ async def income_amount_entered(message: Message, state: FSMContext):
         )
         await state.clear()
     except ValueError:
-        await message.answer("Нужна сумма числом.")
+        await message.answer("Нужна сумма числом.", reply_markup=cancel_kb())
 
 
 # ─── СТАТИСТИКА ───────────────────────────────────────────────────────────────
@@ -150,7 +188,6 @@ async def show_stats(callback: CallbackQuery):
         by_category = stats.get("by_category", {})
         by_income_cat = stats.get("by_income_category", {})
 
-        # Заголовок
         balance_sign = "+" if balance >= 0 else ""
         balance_emoji = "🟢" if balance >= 0 else "🔴"
         header = (
@@ -160,7 +197,7 @@ async def show_stats(callback: CallbackQuery):
             f"{balance_emoji} Баланс:  <b>{balance_sign}{balance:,.0f} ₽</b>"
         )
 
-        # Прогноз "сколько денег сейчас" — только для месячного периода
+        # Прогноз на конец месяца (только для месячного периода)
         forecast_text = ""
         if period == "month":
             try:
@@ -168,32 +205,26 @@ async def show_stats(callback: CallbackQuery):
                 payments = await get_scheduled_payments(user_id)
                 salary_days = await get_salary_days(user_id)
 
-                # Предстоящие платежи до конца месяца
-                future_payments = [
-                    p for p in payments
-                    if p["day_of_month"] > today.day
-                ]
+                future_payments = [p for p in payments if p["day_of_month"] > today.day]
                 future_payments_sum = sum(p["amount"] for p in future_payments)
 
-                # Планируемые доходы на ближайшие 30 дней
                 from_d = today.isoformat()
                 to_d = (today + timedelta(days=30)).isoformat()
                 planned = await get_planned_income(user_id, from_date=from_d, to_date=to_d)
                 planned_income_sum = sum(
-                    p["amount"] for p in planned
-                    if p.get("description", "").startswith("[Доход]")
+                    p["amount"] for p in planned if p.get("type") == "income" or
+                    (p.get("type") is None and "[Доход]" in (p.get("description") or ""))
                 )
                 planned_expense_sum = sum(
-                    p["amount"] for p in planned
-                    if p.get("description", "").startswith("[Расход]")
+                    p["amount"] for p in planned if p.get("type") == "expense" or
+                    (p.get("type") is None and "[Расход]" in (p.get("description") or ""))
                 )
 
-                # Прогноз: баланс - обязательные платежи + ожидаемые доходы - ожидаемые расходы
                 projected = balance - future_payments_sum + planned_income_sum - planned_expense_sum
 
                 parts = []
                 if future_payments_sum > 0:
-                    parts.append(f"Обязательные платежи впереди: −{future_payments_sum:,.0f} ₽")
+                    parts.append(f"Платежи впереди: −{future_payments_sum:,.0f} ₽")
                 if planned_income_sum > 0:
                     parts.append(f"Ожидаемые доходы: +{planned_income_sum:,.0f} ₽")
                 if planned_expense_sum > 0:
@@ -207,7 +238,6 @@ async def show_stats(callback: CallbackQuery):
                         forecast_text += f"  {p}\n"
                     forecast_text += f"{proj_emoji} Итого: <b>{proj_sign}{projected:,.0f} ₽</b>"
 
-                # Дни зарплаты — следующий
                 if salary_days:
                     next_salary = next((d for d in sorted(salary_days) if d > today.day), sorted(salary_days)[0])
                     days_left = (next_salary - today.day) if next_salary > today.day else (31 - today.day + next_salary)
@@ -216,11 +246,9 @@ async def show_stats(callback: CallbackQuery):
                         daily = (balance - future_payments_sum) / days_left
                         if daily > 0:
                             forecast_text += f"  →  <b>{daily:,.0f} ₽/день</b>"
-
             except Exception:
                 pass
 
-        # Расходы по категориям
         cat_text = ""
         if by_category:
             total_exp = expenses or 1
@@ -231,7 +259,6 @@ async def show_stats(callback: CallbackQuery):
         else:
             cat_text = "\n\nРасходов нет."
 
-        # Доходы по категориям
         inc_text = ""
         if by_income_cat:
             total_inc = income or 1
