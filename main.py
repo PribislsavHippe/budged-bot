@@ -8,7 +8,7 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from aiogram.client.default import DefaultBotProperties
 from dotenv import load_dotenv
 
-import start, transactions, payments, budget, ai_handler
+import start, transactions, payments, budget, ai_handler, goals_income
 from jobs import setup_scheduler
 from google_calendar import exchange_code
 
@@ -47,10 +47,23 @@ async def google_oauth_callback(request: web.Request) -> web.Response:
 
     try:
         await exchange_code(user_id, code)
+        # Сразу дописываем недостающие события в календарь
+        try:
+            from db import get_scheduled_payments, get_salary_days
+            from google_calendar import ensure_calendar_events
+            payments = await get_scheduled_payments(user_id)
+            salary_days = await get_salary_days(user_id)
+            result = await ensure_calendar_events(user_id, payments, salary_days, days_ahead=60)
+            if result["created"] > 0:
+                msg_extra = f" Добавил {result['created']} недостающих напоминаний."
+            else:
+                msg_extra = ""
+        except Exception:
+            msg_extra = ""
         await bot.send_message(
             user_id,
             "<b>Google Calendar приручен.</b>\n\n"
-            "Платежи и напоминания буду сыпать прямо в твой календарь — не забудешь.",
+            "Платежи и напоминания буду сыпать прямо в твой календарь — не забудешь." + msg_extra,
             parse_mode="HTML"
         )
         return web.Response(
@@ -93,6 +106,7 @@ async def main():
     dp.include_router(transactions.router)
     dp.include_router(payments.router)
     dp.include_router(budget.router)
+    dp.include_router(goals_income.router)
     dp.include_router(ai_handler.router)
 
     # Запускаем планировщик

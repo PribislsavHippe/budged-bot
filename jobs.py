@@ -6,9 +6,10 @@ import logging
 
 from db import (
     get_all_active_users, get_payments_due_soon,
-    get_transactions, get_stats, get_budgets, get_salary_days
+    get_transactions, get_stats, get_budgets, get_salary_days,
+    get_scheduled_payments, get_google_token,
 )
-from google_calendar import create_income_reminder
+from google_calendar import create_income_reminder, ensure_calendar_events
 from ai_service import generate_weekly_ai_report
 
 MOTIVATION_MESSAGES = [
@@ -270,6 +271,24 @@ async def send_smart_budget_advice(bot):
             logging.error(f"smart advice error for {user_id}: {e}")
 
 
+async def sync_google_calendar_events(bot):
+    """Проверяет календарь пользователей: дописывает отсутствующие события (платежи, зарплата)."""
+    users = await get_all_active_users()
+    for user in users:
+        user_id = user["id"]
+        token = await get_google_token(user_id)
+        if not token:
+            continue
+        try:
+            payments = await get_scheduled_payments(user_id)
+            salary_days = await get_salary_days(user_id)
+            result = await ensure_calendar_events(user_id, payments, salary_days, days_ahead=60)
+            if result["created"] > 0:
+                logging.info(f"Calendar sync user {user_id}: created {result['created']} events")
+        except Exception as e:
+            logging.error(f"Calendar sync error for user {user_id}: {e}")
+
+
 def setup_scheduler(bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=pytz.timezone("Europe/Moscow"))
 
@@ -293,5 +312,8 @@ def setup_scheduler(bot) -> AsyncIOScheduler:
 
     # Умные советы — каждый понедельник 9:00
     scheduler.add_job(send_smart_budget_advice, CronTrigger(day_of_week="mon", hour=9), args=[bot])
+
+    # Синхронизация Google Calendar: дописать недостающие события (раз в день в 3:00)
+    scheduler.add_job(sync_google_calendar_events, CronTrigger(hour=3, minute=0), args=[bot])
 
     return scheduler

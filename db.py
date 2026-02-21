@@ -197,3 +197,58 @@ async def set_salary_days(user_id: int, days: list[int]):
     """Сохраняет дни зарплаты."""
     days_str = ",".join(str(d) for d in sorted(days))
     await update_user(user_id, {"salary_days": days_str, "salary_day": days[0] if days else None})
+
+
+# ─── PLANNED INCOME (планируемые доходы) ─────────────────────────────────────
+
+async def add_planned_income(user_id: int, amount: float, expected_date: "datetime.date", description: str = None):
+    """Добавить ожидаемый доход на дату."""
+    data = {
+        "user_id": user_id,
+        "amount": amount,
+        "expected_date": expected_date.isoformat() if hasattr(expected_date, "isoformat") else str(expected_date),
+        "description": description,
+    }
+    res = supabase.table("planned_income").insert(data).execute()
+    return res.data[0]
+
+
+async def get_planned_income(user_id: int, from_date: str = None, to_date: str = None):
+    """Планируемые доходы за период. Даты в ISO (YYYY-MM-DD)."""
+    query = supabase.table("planned_income").select("*").eq("user_id", user_id)
+    if from_date:
+        query = query.gte("expected_date", from_date)
+    if to_date:
+        query = query.lte("expected_date", to_date)
+    res = query.order("expected_date").execute()
+    return res.data
+
+
+async def delete_planned_income(income_id: int, user_id: int):
+    supabase.table("planned_income").delete().eq("id", income_id).eq("user_id", user_id).execute()
+
+
+# ─── GOALS (цели накопления) ──────────────────────────────────────────────────
+
+async def add_goal(user_id: int, name: str, target_amount: float, target_months: int, monthly_amount: float):
+    data = {
+        "user_id": user_id,
+        "name": name,
+        "target_amount": target_amount,
+        "target_months": target_months,
+        "monthly_amount": monthly_amount,
+    }
+    res = supabase.table("goals").insert(data).execute()
+    return res.data[0]
+
+
+async def get_goals(user_id: int, active_only: bool = True):
+    query = supabase.table("goals").select("*").eq("user_id", user_id)
+    if active_only:
+        query = query.eq("is_active", True)
+    res = query.order("created_at", desc=True).execute()
+    return res.data
+
+
+async def set_goal_inactive(goal_id: int, user_id: int):
+    supabase.table("goals").update({"is_active": False}).eq("id", goal_id).eq("user_id", user_id).execute()

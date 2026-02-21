@@ -1,11 +1,12 @@
 import re
 import logging
+from datetime import date, timedelta
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from db import add_transaction, get_stats, get_scheduled_payments, get_salary_days, get_budgets
+from db import add_transaction, get_stats, get_scheduled_payments, get_salary_days, get_budgets, get_planned_income
 from keyboards import (
     main_menu, confirm_transaction_kb,
     expense_categories_kb, income_categories_kb
@@ -118,11 +119,14 @@ async def handle_ai_chat(message: Message, state: FSMContext):
         payments = await get_scheduled_payments(message.from_user.id)
         salary_days = await get_salary_days(message.from_user.id)
         budgets = await get_budgets(message.from_user.id)
+        now = date.today()
+        planned = await get_planned_income(message.from_user.id, from_date=now.isoformat(), to_date=(now + timedelta(days=365)).isoformat())
         context_extra = _build_reminders_context(salary_days, payments)
         response = await chat_with_ai(
             message.text, stats, payments,
             context_extra=context_extra,
             budgets=budgets,
+            planned_income=planned[:20],
         )
         await message.answer(clean_markdown(response))
     except Exception as e:
@@ -209,7 +213,7 @@ async def cancel_exit(callback: CallbackQuery, state: FSMContext):
 # ─── УМНЫЙ ВВОД (вне чата и вне других состояний) ───────────────────────────
 
 MENU_TEXTS = {
-    "Статистика", "Платежи", "Бюджеты", "Настройки",
+    "Статистика", "Платежи", "Бюджеты", "Настройки", "Доходы", "Цели",
     "/start", "/help", "/stop", "/skip"
 }
 
@@ -243,11 +247,14 @@ async def smart_input(message: Message, state: FSMContext):
                 payments = await get_scheduled_payments(message.from_user.id)
                 salary_days = await get_salary_days(message.from_user.id)
                 budgets = await get_budgets(message.from_user.id)
+                now = date.today()
+                planned = await get_planned_income(message.from_user.id, from_date=now.isoformat(), to_date=(now + timedelta(days=365)).isoformat())
                 context_extra = _build_reminders_context(salary_days, payments)
                 response = await chat_with_ai(
                     message.text, stats, payments,
                     context_extra=context_extra,
                     budgets=budgets,
+                    planned_income=planned[:20],
                 )
                 await message.answer(clean_markdown(response))
             except Exception as e:

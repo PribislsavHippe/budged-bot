@@ -133,6 +133,7 @@ async def chat_with_ai(
     payments: list,
     context_extra: str = "",
     budgets: list = None,
+    planned_income: list = None,
 ) -> str:
     by_category = stats.get("by_category", {})
     by_income_category = stats.get("by_income_category", {})
@@ -150,6 +151,11 @@ async def chat_with_ai(
             [f"- {p['name']}: {p['amount']:,.0f} ₽ ({p['day_of_month']}-е число)" for p in payments]
         )
 
+    planned_text = ""
+    if planned_income:
+        lines = [f"- {p.get('expected_date', '')[:10]}: {p.get('amount', 0):,.0f} ₽" + (f" ({p.get('description', '')})" if p.get('description') else "") for p in planned_income]
+        planned_text = "\nПланируемые доходы (ожидаемые по датам):\n" + "\n".join(lines)
+
     cat_list = "\n".join([f"- {cat}: {amt:,.0f} ₽" for cat, amt in by_category.items()])
     inc_list = "\n".join([f"- {cat}: {amt:,.0f} ₽" for cat, amt in by_income_category.items()]) if by_income_category else "Нет данных"
 
@@ -163,6 +169,7 @@ async def chat_with_ai(
 
 {date_time_block}
 {payments_text}
+{planned_text}
 {budgets_text}
 
 Финансовые данные за последние 30 дней:
@@ -241,3 +248,38 @@ async def get_smart_budget_advice(stats: dict, days_until_salary: int, mandatory
     except Exception as e:
         logging.error(f"smart budget advice error: {e}")
         return None
+
+
+async def evaluate_goal(
+    stats: dict,
+    payments: list,
+    planned_income: list,
+    target_amount: float,
+    target_months: int,
+    monthly_amount: float,
+    salary_days: list,
+) -> str:
+    """Оценка ИИ: реалистична ли цель накопления, краткий прогноз."""
+    income = stats.get("income", 0)
+    expenses = stats.get("expenses", 0)
+    balance = stats.get("balance", 0)
+    payments_sum = sum(p.get("amount", 0) for p in payments) if payments else 0
+    planned_sum = sum(p.get("amount", 0) for p in planned_income) if planned_income else 0
+
+    prompt = f"""Пользователь хочет накопить {target_amount:,.0f} ₽ за {target_months} месяцев (откладывать {monthly_amount:,.0f} ₽/мес).
+
+Его данные за последний месяц:
+- Доходы: {income:,.0f} ₽
+- Расходы: {expenses:,.0f} ₽
+- Баланс: {balance:,.0f} ₽
+- Обязательные платежи в месяц: ~{payments_sum:,.0f} ₽
+- Планируемые доходы (ожидаемые): {planned_sum:,.0f} ₽
+Дни зарплаты: {salary_days}.
+
+Напиши коротко (3–5 предложений): реалистична ли цель при таких доходах и расходах, что может помешать, один практический совет. Без эмодзи, с лёгкой иронией."""
+
+    try:
+        return await _generate(prompt)
+    except Exception as e:
+        logging.error(f"evaluate_goal error: {e}")
+        return "Цель сохранена. Можешь выставить напоминания в дни зарплаты — откладывай сразу после получения дохода."

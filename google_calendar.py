@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -127,3 +127,90 @@ async def create_income_reminder(user_id: int, date: datetime) -> bool:
 
     service.events().insert(calendarId="primary", body=event).execute()
     return True
+
+
+SALARY_EVENT_SUMMARY = "День зарплаты — внеси доход в Budget Bot"
+
+
+def _payment_event_summary(name: str, amount: float) -> str:
+    return f"{name} — {amount:,.0f} ₽"
+
+
+async def list_calendar_events(user_id: int, time_min: datetime, time_max: datetime) -> list[dict]:
+    """Список событий в календаре за период. Каждый элемент: {"date": "YYYY-MM-DD", "summary": "..."}."""
+    creds = await get_credentials(user_id)
+    if not creds:
+        return []
+
+    service = build("calendar", "v3", credentials=creds)
+    try:
+        if time_min.tzinfo is None:
+            time_min = time_min.replace(tzinfo=timezone.utc)
+        if time_max.tzinfo is None:
+            time_max = time_max.replace(tzinfo=timezone.utc)
+        result = (
+            service.events()
+            .list(
+                calendarId="primary",
+                timeMin=time_min.isoformat().replace("+00:00", "Z"),
+                timeMax=time_max.isoformat().replace("+00:00", "Z"),
+                singleEvents=True,
+                orderBy="startTime",
+            )
+            .execute()
+        )
+    except Exception:
+        return []
+
+    out = []
+    for item in result.get("items", []):
+        start = item.get("start", {})
+        date_str = start.get("date") or (start.get("dateTime", "")[:10] if start.get("dateTime") else None)
+        if date_str:
+            out.append({"date": date_str, "summary": item.get("summary", "").strip()})
+    return out
+
+
+async def ensure_calendar_events(user_id: int, payments: list, salary_days: list, days_ahead: int = 60) -> dict:
+    """
+    Проверяет календарь за ближайшие days_ahead дней: если нет нужных событий (платежи, день зарплаты) — создаёт.
+    Возвращает {"created": N, "checked": M}.
+    """
+    creds = await get_credentials(user_id)
+    if not creds:
+        return {"created": 0, "checked": 0}
+
+    now = datetime.now(timezone.utc)
+    time_min = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    time_max = time_min + timedelta(days=days_ahead)
+
+    existing = await list_calendar_events(user_id, time_min, time_max)
+    existing_set = {(e["date"], e["summary"]) for e in existing}
+
+    created = 0
+    # Ожидаемые события: для каждой даты в диапазоне
+    for d in range(days_ahead):
+        cur = time_min + timedelta(days=d)
+        date_str = cur.strftime("%Y-%m-%d")
+        day = cur.day
+
+        # День зарплаты
+        if salary_days and day in salary_days:
+            key = (date_str, SALARY_EVENT_SUMMARY)
+            if key not in existing_set:
+                if await create_income_reminder(user_id, cur):
+                    existing_set.add(key)
+                    created += 1
+
+        # Платежи на этот день месяца
+        for p in payments or []:
+            if p.get("day_of_month") != day:
+                continue
+            summary = _payment_event_summary(p["name"], p["amount"])
+            key = (date_str, summary)
+            if key not in existing_set:
+                if await create_payment_event(user_id, p["name"], p["amount"], cur):
+                    existing_set.add(key)
+                    created += 1
+
+    return {"created": created, "checked": days_ahead}
