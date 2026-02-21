@@ -22,12 +22,15 @@ class TransactionState(StatesGroup):
     entering_income_amount = State()
 
 
-# ─── РАСХОДЫ ─────────────────────────────────────────────
+# ─── РАСХОДЫ (ручной ввод; основной путь — умный ввод в чате) ─────────────────
 
 @router.message(F.text == "Добавить расход")
 async def add_expense_start(message: Message, state: FSMContext):
-    await message.answer("Выбери категорию расхода:", reply_markup=expense_categories_kb())
-    await state.set_state(TransactionState.choosing_expense_category)
+    await message.answer(
+        "Просто напиши в чат, что потратил или получил — тип и категорию определю сам. "
+        "Например: <i>кофе 200</i>, <i>получил зарплату 50к</i>, <i>такси 350</i>.",
+        parse_mode="HTML"
+    )
 
 
 @router.callback_query(F.data.startswith("cat_exp:"))
@@ -85,8 +88,10 @@ async def expense_desc_entered(message: Message, state: FSMContext):
 
 @router.message(F.text == "Добавить доход")
 async def add_income_start(message: Message, state: FSMContext):
-    await message.answer("Выбери категорию дохода:", reply_markup=income_categories_kb())
-    await state.set_state(TransactionState.choosing_income_category)
+    await message.answer(
+        "Просто напиши в чат: <i>получил зарплату 50к</i>, <i>аванс 15000</i>, <i>фриланс 20000</i> — запись и категорию сделаю сам.",
+        parse_mode="HTML"
+    )
 
 
 @router.callback_query(F.data.startswith("cat_inc:"))

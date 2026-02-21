@@ -153,21 +153,72 @@ INCOME_TRIGGER_WORDS = [
 
 # ─── ФУНКЦИИ ──────────────────────────────────────────────────────────────────
 
+# Слова-вопросы: если есть в тексте — не считаем транзакцией
+QUESTION_MARKERS = [
+    "?", "стоит ли", "можно ли", "как ", "сколько стоит", "что думаешь",
+    "посоветуй", "хочу купить", "думаю купить", "планирую", "подскажи",
+    "собираюсь купить", "буду покупать", "надо ли", "нужно ли", "какой бюджет",
+    "хватит ли", "стоит ли мне", "посоветуй купить", "думаю взять", "взять ли",
+    "выгодно ли", "имеет смысл", "правильно ли", "может стоит", "не слишком ли",
+]
+
+
+def _normalize_amount_text(text: str) -> str:
+    """Заменяет буквенные числа на цифры: 50 тысяч -> 50000, 50к -> 50000."""
+    t = text.replace("\xa0", " ").lower()
+    # 50 тысяч, 50 тыс., 50 тыс, 1.5 тысячи -> число * 1000
+    t = re.sub(
+        r"(\d+(?:[.,]\d+)?)\s*(?:тысяч(?:и|а|у)?|тыс\.?|к)(?:\s|$|[^\d])",
+        lambda m: str(int(float(m.group(1).replace(",", ".")) * 1000)),
+        t,
+        flags=re.IGNORECASE,
+    )
+    # 50к без пробела (кириллица или латиница)
+    t = re.sub(r"(\d+(?:[.,]\d+)?)\s*к\b", lambda m: str(int(float(m.group(1).replace(",", ".")) * 1000)), t)
+    # 1.5 млн, 1 млн, миллион
+    t = re.sub(
+        r"(\d+(?:[.,]\d+)?)\s*(?:млн|миллион)(?:\s|$|[^\d])",
+        lambda m: str(int(float(m.group(1).replace(",", ".")) * 1_000_000)),
+        t,
+        flags=re.IGNORECASE,
+    )
+    t = re.sub(
+        r"(\d+(?:[.,]\d+)?)\s*млрд(?:\s|$|[^\d])",
+        lambda m: str(int(float(m.group(1).replace(",", ".")) * 1_000_000_000)),
+        t,
+        flags=re.IGNORECASE,
+    )
+    t = re.sub(r"миллион(?:а|у)?(?:\s|$)", "1000000", t, flags=re.IGNORECASE)
+    return t
+
+
+def looks_like_question(text: str) -> bool:
+    """True, если текст похож на вопрос или просьбу совета, а не на факт траты/дохода."""
+    if not text or not text.strip():
+        return False
+    lower = text.lower().strip()
+    if any(m in lower for m in QUESTION_MARKERS):
+        return True
+    if "?" in text:
+        return True
+    return False
+
+
 def extract_amount(text: str) -> float | None:
-    """Извлекает сумму из текста."""
-    text_clean = text.replace('\xa0', ' ')
+    """Извлекает сумму из текста (в т.ч. 50 тысяч, 50к, 1.5 млн)."""
+    text_clean = _normalize_amount_text(text).replace("\xa0", " ")
     # Ищем числа: 500, 1500, 1 500, 1500.50, 1500,50
     patterns = [
-        r'(\d[\d\s]{0,5}[.,]\d{1,2})',  # с дробной частью
-        r'(\d[\d\s]{0,6}\d)',             # целое число (до 8 цифр)
-        r'(\d+)',                          # просто число
+        r"(\d[\d\s]{0,5}[.,]\d{1,2})",  # с дробной частью
+        r"(\d[\d\s]{0,6}\d)",  # целое число (до 8 цифр)
+        r"(\d+)",  # просто число
     ]
     for pattern in patterns:
         matches = re.findall(pattern, text_clean)
         for m in matches:
             try:
-                val = float(m.strip().replace(' ', '').replace(',', '.'))
-                if 1 <= val <= 10_000_000:  # разумный диапазон
+                val = float(m.strip().replace(" ", "").replace(",", "."))
+                if 1 <= val <= 10_000_000:
                     return val
             except Exception:
                 pass
@@ -222,12 +273,7 @@ def parse_transaction_local(text: str) -> dict | None:
     """
     text_lower = text.lower()
 
-    # Исключаем явные вопросы и планы
-    question_markers = ["?", "стоит ли", "можно ли", "как ", "сколько стоит",
-                        "что думаешь", "посоветуй", "хочу купить", "думаю купить",
-                        "планирую", "подскажи", "собираюсь купить", "буду покупать",
-                        "надо ли", "нужно ли", "какой бюджет", "хватит ли"]
-    if any(m in text_lower for m in question_markers):
+    if looks_like_question(text):
         return None
 
     amount = extract_amount(text)

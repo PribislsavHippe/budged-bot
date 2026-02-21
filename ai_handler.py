@@ -5,15 +5,27 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from db import add_transaction, get_stats, get_scheduled_payments
+from db import add_transaction, get_stats, get_scheduled_payments, get_salary_days, get_budgets
 from keyboards import (
     main_menu, confirm_transaction_kb,
     expense_categories_kb, income_categories_kb
 )
-from categorizer import parse_transaction_local
+from categorizer import parse_transaction_local, looks_like_question
 from ai_service import parse_transaction as ai_parse_transaction
 
 router = Router()
+
+
+def _build_reminders_context(salary_days: list, payments: list) -> str:
+    """Формирует строку про дни зарплаты и ближайшие платежи для контекста ИИ."""
+    parts = []
+    if salary_days:
+        parts.append(f"Дни зарплаты (напомнить внести доход): {', '.join(map(str, sorted(salary_days)))}-е число.")
+    if payments:
+        by_day = sorted(payments, key=lambda p: p["day_of_month"])
+        lines = [f"{p['day_of_month']}-е: {p['name']} {p['amount']:,.0f} ₽" for p in by_day]
+        parts.append("Ближайшие платежи по дням месяца: " + "; ".join(lines))
+    return " ".join(parts) if parts else ""
 
 
 class AIState(StatesGroup):
@@ -67,15 +79,16 @@ async def handle_ai_chat(message: Message, state: FSMContext):
         await message.answer("Чату конец. Возвращайся когда понадоблюсь.", reply_markup=main_menu())
         return
 
-    # Сначала проверяем локально (быстро, без AI)
-    result = parse_transaction_local(message.text)
-
-    # Если локально не распознали — пробуем через AI
-    if not result:
-        try:
-            result = await ai_parse_transaction(message.text)
-        except Exception:
-            result = None
+    # Вопросы и просьбы совета — только ответ ИИ, не предлагаем записать как транзакцию
+    if looks_like_question(message.text):
+        result = None
+    else:
+        result = parse_transaction_local(message.text)
+        if not result:
+            try:
+                result = await ai_parse_transaction(message.text)
+            except Exception:
+                result = None
 
     if result:
         await state.update_data(
@@ -97,13 +110,20 @@ async def handle_ai_chat(message: Message, state: FSMContext):
         )
         return
 
-    # Обычный вопрос — отвечаем через AI
+    # Обычный вопрос — отвечаем через AI с контекстом даты и напоминаний
     await message.answer("Щас подумаю...")
     try:
-        from ai_service import chat_with_ai
+        from ai_service import chat_with_ai, build_datetime_context
         stats = await get_stats(message.from_user.id, "month")
         payments = await get_scheduled_payments(message.from_user.id)
-        response = await chat_with_ai(message.text, stats, payments)
+        salary_days = await get_salary_days(message.from_user.id)
+        budgets = await get_budgets(message.from_user.id)
+        context_extra = _build_reminders_context(salary_days, payments)
+        response = await chat_with_ai(
+            message.text, stats, payments,
+            context_extra=context_extra,
+            budgets=budgets,
+        )
         await message.answer(clean_markdown(response))
     except Exception as e:
         logging.error(f"chat error: {e}")
@@ -190,7 +210,6 @@ async def cancel_exit(callback: CallbackQuery, state: FSMContext):
 
 MENU_TEXTS = {
     "Статистика", "Платежи", "Бюджеты", "Настройки",
-    "Добавить расход", "Добавить доход",
     "/start", "/help", "/stop", "/skip"
 }
 
@@ -204,28 +223,48 @@ async def smart_input(message: Message, state: FSMContext):
     if current_state is not None:
         return
 
-    # Сначала локальный парсер (быстро)
-    result = parse_transaction_local(message.text)
+    # Вопросы — сразу в чат с ИИ, не предлагаем записать транзакцию
+    if looks_like_question(message.text):
+        result = None
+    else:
+        result = parse_transaction_local(message.text)
+        if not result:
+            try:
+                result = await ai_parse_transaction(message.text)
+            except Exception:
+                result = None
 
-    # Если локально не вышло — AI
     if not result:
-        try:
-            result = await ai_parse_transaction(message.text)
-        except Exception:
-            result = None
-
-    if not result:
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Спросить AI", callback_data="ai:chat")]
-        ])
-        await message.answer(
-            "Не въехал, что записать.\n\n"
-            "Пиши по-человечески: <i>«купил кофе 180»</i> или <i>«получил зарплату 50000»</i>. "
-            "Или жми ниже — разберём через AI:",
-            parse_mode="HTML",
-            reply_markup=kb
-        )
+        if looks_like_question(message.text):
+            await message.answer("Щас подумаю...")
+            try:
+                from ai_service import chat_with_ai
+                stats = await get_stats(message.from_user.id, "month")
+                payments = await get_scheduled_payments(message.from_user.id)
+                salary_days = await get_salary_days(message.from_user.id)
+                budgets = await get_budgets(message.from_user.id)
+                context_extra = _build_reminders_context(salary_days, payments)
+                response = await chat_with_ai(
+                    message.text, stats, payments,
+                    context_extra=context_extra,
+                    budgets=budgets,
+                )
+                await message.answer(clean_markdown(response))
+            except Exception as e:
+                logging.error(f"smart_input chat error: {e}")
+                await message.answer(f"Не вышло: {str(e)}")
+        else:
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Спросить AI", callback_data="ai:chat")]
+            ])
+            await message.answer(
+                "Не въехал, что записать.\n\n"
+                "Пиши по-человечески: <i>«купил кофе 180»</i> или <i>«получил зарплату 50к»</i>. "
+                "Или жми ниже — разберём через AI:",
+                parse_mode="HTML",
+                reply_markup=kb
+            )
         return
 
     await state.update_data(

@@ -42,14 +42,17 @@ INCOME_CATEGORIES = [
 async def parse_transaction(text: str) -> dict | None:
     prompt = f"""Ты помощник для финансового трекера. Пользователь написал: "{text}"
 
-Твоя задача: определить, СООБЩАЕТ ли пользователь о свершившейся трате или доходе.
+Твоя задача: определить, СООБЩАЕТ ли пользователь о УЖЕ СВЕРШИВШЕЙСЯ трате или доходе (факт), а не спрашивает и не рассуждает.
 
-ВАЖНЫЕ ПРАВИЛА:
-- Если текст — вопрос (содержит "?", "стоит ли", "можно ли", "как", "сколько стоит", "что думаешь") — это НЕ транзакция
-- Если текст — рассуждение или план ("хочу купить", "думаю купить", "планирую") — это НЕ транзакция  
-- Транзакция — только если пользователь сообщает о УЖЕ произошедшей трате или доходе
-- Примеры транзакций: "потратил 500", "купил кофе 180", "заплатил за такси", "получил зарплату 50000"
-- Примеры НЕ транзакций: "стоит ли купить?", "хочу купить штаны за 5000", "сколько стоит проезд?"
+КРИТИЧНО — это НЕ транзакция (возвращай is_transaction: false):
+- Любой вопрос: "стоит ли купить", "посоветуй", "можно ли", "как", "сколько стоит", "хватит ли", "выгодно ли", "имеет смысл"
+- Просьба совета: "стоит ли мне купить брюки за 50 тысяч" — это вопрос, НЕ запись расхода
+- Планы и рассуждения: "хочу купить", "думаю купить", "планирую", "собираюсь взять"
+- Если есть "?" в конце или по смыслу это вопрос — НЕ транзакция
+
+Транзакция — только когда пользователь констатирует факт: уже потратил, уже получил.
+Примеры транзакций: "потратил 500", "купил кофе 180", "заплатил за такси", "получил зарплату 50000"
+Примеры НЕ транзакций: "стоит ли купить брюки за 50 тысяч", "хочу купить за 5000", "посоветуй, брать ли"
 
 Если это транзакция — верни JSON:
 {{"is_transaction": true, "type": "expense" или "income", "amount": число, "category": одна из списка, "description": краткое описание}}
@@ -107,34 +110,73 @@ async def get_ai_advice(stats: dict, user_name: str = "друг") -> str:
         return f"Совет не выдали — что-то пошло не так: {str(e)}"
 
 
-async def chat_with_ai(user_message: str, stats: dict, payments: list) -> str:
+def build_datetime_context(now_dt=None):
+    """Строка с текущей датой и временем для контекста ИИ."""
+    from datetime import datetime, timezone
+    if now_dt is None:
+        now_dt = datetime.now(timezone.utc)
+    # Для читаемости: локальное время (МСК +3)
+    try:
+        import pytz
+        tz = pytz.timezone("Europe/Moscow")
+        local = now_dt.astimezone(tz)
+    except Exception:
+        local = now_dt
+    weekdays_ru = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+    wd = weekdays_ru[local.weekday()]
+    return f"Сейчас: {local.strftime('%d.%m.%Y')}, {wd}, {local.strftime('%H:%M')} МСК."
+
+
+async def chat_with_ai(
+    user_message: str,
+    stats: dict,
+    payments: list,
+    context_extra: str = "",
+    budgets: list = None,
+) -> str:
     by_category = stats.get("by_category", {})
+    by_income_category = stats.get("by_income_category", {})
     income = stats.get("income", 0)
     expenses = stats.get("expenses", 0)
     balance = stats.get("balance", 0)
 
+    date_time_block = build_datetime_context()
+    if context_extra:
+        date_time_block = date_time_block + "\n" + context_extra
+
     payments_text = ""
     if payments:
-        payments_text = "\nОбязательные платежи:\n" + "\n".join(
+        payments_text = "\nОбязательные платежи (напоминания):\n" + "\n".join(
             [f"- {p['name']}: {p['amount']:,.0f} ₽ ({p['day_of_month']}-е число)" for p in payments]
         )
 
     cat_list = "\n".join([f"- {cat}: {amt:,.0f} ₽" for cat, amt in by_category.items()])
+    inc_list = "\n".join([f"- {cat}: {amt:,.0f} ₽" for cat, amt in by_income_category.items()]) if by_income_category else "Нет данных"
 
-    prompt = f"""Ты персональный финансовый ассистент. Отвечай на "ты", кратко и по делу.
+    budgets_text = ""
+    if budgets:
+        budgets_text = "\nЛимиты по категориям:\n" + "\n".join(
+            [f"- {b['category']}: лимит {b['limit_amount']:,.0f} ₽/мес" for b in budgets]
+        )
 
-Финансовые данные пользователя за последние 30 дней:
+    prompt = f"""Ты персональный финансовый ассистент. У тебя есть дата/время и напоминания — используй их в ответах.
+
+{date_time_block}
+{payments_text}
+{budgets_text}
+
+Финансовые данные за последние 30 дней:
 - Доходы: {income:,.0f} ₽
 - Расходы: {expenses:,.0f} ₽
 - Баланс: {balance:,.0f} ₽
 - Расходы по категориям:
 {cat_list if cat_list else "Нет данных"}
-{payments_text}
+- Доходы по категориям:
+{inc_list}
 
 Вопрос пользователя: {user_message}
 
-Отвечай только на основе этих данных. Если данных нет — скажи что нужно больше записей.
-Будь дружелюбным и конкретным, используй цифры из данных пользователя."""
+Ты умеешь: отвечать на вопросы о тратах и доходах, подсказывать «сколько потратил на X», сравнивать категории, напоминать о ближайших платежах и дне зарплаты, оценивать укладывание в лимиты, давать короткие советы. Отвечай на основе этих данных, с учётом текущей даты. Кратко и по делу, с лёгкой иронией. Без эмодзи."""
 
     try:
         return await _generate(prompt)
