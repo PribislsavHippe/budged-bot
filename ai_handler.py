@@ -225,6 +225,26 @@ def _looks_like_date_entry(text: str) -> bool:
     return bool(_re.match(r'^\d{1,2}[./]\d{1,2}', text.strip()))
 
 
+class PlannedEntryState(StatesGroup):
+    waiting_description = State()
+
+
+@router.message(PlannedEntryState.waiting_description)
+async def planned_entry_description(message: Message, state: FSMContext):
+    """Ждём описание для уже сохранённой даты+суммы."""
+    from goals_income import _detect_type_from_desc, _save_planned, ask_type_kb, PlannedIncomeState
+    text = message.text.strip() if message.text else ""
+    desc = None if text in ("/skip", "") else text
+    await state.update_data(description=desc)
+    if desc:
+        type_ = _detect_type_from_desc(desc)
+        await _save_planned(message, state, type_=type_)
+    else:
+        # Нет описания — спрашиваем тип кнопками
+        await message.answer("Это доход или расход?", reply_markup=ask_type_kb())
+        await state.set_state(PlannedIncomeState.waiting_type)
+
+
 @router.message(F.text)
 async def smart_input(message: Message, state: FSMContext):
     if not message.text or message.text in MENU_TEXTS or message.text.startswith("/"):
@@ -236,18 +256,36 @@ async def smart_input(message: Message, state: FSMContext):
 
     text = message.text.strip()
 
-    # Дата в начале → это планируемая запись, перенаправляем в раздел Доходы
+    # Дата в начале → парсим как планируемую запись
     if _looks_like_date_entry(text):
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📅 Добавить запись по дате", callback_data="planned_income:add")]
-        ])
-        await message.answer(
-            "Похоже на запись по дате. Нажми кнопку и введи ещё раз:\n"
-            "<i>Пример: 25.03 50000 зарплата</i>",
-            parse_mode="HTML",
-            reply_markup=kb,
-        )
+        from goals_income import _parse_planned_entry, _detect_type_from_desc, _save_planned, ask_type_kb, PlannedIncomeState
+        parsed = _parse_planned_entry(text)
+        if parsed:
+            found_date, amount, desc = parsed
+            await state.update_data(
+                expected_date=found_date.isoformat(),
+                amount=amount,
+                description=desc,
+            )
+            if desc:
+                # Полная строка — сохраняем сразу
+                type_ = _detect_type_from_desc(desc)
+                await _save_planned(message, state, type_=type_)
+            else:
+                # Дата + сумма есть, нет описания — спрашиваем его прямо здесь
+                await state.set_state(PlannedEntryState.waiting_description)
+                await message.answer(
+                    f"📅 <b>{found_date.strftime('%d.%m.%Y')}</b>  {amount:,.0f} ₽\n\n"
+                    "Что это? Напиши назначение (зарплата, аренда...) или /skip:",
+                    parse_mode="HTML",
+                )
+        else:
+            # Дата есть, но нет суммы
+            await state.set_state(PlannedIncomeState.waiting_input)
+            await message.answer(
+                "Не нашёл сумму. Напиши полностью: <i>25.03 50000 зарплата</i>",
+                parse_mode="HTML",
+            )
         return
 
     # Вопросы → ИИ-чат
@@ -260,11 +298,14 @@ async def smart_input(message: Message, state: FSMContext):
             salary_days = await get_salary_days(message.from_user.id)
             budgets = await get_budgets(message.from_user.id)
             now = date.today()
-            planned = await get_planned_income(
-                message.from_user.id,
-                from_date=now.isoformat(),
-                to_date=(now + timedelta(days=365)).isoformat()
-            )
+            try:
+                planned = await get_planned_income(
+                    message.from_user.id,
+                    from_date=now.isoformat(),
+                    to_date=(now + timedelta(days=365)).isoformat()
+                )
+            except Exception:
+                planned = []
             context_extra = _build_reminders_context(salary_days, payments)
             response = await chat_with_ai(
                 text, stats, payments,

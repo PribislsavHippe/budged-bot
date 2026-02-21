@@ -222,16 +222,18 @@ async def _save_planned(msg_or_cb, state: FSMContext, type_: str):
     desc = data.get("description")
 
     try:
+        type_label = "Доход" if type_ == "income" else "Расход"
+        icon = "📥" if type_ == "income" else "📤"
+        # Храним тип в description, т.к. в таблице нет поля type
+        stored_desc = f"[{type_label}] {desc}" if desc else f"[{type_label}]"
         await add_planned_income(
             user_id=user_id,
             amount=amount,
             expected_date=expected_date,
-            description=desc,
-            type_=type_,
+            description=stored_desc,
         )
-        type_label = "доход" if type_ == "income" else "расход"
         await send(
-            f"<b>Добавлено как {type_label}.</b>\n"
+            f"{icon} <b>Добавлено как {type_label.lower()}.</b>\n"
             f"{expected_date} — {amount:,.0f} ₽" + (f" ({desc})" if desc else ""),
             parse_mode="HTML",
             reply_markup=main_menu(),
