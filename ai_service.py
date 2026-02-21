@@ -290,101 +290,183 @@ async def parse_onboarding_payments(text: str) -> list[dict]:
         return []
 
 
+# ─── МАССОВЫЙ ВВОД ───────────────────────────────────────────────────────────
+
 async def parse_bulk_transactions(text: str) -> list[dict]:
     """Парсит несколько транзакций из одного сообщения."""
-    prompt = f"""Пользователь написал: "{text}"
-
-Это может быть одна или несколько трат/доходов вперемешку.
-Разбей на отдельные транзакции. Для каждой:
-- type: "expense" или "income"
-- amount: сумма числом
-- category: из списка ниже
-- description: краткое описание (что куплено/за что)
-
-Категории расходов: {", ".join(EXPENSE_CATEGORIES)}
-Категории доходов: {", ".join(INCOME_CATEGORIES)}
-
-Верни JSON массив: [{{"type":"...","amount":0,"category":"...","description":"..."}}]
-Если ничего не распознал — верни: []
-Только JSON, без пояснений."""
-
+    now_ctx = build_datetime_context()
+    prompt = (
+        f'Пользователь написал: "{text}"\n\n'
+        f"{now_ctx}\n\n"
+        "Это список трат или доходов. Разбей на отдельные транзакции.\n"
+        "Для каждой: {\"type\": \"expense\" или \"income\", \"amount\": число, \"category\": из списка, \"description\": краткое}\n\n"
+        f"Категории расходов: {', '.join(EXPENSE_CATEGORIES)}\n"
+        f"Категории доходов: {', '.join(INCOME_CATEGORIES)}\n\n"
+        "Верни JSON массив. Если одна транзакция — массив из одного элемента.\n"
+        "Если это НЕ список трат (вопрос, рассуждение) — верни: []\n"
+        "Только JSON, без пояснений."
+    )
     try:
         raw = await _generate(prompt)
         raw = raw.replace("```json", "").replace("```", "").strip()
         result = json.loads(raw)
-        return result if isinstance(result, list) else []
+        if isinstance(result, list):
+            return [r for r in result if r.get("amount") and r.get("type") in ("expense", "income")]
+        return []
     except Exception as e:
         logging.error(f"parse_bulk_transactions error: {e}")
         return []
 
 
+# ─── ТРАНСКРИПЦИЯ ГОЛОСА ──────────────────────────────────────────────────────
+
 async def transcribe_voice(audio_bytes: bytes, filename: str = "voice.ogg") -> str | None:
-    """Транскрибирует голосовое сообщение через Groq Whisper."""
+    """Транскрибирует голосовое сообщение через Groq Whisper API."""
+    import io
+    client = _get_client()
     try:
-        client = _get_client()
-        import io
         audio_file = io.BytesIO(audio_bytes)
         audio_file.name = filename
         transcription = await client.audio.transcriptions.create(
-            model="whisper-large-v3-turbo",
-            file=audio_file,
+            file=(filename, audio_file),
+            model="whisper-large-v3",
             language="ru",
+            response_format="text",
         )
-        return transcription.text.strip()
+        return str(transcription).strip() if transcription else None
     except Exception as e:
         logging.error(f"transcribe_voice error: {e}")
         return None
 
 
-async def get_smart_dashboard(stats: dict, payments: list, salary_days: list, balance_real: float = None) -> str:
-    """Умный дашборд — ответы вместо цифр."""
+# ─── РАСПОЗНАВАНИЕ ФОТО ЧЕКА ──────────────────────────────────────────────────
+
+async def parse_receipt_photo(image_base64: str) -> list[dict]:
+    """Парсит чек из фото через vision-модель."""
+    client = _get_client()
+    try:
+        cats = ", ".join(EXPENSE_CATEGORIES)
+        response = await client.chat.completions.create(
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+                        },
+                        {
+                            "type": "text",
+                            "text": (
+                                "Это фото чека. Определи итоговую сумму, магазин и тип покупки.\n"
+                                f"Верни JSON: [{{\"type\": \"expense\", \"amount\": число, \"category\": из списка, \"description\": \"магазин\"}}]\n"
+                                f"Категории: {cats}\n"
+                                "Если не разобрал — верни: []\nТолько JSON."
+                            )
+                        }
+                    ]
+                }
+            ],
+        )
+        raw = (response.choices[0].message.content or "").strip()
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        result = json.loads(raw)
+        return [r for r in result if r.get("amount")] if isinstance(result, list) else []
+    except Exception as e:
+        logging.error(f"parse_receipt_photo error: {e}")
+        return []
+
+
+# ─── УМНЫЙ ДАШБОРД ───────────────────────────────────────────────────────────
+
+async def get_smart_dashboard(stats: dict, payments: list, salary_days: list, planned: list) -> str | None:
+    """Генерирует умный дашборд — выводы, а не цифры."""
     from datetime import date
+    from calendar import monthrange
     today = date.today()
+    days_in_month = monthrange(today.year, today.month)[1]
+    month_progress = today.day / days_in_month
+
     income = stats.get("income", 0)
     expenses = stats.get("expenses", 0)
     balance = stats.get("balance", 0)
     by_category = stats.get("by_category", {})
 
-    future_payments = [p for p in (payments or []) if p["day_of_month"] > today.day]
-    future_sum = sum(p["amount"] for p in future_payments)
-
-    next_salary = None
-    days_until = None
+    next_salary_day = None
+    days_to_salary = None
     if salary_days:
-        for d in sorted(salary_days):
-            if d > today.day:
-                next_salary = d
-                days_until = d - today.day
-                break
-        if next_salary is None:
-            next_salary = sorted(salary_days)[0]
-            days_until = 30 - today.day + next_salary
+        future = [d for d in sorted(salary_days) if d > today.day]
+        next_salary_day = future[0] if future else sorted(salary_days)[0]
+        days_to_salary = (
+            (next_salary_day - today.day) if next_salary_day > today.day
+            else (days_in_month - today.day + next_salary_day)
+        )
 
-    free = balance - future_sum
-    daily = free / days_until if days_until and days_until > 0 else None
+    future_pmts = [p for p in (payments or []) if p.get("day_of_month", 0) > today.day]
+    future_pmts_sum = sum(p["amount"] for p in future_pmts)
+    planned_inc = sum(p["amount"] for p in (planned or []) if p.get("type") == "income")
 
-    cat_list = "
-".join([f"- {cat}: {amt:,.0f} ₽" for cat, amt in by_category.items()])
+    free = balance - future_pmts_sum + planned_inc
+    daily = free / days_to_salary if days_to_salary and days_to_salary > 0 else 0
+    projected = expenses / month_progress if month_progress > 0 else expenses
 
-    prompt = f"""Составь короткий умный дашборд для пользователя.
+    cat_lines = "\n".join([f"  {cat}: {amt:,.0f} руб." for cat, amt in by_category.items()])
+    date_ctx = build_datetime_context()
 
-Данные за текущий месяц:
-Доходы: {income:,.0f} ₽ | Расходы: {expenses:,.0f} ₽ | Баланс: {balance:,.0f} ₽
-Обязательные платежи впереди: {future_sum:,.0f} ₽
-{"До зарплаты (" + str(next_salary) + "-го): " + str(days_until) + " дн." if days_until else "Дни зарплаты не заданы"}
-{"Свободных денег: " + f"{free:,.0f} ₽" if days_until else ""}
-{"Дневной бюджет: " + f"{daily:,.0f} ₽/день" if daily and daily > 0 else ""}
-Расходы по категориям:
-{cat_list if cat_list else "Нет данных"}
-
-Напиши 5-8 строк. Структура:
-1. Главный вывод — хватит ли до зарплаты (с конкретной цифрой в день)
-2. Одна категория где пережимает — с цифрой
-3. Один конкретный совет что сделать сейчас
-Стиль: прямо, без эмодзи, на "ты". Без заголовков."""
+    prompt = (
+        f"{date_ctx}\n"
+        f"День {today.day} из {days_in_month} ({month_progress*100:.0f}% месяца).\n\n"
+        f"Доходы: {income:,.0f} руб.\n"
+        f"Расходы: {expenses:,.0f} руб.\n"
+        f"Баланс: {balance:,.0f} руб.\n"
+        f"Свободных до зарплаты: {free:,.0f} руб.\n"
+        f"До зарплаты ({next_salary_day}-го): {days_to_salary} дней.\n"
+        f"Дневной бюджет: {daily:,.0f} руб./день.\n"
+        f"Платежи впереди: {future_pmts_sum:,.0f} руб.\n"
+        f"Прогноз расходов на месяц: {projected:,.0f} руб.\n"
+        f"Расходы по категориям:\n{cat_lines if cat_lines else '  нет данных'}\n\n"
+        "Напиши дашборд 6-8 строк: главный вывод (хватит/не хватит, дневной бюджет), "
+        "тревожные категории если есть, прогноз к зарплате, один совет. Конкретные цифры. Без эмодзи."
+    )
 
     try:
-        return await _generate(prompt, system="Финансовый советник. Конкретно, с цифрами, без воды.")
+        return await _generate(prompt, system="Финансовый советник. Коротко и по делу. Без эмодзи.")
     except Exception as e:
-        logging.error(f"smart dashboard error: {e}")
+        logging.error(f"get_smart_dashboard error: {e}")
         return None
+
+
+# ─── ТРЕНДЫ ──────────────────────────────────────────────────────────────────
+
+async def get_trends_analysis(current_stats: dict, prev_stats: dict) -> str:
+    """Сравнивает текущий период с предыдущим и даёт вывод."""
+    curr_cat = current_stats.get("by_category", {})
+    prev_cat = prev_stats.get("by_category", {})
+    all_cats = set(list(curr_cat.keys()) + list(prev_cat.keys()))
+
+    lines = []
+    for cat in sorted(all_cats, key=lambda c: curr_cat.get(c, 0), reverse=True):
+        curr = curr_cat.get(cat, 0)
+        prev = prev_cat.get(cat, 0)
+        delta = curr - prev
+        pct = abs(delta / prev * 100) if prev > 0 else 0
+        arrow = "вверх" if delta > 0 else "вниз"
+        if prev > 0:
+            lines.append(f"{cat}: {curr:,.0f} руб. ({arrow} {abs(delta):,.0f} руб., {pct:.0f}%)")
+        else:
+            lines.append(f"{cat}: {curr:,.0f} руб. (новая категория)")
+
+    cats_text = "\n".join(lines) if lines else "Нет данных для сравнения"
+    prompt = (
+        f"Сравнение расходов месяц к месяцу:\n{cats_text}\n\n"
+        f"Текущий: доходы {current_stats.get('income',0):,.0f} руб., расходы {current_stats.get('expenses',0):,.0f} руб.\n"
+        f"Прошлый: доходы {prev_stats.get('income',0):,.0f} руб., расходы {prev_stats.get('expenses',0):,.0f} руб.\n\n"
+        "3-4 предложения: что изменилось критично, общий вывод. Без эмодзи."
+    )
+
+    try:
+        return await _generate(prompt, system="Финансовый аналитик. Конкретно. Без эмодзи.")
+    except Exception as e:
+        logging.error(f"get_trends_analysis error: {e}")
+        return "Не удалось загрузить анализ трендов."
