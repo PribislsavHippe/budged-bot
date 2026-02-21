@@ -77,25 +77,28 @@ def _extract_amount(text: str) -> float | None:
 def _parse_planned_entry(text: str):
     """
     'дд.мм сумма описание' → (date, amount, description_or_None)
+    Дата вырезается из текста ДО поиска суммы — чтобы цифры даты не путались с суммой.
     Returns None if not recognized.
     """
     text = text.strip()
+    # Дата должна быть в начале строки
     m = re.match(r'^(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)\s+(.+)$', text)
     if not m:
         return None
 
     date_str = m.group(1)
-    rest = m.group(2).strip()
+    rest = m.group(2).strip()   # всё ПОСЛЕ даты — здесь ищем сумму
 
     parsed_date = _parse_date(date_str)
     if not parsed_date:
         return None
 
+    # Ищем сумму только в rest (дата уже отрезана)
     amount = _extract_amount(rest)
     if not amount:
         return None
 
-    # Description = rest minus the number
+    # Описание — rest без числа суммы
     normalized_rest = _normalize_amount(rest)
     desc = re.sub(r'\b\d[\d\s]{0,6}(?:[.,]\d{1,2})?\b', '', normalized_rest).strip()
     desc = re.sub(r'\s+', ' ', desc).strip() or None
