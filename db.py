@@ -266,3 +266,42 @@ async def get_goals(user_id: int, active_only: bool = True):
 
 async def set_goal_inactive(goal_id: int, user_id: int):
     supabase.table("goals").update({"is_active": False}).eq("id", goal_id).eq("user_id", user_id).execute()
+
+
+# ─── ПОЛНЫЙ СБРОС ДАННЫХ ПОЛЬЗОВАТЕЛЯ ────────────────────────────────────────
+
+async def delete_all_user_data(user_id: int) -> dict:
+    """
+    Удаляет ВСЕ данные пользователя из всех таблиц.
+    Оставляет только запись users (сбрасывает её до дефолтного состояния).
+    Возвращает словарь с количеством удалённых записей по таблицам.
+    """
+    counts = {}
+
+    tables_to_clear = [
+        "transactions",
+        "scheduled_payments",
+        "budgets",
+        "planned_income",
+        "goals",
+        "google_tokens",
+    ]
+
+    for table in tables_to_clear:
+        try:
+            res = supabase.table(table).delete().eq("user_id", user_id).execute()
+            counts[table] = len(res.data) if res.data else 0
+        except Exception as e:
+            logging.error(f"delete_all_user_data: error clearing {table}: {e}")
+            counts[table] = -1  # ошибка
+
+    # Сбрасываем настройки пользователя до дефолтных (но не удаляем запись)
+    try:
+        supabase.table("users").update({
+            "salary_days": None,
+            "expense_reminder_hour": 21,
+        }).eq("user_id", user_id).execute()
+    except Exception as e:
+        logging.error(f"delete_all_user_data: error resetting user: {e}")
+
+    return counts

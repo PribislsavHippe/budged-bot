@@ -136,8 +136,8 @@ async def handle_voice(message: Message, state: FSMContext, bot: Bot):
 async def smart_dashboard(callback: CallbackQuery):
     await callback.message.answer("Считаю...")
     try:
-        stats, payments, salary_days, _, _ = await _get_ai_context(callback.from_user.id)
-        text = await get_smart_dashboard(stats, payments, salary_days)
+        stats, payments, salary_days, _, planned = await _get_ai_context(callback.from_user.id)
+        text = await get_smart_dashboard(stats, payments, salary_days, planned)
         if text:
             await callback.message.answer(clean_markdown(text))
         else:

@@ -3,30 +3,14 @@ weekly_advice.py — Генератор еженедельных советов.
 
 Архитектура:
 - budget_analyzer.py (Python): вся математика, профиль, денежные потоки
-- Gemini: 1 запрос в день — персональные советы на основе готовых данных
-- Groq: для вопросов в чате (быстро, бесплатно)
+- Groq: персональные советы на основе готовых данных от budget_analyzer
 """
 
 import logging
-import os
 from datetime import date, timedelta
 
-import google.generativeai as genai
-
 from budget_analyzer import analyze_month, format_for_ai
-
-_model = None
-
-
-def _get_gemini():
-    global _model
-    if _model is None:
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY не задан")
-        genai.configure(api_key=api_key)
-        _model = genai.GenerativeModel("gemini-2.5-flash-lite")
-    return _model
+from ai_service import _generate  # используем общий Groq-клиент
 
 
 # ─── ГЛАВНАЯ ФУНКЦИЯ ─────────────────────────────────────────────────────────
@@ -41,7 +25,7 @@ async def get_weekly_advice(
     known_salary_amount: float = 0,
 ) -> dict:
     """
-    Полный цикл: Python-расчёт → Gemini совет.
+    Полный цикл: Python-расчёт → Groq совет.
     Возвращает dict с текстом для бота и полным анализом.
     """
     analysis = analyze_month(
@@ -65,11 +49,11 @@ async def get_weekly_advice(
     if not target_week and analysis["weekly_cashflows"]:
         target_week = analysis["weekly_cashflows"][0]
 
-    # Форматируем для Gemini
+    # Форматируем для ИИ
     context = format_for_ai(analysis, target_week)
 
-    # Запрос к Gemini
-    gemini_advice = await _ask_gemini(context, target_week, analysis["profile"])
+    # Запрос к Groq
+    ai_advice = await _ask_groq(context, target_week, analysis["profile"])
 
     # Краткая сводка для показа в боте (без AI)
     budget_summary = _make_summary(target_week, analysis["profile"])
@@ -77,29 +61,30 @@ async def get_weekly_advice(
     return {
         "week_label": target_week["label"] if target_week else "Период",
         "analysis": analysis,
-        "gemini_advice": gemini_advice,
+        "gemini_advice": ai_advice,   # оставляем ключ для совместимости
+        "ai_advice": ai_advice,
         "budget_summary": budget_summary,
     }
 
 
-async def _ask_gemini(context: str, week: dict, profile: dict) -> str:
-    """Один запрос к Gemini с полным контекстом Python-модели."""
+async def _ask_groq(context: str, week: dict, profile: dict) -> str:
+    """Один запрос к Groq с полным контекстом Python-модели."""
     if not week:
         return "Недостаточно данных. Вноси расходы несколько дней — тогда дам точный анализ."
 
-    week_label   = week["label"]
-    is_tight     = week.get("is_tight", False)
+    week_label    = week["label"]
+    is_tight      = week.get("is_tight", False)
     discretionary = week.get("discretionary_budget", 0)
-    can_afford   = week.get("can_afford", [])
-    must_cut     = week.get("must_cut", [])
-    has_salary   = week.get("has_salary", False)
-    fav_cats     = profile.get("favourite_cats", [])
-    top_places   = profile.get("top_places", [])
+    can_afford    = week.get("can_afford", [])
+    must_cut      = week.get("must_cut", [])
+    has_salary    = week.get("has_salary", False)
+    fav_cats      = profile.get("favourite_cats", [])
+    top_places    = profile.get("top_places", [])
 
-    # Строим подсказки для Gemini
+    # Строим подсказки
     hints = []
     if is_tight:
-        hints.append(f"Это напряжённый период — дефицит. Нужно объяснить что сократить и почему.")
+        hints.append("Это напряжённый период — дефицит. Нужно объяснить что сократить и почему.")
     if can_afford:
         items = ", ".join([f"{ca['category']} ({ca['amount']:,} руб)" for ca in can_afford])
         hints.append(f"Есть запас — пользователь может позволить: {items}.")
@@ -131,16 +116,17 @@ async def _ask_gemini(context: str, week: dict, profile: dict) -> str:
 Стиль: на «ты», конкретно, живо, без занудства. Без эмодзи. 6-10 предложений."""
 
     try:
-        model = _get_gemini()
-        response = await model.generate_content_async(prompt)
-        return response.text.strip()
+        return await _generate(
+            prompt,
+            system="Финансовый советник. На «ты», конкретно, с цифрами. Без эмодзи."
+        )
     except Exception as e:
-        logging.error(f"Gemini error: {e}")
+        logging.error(f"Groq weekly advice error: {e}")
         return _fallback_advice(week)
 
 
 def _fallback_advice(week: dict) -> str:
-    """Резервный совет без Gemini."""
+    """Резервный совет без ИИ."""
     disc = week.get("discretionary_budget", 0)
     mandatory = week.get("mandatory_sum", 0)
     avg = week.get("total_expected_discretionary", 0)
@@ -171,7 +157,6 @@ def _make_summary(week: dict, profile: dict) -> dict:
     disc = week.get("discretionary_budget", 0)
     scale = week.get("scale", 1.0)
 
-    # Бюджет по категориям на период (масштабированный)
     cat_budgets = {}
     total_avg = profile.get("total_avg_weekly", 0)
     if total_avg > 0:
@@ -232,9 +217,9 @@ async def handle_weekly_advice_request(user_id: int) -> str:
         planned_income=planned,
     )
 
-    summary = result["budget_summary"]
-    advice  = result["gemini_advice"]
-    label   = result["week_label"]
+    summary  = result["budget_summary"]
+    advice   = result["ai_advice"]
+    label    = result["week_label"]
     analysis = result["analysis"]
 
     lines = [f"<b>Бюджет на {label}</b>", ""]

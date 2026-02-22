@@ -8,7 +8,7 @@ from aiogram.fsm.state import State, StatesGroup
 from db import (
     get_or_create_user, get_user, update_user,
     get_google_token, get_salary_days, set_salary_days,
-    add_scheduled_payment
+    add_scheduled_payment, delete_all_user_data,
 )
 from keyboards import main_menu, settings_kb, cancel_kb
 
@@ -372,4 +372,64 @@ async def google_info(callback: CallbackQuery):
 async def cancel_action(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.answer("Отменено.", reply_markup=main_menu())
+    await callback.answer()
+
+
+# ─── СБРОС ВСЕХ ДАННЫХ ───────────────────────────────────────────────────────
+
+@router.callback_query(F.data == "settings:reset_all_data")
+async def reset_all_data_confirm(callback: CallbackQuery):
+    """Первый шаг — запрос подтверждения."""
+    await callback.message.answer(
+        "⚠️ <b>Удалить ВСЕ мои данные?</b>\n\n"
+        "Будет удалено:\n"
+        "• Все транзакции и история\n"
+        "• Все регулярные платежи\n"
+        "• Бюджеты и лимиты\n"
+        "• Цели накопления\n"
+        "• Планируемые доходы/расходы\n"
+        "• Настройки дней зарплаты\n\n"
+        "Это действие <b>необратимо</b>.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Да, удалить всё", callback_data="confirm_reset_all"),
+                InlineKeyboardButton(text="Отмена",          callback_data="cancel"),
+            ]
+        ])
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "confirm_reset_all")
+async def reset_all_data_execute(callback: CallbackQuery, state: FSMContext):
+    """Второй шаг — выполняем удаление."""
+    await state.clear()
+    wait_msg = await callback.message.answer("Удаляю данные...")
+
+    try:
+        counts = await delete_all_user_data(callback.from_user.id)
+
+        total_deleted = sum(v for v in counts.values() if v > 0)
+        await wait_msg.delete()
+        await callback.message.answer(
+            f"<b>Готово. Всё удалено.</b>\n\n"
+            f"Удалено записей: {total_deleted}\n\n"
+            f"Теперь ты — новый пользователь. Начнём с начала.",
+            parse_mode="HTML",
+        )
+
+        # Запускаем онбординг заново
+        user = await get_user(callback.from_user.id)
+        name = (user.get("first_name") or "друг") if user else "друг"
+        await state.set_state(OnboardingState.step_salary)
+        await _send_onboarding_start(callback.message, name)
+
+    except Exception as e:
+        logging.error(f"reset_all_data error: {e}")
+        await wait_msg.delete()
+        await callback.message.answer(
+            f"Что-то пошло не так при удалении: {str(e)}\n\nПопробуй ещё раз.",
+            reply_markup=main_menu()
+        )
     await callback.answer()

@@ -151,7 +151,8 @@ def settings_kb(has_google: bool = False) -> InlineKeyboardMarkup:
         buttons.append([InlineKeyboardButton(text="Google Calendar подключён ✓", callback_data="settings:google_info")])
     else:
         buttons.append([InlineKeyboardButton(text="Подключить Google Calendar", callback_data="settings:google_connect")])
-    buttons.append([InlineKeyboardButton(text="Пройти онбординг заново", callback_data="settings:restart_onboarding")])
+    buttons.append([InlineKeyboardButton(text="Пройти онбординг заново",    callback_data="settings:restart_onboarding")])
+    buttons.append([InlineKeyboardButton(text="🗑 Удалить все мои данные",   callback_data="settings:reset_all_data")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
