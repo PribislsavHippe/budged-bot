@@ -218,57 +218,21 @@ async def send_monthly_report(bot):
 
 async def send_smart_budget_advice(bot):
     """
-    Умные советы по бюджету — каждый понедельник.
-    AI считает: сколько дней до зарплаты, какой баланс,
-    и даёт конкретный план по категориям.
+    Умный еженедельный бюджет — каждый понедельник.
+    Python-модель считает денежные потоки, Gemini даёт персональный совет.
+    Один запрос к Gemini на пользователя в день.
     """
     users = await get_all_active_users()
-    now = datetime.now()
 
     for user in users:
         user_id = user["id"]
-        stats = await get_stats(user_id, "month")
-
-        # Находим ближайший день зарплаты
-        salary_days = await get_salary_days(user_id)
-        if not salary_days:
-            continue
-
-        today = now.day
-        next_salary_day = None
-        for d in sorted(salary_days):
-            if d > today:
-                next_salary_day = d
-                break
-        if next_salary_day is None:
-            next_salary_day = sorted(salary_days)[0]  # следующий месяц
-
-        days_until_salary = (next_salary_day - today) if next_salary_day > today else (30 - today + next_salary_day)
-
-        # Считаем обязательные платежи до зарплаты
-        from db import get_scheduled_payments
-        payments = await get_scheduled_payments(user_id)
-        mandatory_before_salary = sum(
-            p["amount"] for p in payments
-            if today < p["day_of_month"] <= next_salary_day
-        )
-
         try:
-            from ai_service import get_smart_budget_advice
-            advice = await get_smart_budget_advice(
-                stats=stats,
-                days_until_salary=days_until_salary,
-                mandatory_expenses=mandatory_before_salary,
-                salary_day=next_salary_day
-            )
-            if advice:
-                await bot.send_message(
-                    user_id,
-                    f"<b>Совет на неделю</b>\n\n{advice}",
-                    parse_mode="HTML"
-                )
+            from weekly_advice import handle_weekly_advice_request
+            message_text = await handle_weekly_advice_request(user_id)
+            if message_text:
+                await bot.send_message(user_id, message_text, parse_mode="HTML")
         except Exception as e:
-            logging.error(f"smart advice error for {user_id}: {e}")
+            logging.error(f"weekly advice error for {user_id}: {e}")
 
 
 async def sync_google_calendar_events(bot):

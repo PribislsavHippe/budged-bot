@@ -437,6 +437,22 @@ class PlannedEntryState(StatesGroup):
     waiting_description = State()
 
 
+
+# ─── КОМАНДА /week — БЮДЖЕТ НА ТЕКУЩУЮ НЕДЕЛЮ ───────────────────────────────
+
+@router.message(Command("week"))
+async def week_budget_command(message: Message):
+    """Показывает бюджет и совет на текущую неделю."""
+    await message.answer("Считаю бюджет на эту неделю...")
+    try:
+        from weekly_advice import handle_weekly_advice_request
+        text = await handle_weekly_advice_request(message.from_user.id)
+        await message.answer(text, parse_mode="HTML")
+    except Exception as e:
+        logging.error(f"/week command error: {e}")
+        await message.answer(f"Ошибка: {str(e)}")
+
+
 @router.message(PlannedEntryState.waiting_description)
 async def planned_entry_description(message: Message, state: FSMContext):
     from goals_income import _detect_type_from_desc, _save_planned, ask_type_kb, PlannedIncomeState
