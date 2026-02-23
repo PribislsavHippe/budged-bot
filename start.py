@@ -229,22 +229,10 @@ async def onboarding_combined(message: Message, state: FSMContext):
         except Exception as e:
             logging.error(f"add_planned_income error: {e}")
 
-    # Текущий баланс → фиксируем и пишем транзакцию "Начальный баланс"
+    # Текущий баланс → только в current_balance, НЕ в transactions (иначе /week сломается)
     if parsed["balance"] is not None:
         await set_current_balance(message.from_user.id, parsed["balance"])
         await state.update_data(current_balance=float(parsed["balance"]))
-        if parsed["balance"] > 0:
-            try:
-                from db import add_transaction
-                await add_transaction(
-                    user_id=message.from_user.id,
-                    type_="income",
-                    amount=float(parsed["balance"]),
-                    category="Доходы",
-                    description="Начальный баланс (онбординг)",
-                )
-            except Exception as e:
-                logging.error(f"balance transaction error: {e}")
 
     parts = []
     if parsed["days"]:
@@ -354,35 +342,23 @@ async def onboarding_payments_confirmed(callback: CallbackQuery, state: FSMConte
     data = await state.get_data()
     payments = data.get("parsed_payments", [])
     credit_sum = 0.0
+    saved_count = 0
 
     for p in payments:
         try:
-            # На этом шаге все платежи — кредиты
-            cat = "Кредиты"
+            amount = float(p["amount"])
+            day = int(p.get("day") or p.get("day_of_month") or 1)
             await add_scheduled_payment(
                 user_id=callback.from_user.id,
                 name=p["name"],
-                amount=float(p["amount"]),
-                day=int(p.get("day", 1)),
-                category=cat,
+                amount=amount,
+                day=day,
+                category="Кредиты",
             )
-            credit_sum += float(p["amount"])
-
-            # Записываем как расход в транзакции (Обязательные платежи)
-            try:
-                from db import add_transaction
-                await add_transaction(
-                    user_id=callback.from_user.id,
-                    type_="expense",
-                    amount=float(p["amount"]),
-                    category="Кредиты",
-                    description=f"Обязательный платёж: {p['name']} (онбординг)",
-                )
-            except Exception as e:
-                logging.error(f"credit transaction record error: {e}")
-
+            credit_sum += amount
+            saved_count += 1
         except Exception as e:
-            logging.error(f"onboarding save payment error: {e}")
+            logging.error(f"onboarding save payment error: {e} | payment: {p}")
 
     if credit_sum > 0:
         try:
@@ -391,8 +367,10 @@ async def onboarding_payments_confirmed(callback: CallbackQuery, state: FSMConte
         except Exception as e:
             logging.error(f"auto budget credits error: {e}")
 
+    credit_display = f"{credit_sum:,.0f}" if credit_sum > 0 else "не удалось сохранить — проверь БД"
+
     await callback.message.answer(
-        f"Сохранено {len(payments)} кредитов. Бюджет Кредиты: {credit_sum:,.0f} ₽/мес.\n\n"
+        f"Сохранено {saved_count} из {len(payments)} кредитов. Бюджет Кредиты: {credit_display} ₽/мес.\n\n"
         "<b>Шаг 3/3.</b> На что тратишься каждый месяц?\n\n"
         "Пиши с конкретными суммами:\n"
         "<i>«Еда 20000, такси 5000, спортзал 6900, подписки 1500, "

@@ -350,12 +350,11 @@ async def generate_onboarding_gemini_analysis(
     average_income: float = 0,
 ) -> str | None:
     """
-    Сразу после онбординга: Gemini делает предварительный анализ
-    финансового состояния на основе заявленных данных (без истории транзакций).
-    Использует лимит Gemini — если уже потрачен, возвращает None.
+    Сразу после онбординга: Gemini делает предварительный анализ.
+    НЕ тратит дневной лимит /week — онбординг-анализ одноразовый.
     """
-    if not await can_use_gemini_today(user_id):
-        return None
+    # Онбординг НЕ проверяет и НЕ устанавливает дневной лимит,
+    # чтобы пользователь мог сразу вызвать /week в тот же день.
 
     today = date.today()
     payments_sum = sum(float(p.get("amount", 0)) for p in payments)
@@ -423,7 +422,7 @@ async def generate_onboarding_gemini_analysis(
         model = _get_gemini()
         response = await model.generate_content_async(prompt)
         raw = response.text.strip()
-        await mark_gemini_used(user_id)
+        # НЕ вызываем mark_gemini_used — онбординг не блокирует /week
         return _strip_markdown(raw)
     except Exception as e:
         logging.error(f"onboarding gemini analysis error: {e}")
@@ -447,11 +446,26 @@ async def handle_weekly_advice_request(user_id: int) -> str:
     salary_days = await get_salary_days(user_id)
     scheduled_payments = await get_scheduled_payments(user_id)
     stats = await get_stats(user_id, "month")
-    current_balance = stats.get("balance", 0)
 
     # Берём заявленный доход из профиля пользователя (режим новичка)
     user = await get_user(user_id)
     known_salary_amount = float(user.get("monthly_income") or 0) if user else 0
+    predicted_income = float(user.get("predicted_income") or 0) if user else 0
+
+    # Баланс: если транзакций мало — берём задекларированный баланс из онбординга
+    # иначе stats["balance"] будет 0 или некорректным для новичка
+    from db import get_current_balance
+    declared_balance = await get_current_balance(user_id)
+    stats_balance = stats.get("balance", 0)
+
+    if len(transactions) < 5 and declared_balance is not None:
+        # Новичок: берём задекларированный баланс, вычитаем расходы за текущий месяц
+        current_balance = declared_balance - stats.get("expenses", 0)
+    else:
+        current_balance = stats_balance
+
+    # Для анализа: если есть predicted_income — используем его как ориентир ближайшего дохода
+    effective_salary = known_salary_amount or predicted_income
 
     planned = []
     try:
@@ -470,7 +484,7 @@ async def handle_weekly_advice_request(user_id: int) -> str:
         current_balance=current_balance,
         planned_income=planned,
         user_id=user_id,
-        known_salary_amount=known_salary_amount,
+        known_salary_amount=effective_salary,
     )
 
     summary  = result["budget_summary"]

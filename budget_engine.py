@@ -263,8 +263,15 @@ def build_budgets(
     if user_expenses:
         for exp in user_expenses:
             if exp.category in expenses_by_cat:
-                if exp.amount > expenses_by_cat[exp.category].amount:
-                    expenses_by_cat[exp.category] = exp
+                # Суммируем все позиции одной категории (телефон + интернет + Яндекс → Подписки)
+                existing = expenses_by_cat[exp.category]
+                merged = ParsedExpense(
+                    category=existing.category,
+                    amount=existing.amount + exp.amount,
+                    description=f"{existing.description}, {exp.description}",
+                    is_strict=existing.is_strict or exp.is_strict,
+                )
+                expenses_by_cat[exp.category] = merged
             else:
                 expenses_by_cat[exp.category] = exp
 
