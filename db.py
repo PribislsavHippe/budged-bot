@@ -1,3 +1,4 @@
+import logging
 from supabase import create_client, Client
 import os
 from datetime import datetime, timedelta, timezone
@@ -11,7 +12,7 @@ supabase: Client = create_client(
 )
 
 
-# ─── USERS ──────────────────────────────────────────────
+# ─── USERS ────────────────────────────────────────────────
 
 async def get_or_create_user(user_id: int, username: str = None, first_name: str = None):
     res = supabase.table("users").select("*").eq("id", user_id).execute()
@@ -36,7 +37,7 @@ async def get_all_active_users():
     return res.data
 
 
-# ─── TRANSACTIONS ────────────────────────────────────────
+# ─── TRANSACTIONS ─────────────────────────────────────────
 
 async def add_transaction(user_id: int, type_: str, amount: float, category: str, description: str = None):
     data = {
@@ -51,8 +52,7 @@ async def add_transaction(user_id: int, type_: str, amount: float, category: str
 
 
 async def delete_transaction(transaction_id: int, user_id: int):
-    supabase.table("transactions").delete()\
-        .eq("id", transaction_id).eq("user_id", user_id).execute()
+    supabase.table("transactions").delete().eq("id", transaction_id).eq("user_id", user_id).execute()
 
 
 async def get_recent_transactions(user_id: int, limit: int = 10):
@@ -67,12 +67,12 @@ async def get_recent_transactions(user_id: int, limit: int = 10):
 def _since_datetime(period: str) -> str | None:
     now = datetime.now(timezone.utc)
     if period == "week":
-        since = now - timedelta(days=7)
+        return (now - timedelta(days=7)).isoformat()
     elif period == "month":
-        since = now - timedelta(days=30)
-    else:
+        return (now - timedelta(days=30)).isoformat()
+    elif period == "all":
         return None
-    return since.isoformat()
+    return (now - timedelta(days=30)).isoformat()
 
 
 async def get_transactions(user_id: int, period: str = "month"):
@@ -87,74 +87,90 @@ async def get_transactions(user_id: int, period: str = "month"):
 async def get_stats(user_id: int, period: str = "month") -> dict:
     transactions = await get_transactions(user_id, period)
 
-    income = sum(t["amount"] for t in transactions if t["type"] == "income")
+    income   = sum(t["amount"] for t in transactions if t["type"] == "income")
     expenses = sum(t["amount"] for t in transactions if t["type"] == "expense")
+    balance  = income - expenses
 
     by_category = {}
     by_income_category = {}
+
     for t in transactions:
-        cat = t["category"]
+        cat = t.get("category", "Прочее")
         if t["type"] == "expense":
             by_category[cat] = by_category.get(cat, 0) + t["amount"]
         else:
             by_income_category[cat] = by_income_category.get(cat, 0) + t["amount"]
 
+    # Сортируем по убыванию
+    by_category       = dict(sorted(by_category.items(),       key=lambda x: x[1], reverse=True))
+    by_income_category = dict(sorted(by_income_category.items(), key=lambda x: x[1], reverse=True))
+
     return {
         "income": income,
         "expenses": expenses,
-        "balance": income - expenses,
-        "by_category": dict(sorted(by_category.items(), key=lambda x: x[1], reverse=True)),
-        "by_income_category": dict(sorted(by_income_category.items(), key=lambda x: x[1], reverse=True)),
-        "transactions_count": len(transactions)
+        "balance": balance,
+        "by_category": by_category,
+        "by_income_category": by_income_category,
+        "transactions_count": len(transactions),
     }
 
 
 # ─── SCHEDULED PAYMENTS ──────────────────────────────────
 
 async def add_scheduled_payment(user_id: int, name: str, amount: float, day: int,
-                                 category: str = "Обязательные", remind_days: int = 2):
+                                 remind_days_before: int = 2, calendar_event_id: str = None):
     data = {
         "user_id": user_id,
         "name": name,
         "amount": amount,
         "day_of_month": day,
-        "category": category,
-        "remind_days_before": remind_days
+        "remind_days_before": remind_days_before,
     }
+    if calendar_event_id:
+        data["calendar_event_id"] = calendar_event_id
     res = supabase.table("scheduled_payments").insert(data).execute()
     return res.data[0]
 
 
 async def get_scheduled_payments(user_id: int):
-    res = supabase.table("scheduled_payments").select("*")\
-        .eq("user_id", user_id).eq("is_active", True).execute()
+    res = supabase.table("scheduled_payments").select("*").eq("user_id", user_id).execute()
     return res.data
 
 
 async def delete_scheduled_payment(payment_id: int, user_id: int):
-    supabase.table("scheduled_payments").update({"is_active": False})\
-        .eq("id", payment_id).eq("user_id", user_id).execute()
+    supabase.table("scheduled_payments").delete().eq("id", payment_id).eq("user_id", user_id).execute()
 
 
 async def get_payments_due_soon(days_ahead: int = 3):
-    from datetime import datetime
-    today = datetime.now().day
-    target_days = [(today + i - 1) % 31 + 1 for i in range(days_ahead + 1)]
-    res = supabase.table("scheduled_payments").select("*, users(*)")\
-        .in_("day_of_month", target_days).eq("is_active", True).execute()
+    from datetime import date
+    today = date.today().day
+    target_day = today + days_ahead
+    res = supabase.table("scheduled_payments")\
+        .select("*, users(*)")\
+        .lte("day_of_month", target_day)\
+        .gte("day_of_month", today)\
+        .execute()
     return res.data
 
 
 # ─── BUDGETS ─────────────────────────────────────────────
 
 async def set_budget(user_id: int, category: str, limit_amount: float, period: str = "monthly"):
+    existing = supabase.table("budgets").select("id")\
+        .eq("user_id", user_id)\
+        .eq("category", category)\
+        .execute()
     data = {
         "user_id": user_id,
         "category": category,
         "limit_amount": limit_amount,
-        "period": period
+        "period": period,
     }
-    supabase.table("budgets").upsert(data, on_conflict="user_id,category,period").execute()
+    if existing.data:
+        supabase.table("budgets").update({"limit_amount": limit_amount})\
+            .eq("user_id", user_id).eq("category", category).execute()
+    else:
+        supabase.table("budgets").insert(data).execute()
 
 
 async def get_budgets(user_id: int):
@@ -165,14 +181,18 @@ async def get_budgets(user_id: int):
 # ─── GOOGLE TOKENS ───────────────────────────────────────
 
 async def save_google_token(user_id: int, access_token: str, refresh_token: str, expiry, calendar_id: str = "primary"):
+    existing = supabase.table("google_tokens").select("id").eq("user_id", user_id).execute()
     data = {
         "user_id": user_id,
         "access_token": access_token,
         "refresh_token": refresh_token,
-        "token_expiry": expiry.isoformat() if expiry else None,
-        "calendar_id": calendar_id
+        "expiry": expiry.isoformat() if hasattr(expiry, "isoformat") else str(expiry),
+        "calendar_id": calendar_id,
     }
-    supabase.table("google_tokens").upsert(data, on_conflict="user_id").execute()
+    if existing.data:
+        supabase.table("google_tokens").update(data).eq("user_id", user_id).execute()
+    else:
+        supabase.table("google_tokens").insert(data).execute()
 
 
 async def get_google_token(user_id: int):
@@ -180,50 +200,70 @@ async def get_google_token(user_id: int):
     return res.data[0] if res.data else None
 
 
-# ─── SALARY DAYS ─────────────────────────────────────────
+# ─── SALARY DAYS ────────────────────────────────────────
 
 async def get_salary_days(user_id: int) -> list[int]:
     user = await get_user(user_id)
     if not user:
         return []
-    days_str = user.get("salary_days", "")
-    if days_str:
+    days = []
+    if user.get("salary_day"):
+        days.append(int(user["salary_day"]))
+    if user.get("salary_day_2"):
+        days.append(int(user["salary_day_2"]))
+    # Поддержка salary_days как JSON-массива (если добавлено)
+    if user.get("salary_days"):
         try:
-            return [int(d.strip()) for d in days_str.split(",") if d.strip().isdigit()]
+            import json
+            raw = user["salary_days"]
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(parsed, list):
+                return sorted(set(int(d) for d in parsed if d))
         except Exception:
             pass
-    day = user.get("salary_day")
-    return [day] if day else []
+    return sorted(set(days))
 
 
 async def set_salary_days(user_id: int, days: list[int]):
-    days_str = ",".join(str(d) for d in sorted(days))
-    await update_user(user_id, {"salary_days": days_str, "salary_day": days[0] if days else None})
+    days_sorted = sorted(set(days))
+    update = {}
+    if len(days_sorted) >= 1:
+        update["salary_day"] = days_sorted[0]
+    if len(days_sorted) >= 2:
+        update["salary_day_2"] = days_sorted[1]
+    else:
+        update["salary_day_2"] = None
+    # Сохраняем полный список в salary_days если поле есть
+    try:
+        import json
+        update["salary_days"] = json.dumps(days_sorted)
+    except Exception:
+        pass
+    await update_user(user_id, update)
 
 
-# ─── PLANNED INCOME (планируемые доходы/расходы по датам) ────────────────────
+# ─── PLANNED INCOME ──────────────────────────────────────
 
 async def add_planned_income(
     user_id: int,
     amount: float,
-    expected_date,
+    expected_date: str,
     description: str = None,
-    type_: str = "income",  # "income" или "expense"
+    type_: str = "income",
 ):
-    """Добавить планируемый доход или расход на дату."""
     data = {
         "user_id": user_id,
         "amount": amount,
-        "expected_date": expected_date.isoformat() if hasattr(expected_date, "isoformat") else str(expected_date),
+        "expected_date": expected_date,
         "description": description,
     }
-    # Пробуем сохранить поле type — если столбца нет в БД, молча игнорируем
+    # Пробуем с type_ (если migration.sql уже применён)
     try:
         data_with_type = {**data, "type": type_}
         res = supabase.table("planned_income").insert(data_with_type).execute()
         return res.data[0]
     except Exception:
-        # Fallback без поля type (старая схема)
+        # Fallback без type
         res = supabase.table("planned_income").insert(data).execute()
         return res.data[0]
 
@@ -242,7 +282,7 @@ async def delete_planned_income(income_id: int, user_id: int):
     supabase.table("planned_income").delete().eq("id", income_id).eq("user_id", user_id).execute()
 
 
-# ─── GOALS (цели накопления) ──────────────────────────────────────────────────
+# ─── GOALS ───────────────────────────────────────────────
 
 async def add_goal(user_id: int, name: str, target_amount: float, target_months: int, monthly_amount: float):
     data = {
@@ -268,17 +308,16 @@ async def set_goal_inactive(goal_id: int, user_id: int):
     supabase.table("goals").update({"is_active": False}).eq("id", goal_id).eq("user_id", user_id).execute()
 
 
-# ─── ПОЛНЫЙ СБРОС ДАННЫХ ПОЛЬЗОВАТЕЛЯ ────────────────────────────────────────
+# ─── ПОЛНЫЙ СБРОС ДАННЫХ ПОЛЬЗОВАТЕЛЯ ────────────────────
 
 async def delete_all_user_data(user_id: int) -> dict:
     """
     Удаляет ВСЕ данные пользователя из всех таблиц.
-    Оставляет только запись users (сбрасывает её до дефолтного состояния).
-    Возвращает словарь с количеством удалённых записей по таблицам.
+    Оставляет запись в users, сбрасывает настройки.
+    Возвращает словарь с количеством удалённых записей.
     """
     counts = {}
-
-    tables_to_clear = [
+    tables = [
         "transactions",
         "scheduled_payments",
         "budgets",
@@ -286,22 +325,22 @@ async def delete_all_user_data(user_id: int) -> dict:
         "goals",
         "google_tokens",
     ]
-
-    for table in tables_to_clear:
+    for table in tables:
         try:
             res = supabase.table(table).delete().eq("user_id", user_id).execute()
             counts[table] = len(res.data) if res.data else 0
         except Exception as e:
             logging.error(f"delete_all_user_data: error clearing {table}: {e}")
-            counts[table] = -1  # ошибка
+            counts[table] = -1
 
-    # Сбрасываем настройки пользователя до дефолтных (но не удаляем запись)
+    # Сбрасываем настройки пользователя
     try:
         supabase.table("users").update({
-            "salary_days": None,
+            "salary_day": None,
+            "salary_day_2": None,
             "expense_reminder_hour": 21,
-        }).eq("user_id", user_id).execute()
+        }).eq("id", user_id).execute()
     except Exception as e:
-        logging.error(f"delete_all_user_data: error resetting user: {e}")
+        logging.error(f"delete_all_user_data: reset user error: {e}")
 
     return counts
