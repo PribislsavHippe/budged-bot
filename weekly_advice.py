@@ -29,7 +29,8 @@ _model = None
 # Лимит: один запрос к Gemini в сутки на пользователя
 # Хранится в памяти процесса. При рестарте сервера — сбрасывается.
 # Для продакшна можно перенести в Supabase (поле gemini_last_analysis_date в users).
-_gemini_last_call: dict[int, str] = {}  # user_id -> "YYYY-MM-DD"
+# Лимит хранится в Supabase (поле gemini_last_analysis_date в users).
+# При рестарте Render счётчик не сбрасывается.
 
 
 def _get_gemini():
@@ -43,15 +44,23 @@ def _get_gemini():
     return _model
 
 
-def can_use_gemini_today(user_id: int) -> bool:
-    """Проверяет: использовал ли пользователь Gemini сегодня."""
-    today = date.today().isoformat()
-    return _gemini_last_call.get(user_id) != today
+async def can_use_gemini_today(user_id: int) -> bool:
+    """Проверяет: использовал ли пользователь Gemini сегодня. Данные из Supabase."""
+    try:
+        from db import get_gemini_last_date
+        last = await get_gemini_last_date(user_id)
+        return last != date.today().isoformat()
+    except Exception:
+        return True  # если БД недоступна — разрешаем
 
 
-def mark_gemini_used(user_id: int):
-    """Отмечает, что Gemini использован сегодня."""
-    _gemini_last_call[user_id] = date.today().isoformat()
+async def mark_gemini_used(user_id: int):
+    """Отмечает, что Gemini использован сегодня. Сохраняет в Supabase."""
+    try:
+        from db import set_gemini_last_date
+        await set_gemini_last_date(user_id, date.today().isoformat())
+    except Exception as e:
+        logging.error(f"mark_gemini_used error: {e}")
 
 
 def _strip_markdown(text: str) -> str:
@@ -105,7 +114,7 @@ async def get_weekly_advice(
     context = format_for_ai(analysis, target_week)
 
     # Проверяем лимит Gemini
-    if user_id and not can_use_gemini_today(user_id):
+    if user_id and not await can_use_gemini_today(user_id):
         ai_report = None
         used_ai = False
     else:
@@ -187,7 +196,7 @@ async def _ask_gemini_full_report(context: str, analysis: dict, user_id: int = N
         response = await model.generate_content_async(prompt)
         raw = response.text.strip()
         if user_id:
-            mark_gemini_used(user_id)
+            await mark_gemini_used(user_id)
         return _strip_markdown(raw)
     except Exception as e:
         logging.error(f"Gemini analysis error: {e}")
@@ -218,7 +227,7 @@ BUDGET_MINIMUMS = {
     "Связь":                500,
     "Здоровье":           2_000,
     "Кафе и рестораны":   1_500,
-    "Развлечения":        1_000,
+    "Хобби":        1_000,
     "Одежда":             1_500,
     "Образование":            0,
     "Прочее":             1_000,
@@ -232,7 +241,7 @@ BUDGET_PRIORITY = [
     ("Связь",             0.02),   # 2%
     ("Здоровье",          0.07),   # 7%
     ("Кафе и рестораны",  0.10),   # 10%
-    ("Развлечения",       0.09),   # 9%
+    ("Хобби",       0.09),   # 9%
     ("Одежда",            0.08),   # 8%
     ("Образование",       0.04),   # 4%
     ("Прочее",            0.06),   # 6%
@@ -302,11 +311,29 @@ async def generate_initial_budgets(
     user_description: str = "",
 ) -> dict[str, float]:
     """
-    Генерирует начальные лимиты бюджета.
-    Использует чистую Python-математику с приоритизацией (не AI).
-    AI (Groq) используется только для парсинга — но не для расчётов.
+    Генерирует начальные лимиты бюджета через новый budget_engine.
+    - Конкретные суммы пользователя неприкосновенны (STRICT)
+    - Иерархия приоритетов: Еда > Транспорт > Связь > Хобби > ... > Одежда
+    - Образование: только если упомянуто
+    - Одежда: только при профиците
     """
-    return calculate_priority_budgets(monthly_income, scheduled_payments, user_description)
+    from budget_engine import parse_user_spending_ai, build_budgets
+
+    user_expenses = None
+    if user_description:
+        try:
+            user_expenses = await parse_user_spending_ai(user_description)
+        except Exception as e:
+            logging.error(f"parse_user_spending_ai error: {e}")
+            from budget_engine import parse_user_spending
+            user_expenses = parse_user_spending(user_description)
+
+    result = build_budgets(
+        monthly_income=monthly_income,
+        scheduled_payments=scheduled_payments,
+        user_expenses=user_expenses,
+    )
+    return result.budgets
 
 
 # ─── GEMINI-АНАЛИЗ ПОСЛЕ ОНБОРДИНГА (режим новичка) ─────────────────────────
@@ -323,7 +350,7 @@ async def generate_onboarding_gemini_analysis(
     финансового состояния на основе заявленных данных (без истории транзакций).
     Использует лимит Gemini — если уже потрачен, возвращает None.
     """
-    if not can_use_gemini_today(user_id):
+    if not await can_use_gemini_today(user_id):
         return None
 
     payments_sum = sum(float(p.get("amount", 0)) for p in payments)
@@ -375,7 +402,7 @@ async def generate_onboarding_gemini_analysis(
         model = _get_gemini()
         response = await model.generate_content_async(prompt)
         raw = response.text.strip()
-        mark_gemini_used(user_id)
+        await mark_gemini_used(user_id)
         return _strip_markdown(raw)
     except Exception as e:
         logging.error(f"onboarding gemini analysis error: {e}")

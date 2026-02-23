@@ -67,25 +67,45 @@ async def budgets_menu(message: Message):
         )
         return
 
-    text = "<b>Твои лимиты на месяц:</b>\n\n"
-    for b in budgets:
+    from datetime import date
+    now = date.today()
+    month_name = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+                  "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"][now.month]
+
+    total_limit = sum(b["limit_amount"] for b in budgets)
+    total_spent = sum(stats["by_category"].get(b["category"], 0) for b in budgets)
+
+    text = f"<b>Бюджеты — {month_name} {now.year}</b>\n"
+    text += f"Потрачено всего: {total_spent:,.0f} из {total_limit:,.0f} ₽\n\n"
+
+    alerts = []
+    for b in sorted(budgets, key=lambda x: -stats["by_category"].get(x["category"], 0) / max(x["limit_amount"], 1)):
         spent = stats["by_category"].get(b["category"], 0)
         limit = b["limit_amount"]
         pct   = min(spent / limit * 100, 100) if limit > 0 else 0
+        remaining = max(limit - spent, 0)
 
         if pct >= 100:
             status = "ПРЕВЫШЕН"
+            alerts.append(b["category"])
         elif pct >= 80:
-            status = "Почти лимит"
+            status = f"осталось {remaining:,.0f} ₽"
+        elif pct >= 50:
+            status = f"осталось {remaining:,.0f} ₽"
         else:
-            status = "OK"
+            status = f"осталось {remaining:,.0f} ₽"
 
-        bar = "█" * int(pct / 10) + "░" * (10 - int(pct / 10))
+        bar_filled = int(pct / 10)
+        bar = "█" * bar_filled + "░" * (10 - bar_filled)
+
         text += (
             f"<b>{b['category']}</b>\n"
-            f"{bar} {status}\n"
-            f"{spent:,.0f} / {limit:,.0f} ₽\n\n"
+            f"{bar} {pct:.0f}%\n"
+            f"Потрачено: {spent:,.0f} / {limit:,.0f} ₽  ({status})\n\n"
         )
+
+    if alerts:
+        text += f"Превышены: {', '.join(alerts)}\n"
 
     await message.answer(text, parse_mode="HTML", reply_markup=budgets_list_kb(budgets))
 

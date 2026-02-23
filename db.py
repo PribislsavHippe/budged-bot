@@ -69,7 +69,9 @@ def _since_datetime(period: str) -> str | None:
     if period == "week":
         return (now - timedelta(days=7)).isoformat()
     elif period == "month":
-        return (now - timedelta(days=30)).isoformat()
+        # Начало текущего календарного месяца — точный бюджетный счётчик
+        start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        return start_of_month.isoformat()
     elif period == "all":
         return None
     return (now - timedelta(days=30)).isoformat()
@@ -344,3 +346,49 @@ async def delete_all_user_data(user_id: int) -> dict:
         logging.error(f"delete_all_user_data: reset user error: {e}")
 
     return counts
+
+
+# ─── GEMINI RATE LIMIT (персистентный через Supabase) ────────────────────────
+
+async def get_gemini_last_date(user_id: int) -> str | None:
+    """Возвращает дату последнего вызова Gemini (YYYY-MM-DD) или None."""
+    res = supabase.table("users").select("gemini_last_analysis_date").eq("id", user_id).execute()
+    if res.data:
+        return res.data[0].get("gemini_last_analysis_date")
+    return None
+
+
+async def set_gemini_last_date(user_id: int, date_str: str):
+    """Записывает дату последнего вызова Gemini."""
+    supabase.table("users").update(
+        {"gemini_last_analysis_date": date_str}
+    ).eq("id", user_id).execute()
+
+
+# ─── ТЕКУЩИЙ БАЛАНС ──────────────────────────────────────────────────────────
+
+async def get_current_balance(user_id: int) -> float | None:
+    """Возвращает текущий баланс пользователя (заявленный при онбординге)."""
+    res = supabase.table("users").select("current_balance").eq("id", user_id).execute()
+    if res.data:
+        val = res.data[0].get("current_balance")
+        return float(val) if val is not None else None
+    return None
+
+
+async def set_current_balance(user_id: int, balance: float):
+    """Сохраняет текущий баланс пользователя."""
+    supabase.table("users").update(
+        {"current_balance": balance}
+    ).eq("id", user_id).execute()
+
+
+# ─── БЮДЖЕТЫ — удаление ──────────────────────────────────────────────────────
+
+async def delete_budget(user_id: int, category: str, period: str = "monthly"):
+    """Удаляет лимит бюджета по категории."""
+    supabase.table("budgets").delete()\
+        .eq("user_id", user_id)\
+        .eq("category", category)\
+        .eq("period", period)\
+        .execute()
