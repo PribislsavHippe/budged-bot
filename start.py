@@ -22,11 +22,12 @@ class SettingsState(StatesGroup):
 
 
 class OnboardingState(StatesGroup):
-    step_salary       = State()   # Шаг 1: дни зарплаты
-    step_payments     = State()   # Шаг 2: регулярные платежи
+    step_salary_amount    = State()   # Шаг 1: размер зарплаты
+    step_salary_days      = State()   # Шаг 1б: дни зарплаты
+    step_payments         = State()   # Шаг 2: регулярные платежи
     step_payments_confirm = State()
-    step_income       = State()   # Шаг 3: размер дохода
-    step_brief        = State()   # Шаг 4: описание трат
+    step_income           = State()   # оставлен для совместимости
+    step_brief            = State()   # Шаг 3: описание трат
 
 
 # ─── ОНБОРДИНГ ────────────────────────────────────────────────────────────────
@@ -36,12 +37,12 @@ async def _send_onboarding_start(message, name: str):
         f"Привет, {name}.\n\n"
         f"Я твой финансовый трекер. Считаю деньги, напоминаю о платежах, "
         f"предупреждаю когда что-то идёт не так.\n\n"
-        f"Четыре вопроса для старта — займёт 2 минуты.\n\n"
-        f"<b>Шаг 1/4.</b> В какие числа месяца получаешь зарплату или основной доход?\n\n"
-        f"Можно несколько: <i>«9 и 23»</i>, <i>«1, 15, 28»</i>",
+        f"Три вопроса для старта — займёт 2 минуты.\n\n"
+        f"<b>Шаг 1/3.</b> Сколько зарабатываешь в месяц?\n\n"
+        f"Напиши цифрой: <i>«85000»</i> или <i>«85к»</i>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Пропустить", callback_data="onboarding:skip_salary")]
+            [InlineKeyboardButton(text="Пропустить", callback_data="onboarding:skip_salary_amount")]
         ])
     )
 
@@ -57,7 +58,7 @@ async def cmd_start(message: Message, state: FSMContext):
     name = user.get("first_name") or "друг"
     salary_days = await get_salary_days(message.from_user.id)
     if not salary_days:
-        await state.set_state(OnboardingState.step_salary)
+        await state.set_state(OnboardingState.step_salary_amount)
         await _send_onboarding_start(message, name)
     else:
         await message.answer(f"Снова здарова, {name}.", reply_markup=main_menu())
@@ -90,10 +91,69 @@ async def cmd_help(message: Message):
     )
 
 
-# ─── ШАГ 1: ДЕНЬ ЗАРПЛАТЫ ────────────────────────────────────────────────────
+# ─── ШАГ 1: РАЗМЕР ЗАРПЛАТЫ ──────────────────────────────────────────────────
 
-@router.message(OnboardingState.step_salary)
-async def onboarding_salary(message: Message, state: FSMContext):
+def _parse_income_amount(text: str) -> float | None:
+    import re
+    t = text.strip().lower()
+    # нормализуем "к" / "тыс"
+    t = re.sub(
+        r'(\d+(?:[.,]\d+)?)\s*(?:тысяч(?:и|а)?|тыс\.?|к)\b',
+        lambda m: str(int(float(m.group(1).replace(',', '.')) * 1000)), t
+    )
+    nums = re.findall(r'\d+(?:[.,]\d+)?', t)
+    amounts = []
+    for n in nums:
+        val = float(n.replace(',', '.'))
+        if 5_000 <= val <= 5_000_000:
+            amounts.append(val)
+    if not amounts:
+        return None
+    return round(sum(amounts) / len(amounts))
+
+
+@router.message(OnboardingState.step_salary_amount)
+async def onboarding_salary_amount(message: Message, state: FSMContext):
+    amount = _parse_income_amount(message.text or "")
+    if not amount:
+        await message.answer(
+            "Не разобрал. Напиши числом: <i>«85000»</i> или <i>«85к»</i>",
+            parse_mode="HTML"
+        )
+        return
+    await state.update_data(monthly_income=float(amount))
+    # Сохраняем в базу сразу
+    await update_user(message.from_user.id, {"monthly_income": float(amount)})
+    await message.answer(
+        f"Принято — {amount:,.0f} ₽/мес.\n\n"
+        f"В какие числа месяца получаешь зарплату?\n\n"
+        f"Можно несколько: <i>«9 и 23»</i>, <i>«1, 15»</i>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Пропустить", callback_data="onboarding:skip_salary_days")]
+        ])
+    )
+    await state.set_state(OnboardingState.step_salary_days)
+
+
+@router.callback_query(F.data == "onboarding:skip_salary_amount")
+async def onboarding_skip_salary_amount(callback: CallbackQuery, state: FSMContext):
+    await callback.message.answer(
+        "В какие числа месяца получаешь зарплату?\n\n"
+        "<i>«9 и 23»</i>, <i>«1, 15»</i>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Пропустить", callback_data="onboarding:skip_salary_days")]
+        ])
+    )
+    await state.set_state(OnboardingState.step_salary_days)
+    await callback.answer()
+
+
+# ─── ШАГ 1Б: ДНИ ЗАРПЛАТЫ ────────────────────────────────────────────────────
+
+@router.message(OnboardingState.step_salary_days)
+async def onboarding_salary_days(message: Message, state: FSMContext):
     from categorizer import parse_salary_days
     days = parse_salary_days(message.text or "")
     if not days:
@@ -105,10 +165,10 @@ async def onboarding_salary(message: Message, state: FSMContext):
     await set_salary_days(message.from_user.id, days)
     days_str = ", ".join(str(d) for d in days)
     await message.answer(
-        f"Принято — {days_str}-е числа.\n\n"
-        f"<b>Шаг 2/4.</b> Расскажи про регулярные платежи — аренда, ипотека, подписки, кредиты.\n\n"
+        f"Запомнил — {days_str}-е числа.\n\n"
+        f"<b>Шаг 2/3.</b> Регулярные платежи — аренда, ипотека, кредиты, подписки.\n\n"
         f"Всё одним сообщением:\n"
-        f"<i>«Аренда 35000 первого, Netflix 699, интернет 600 10-го»</i>",
+        f"<i>«Аренда 35000 первого, кредит Сбер 12000, Netflix 699»</i>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Нет регулярных платежей", callback_data="onboarding:skip_payments")]
@@ -117,11 +177,11 @@ async def onboarding_salary(message: Message, state: FSMContext):
     await state.set_state(OnboardingState.step_payments)
 
 
-@router.callback_query(F.data == "onboarding:skip_salary")
-async def onboarding_skip_salary(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(F.data == "onboarding:skip_salary_days")
+async def onboarding_skip_salary_days(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
-        "<b>Шаг 2/4.</b> Регулярные платежи — аренда, ипотека, подписки, кредиты.\n\n"
-        "<i>«Аренда 35000 первого, Netflix 699, интернет 600 10-го»</i>",
+        "<b>Шаг 2/3.</b> Регулярные платежи — аренда, ипотека, кредиты, подписки.\n\n"
+        "<i>«Аренда 35000 первого, кредит Сбер 12000, Netflix 699»</i>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Нет регулярных платежей", callback_data="onboarding:skip_payments")]
@@ -131,7 +191,21 @@ async def onboarding_skip_salary(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ─── ШАГ 2: ПЛАТЕЖИ ──────────────────────────────────────────────────────────
+# ─── (СТАРЫЙ step_salary — оставлен для restart_onboarding) ──────────────────
+
+@router.message(OnboardingState.step_income)
+async def onboarding_income_compat(message: Message, state: FSMContext):
+    """Обратная совместимость если кто-то застрял в старом step_income."""
+    amount = _parse_income_amount(message.text or "")
+    if not amount:
+        await message.answer("Не разобрал. Напиши: <i>«85000»</i> или <i>«85к»</i>", parse_mode="HTML")
+        return
+    await state.update_data(monthly_income=float(amount))
+    await message.answer("Принято. Напиши на что обычно тратишься (или пропусти).",
+                         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                             [InlineKeyboardButton(text="Пропустить", callback_data="onboarding:skip_brief")]
+                         ]))
+    await state.set_state(OnboardingState.step_brief)
 
 @router.message(OnboardingState.step_payments)
 async def onboarding_payments(message: Message, state: FSMContext):
@@ -186,14 +260,16 @@ async def onboarding_payments_confirmed(callback: CallbackQuery, state: FSMConte
 
     await callback.message.answer(
         f"Сохранено {len(payments)} платежей.\n\n"
-        f"<b>Шаг 3/4.</b> Сколько примерно зарабатываешь в месяц?\n\n"
-        f"Напиши одно число: <i>«85000»</i> или <i>«80-90к»</i>",
+        f"<b>Шаг 3/3.</b> Последнее — на что обычно тратишься?\n\n"
+        f"Можно в свободной форме:\n"
+        f"<i>«Много трачу на еду и кафе, раз в месяц одежда, иногда развлечения»</i>\n\n"
+        f"Это нужно, чтобы сразу сформировать бюджет под тебя.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Пропустить", callback_data="onboarding:skip_income")]
+            [InlineKeyboardButton(text="Пропустить — настрою сам", callback_data="onboarding:skip_brief")]
         ])
     )
-    await state.set_state(OnboardingState.step_income)
+    await state.set_state(OnboardingState.step_brief)
     await callback.answer()
 
 
@@ -213,64 +289,8 @@ async def onboarding_payments_retry(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "onboarding:skip_payments")
 async def onboarding_skip_payments(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
-        "<b>Шаг 3/4.</b> Сколько примерно зарабатываешь в месяц?\n\n"
-        "Напиши одно число: <i>«85000»</i> или <i>«80к»</i>",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Пропустить", callback_data="onboarding:skip_income")]
-        ])
-    )
-    await state.set_state(OnboardingState.step_income)
-    await callback.answer()
-
-
-# ─── ШАГ 3: ДОХОД ────────────────────────────────────────────────────────────
-
-@router.message(OnboardingState.step_income)
-async def onboarding_income(message: Message, state: FSMContext):
-    import re
-    text = (message.text or "").strip().lower()
-    # Парсим "80к", "80000", "80-90к" → берём среднее
-    nums = re.findall(r'(\d+(?:[.,]\d+)?)\s*[кk]?', text)
-    amounts = []
-    for n in nums:
-        val = float(n.replace(",", "."))
-        if "к" in text[text.find(n):text.find(n)+6] or "k" in text[text.find(n):text.find(n)+6]:
-            val *= 1000
-        if 5000 <= val <= 5_000_000:
-            amounts.append(val)
-
-    if not amounts:
-        await message.answer(
-            "Не разобрал. Напиши числом: <i>«85000»</i> или <i>«85к»</i>",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Пропустить", callback_data="onboarding:skip_income")]
-            ])
-        )
-        return
-
-    monthly_income = sum(amounts) / len(amounts)
-    await state.update_data(monthly_income=monthly_income)
-    await message.answer(
-        f"Понял — {monthly_income:,.0f} ₽/мес.\n\n"
-        f"<b>Шаг 4/4.</b> Последний вопрос — на что обычно тратишься?\n\n"
-        f"Можно в свободной форме:\n"
-        f"<i>«Много трачу на еду и кафе, раз в месяц одежда, иногда развлечения»</i>\n\n"
-        f"Это нужно, чтобы сразу сформировать бюджет под тебя.",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Пропустить — настрою сам", callback_data="onboarding:skip_brief")]
-        ])
-    )
-    await state.set_state(OnboardingState.step_brief)
-
-
-@router.callback_query(F.data == "onboarding:skip_income")
-async def onboarding_skip_income(callback: CallbackQuery, state: FSMContext):
-    await callback.message.answer(
-        "<b>Шаг 4/4.</b> На что обычно тратишься?\n\n"
-        "<i>«Много трачу на еду и кафе, раз в месяц одежда, иногда развлечения»</i>",
+        "<b>Шаг 3/3.</b> На что обычно тратишься?\n\n"
+        "<i>«Много трачу на еду и кафе, раз в месяц одежда»</i>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Пропустить — настрою сам", callback_data="onboarding:skip_brief")]
@@ -280,7 +300,7 @@ async def onboarding_skip_income(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ─── ШАГ 4: БРИФ И ФОРМИРОВАНИЕ БЮДЖЕТОВ ────────────────────────────────────
+# ─── ШАГ 3: БРИФ И ФОРМИРОВАНИЕ БЮДЖЕТОВ ────────────────────────────────────
 
 @router.message(OnboardingState.step_brief)
 async def onboarding_brief(message: Message, state: FSMContext):
@@ -361,6 +381,8 @@ async def _onboarding_finish(message, state: FSMContext, budgets: dict = None, u
     user = await get_user(uid)
     name = (user.get("first_name") or "друг") if user else "друг"
     salary_days = await get_salary_days(uid)
+    data = await state.get_data()
+    monthly_income = data.get("monthly_income", 0)
 
     parts = []
     if salary_days:
@@ -389,6 +411,27 @@ async def _onboarding_finish(message, state: FSMContext, budgets: dict = None, u
     )
     await state.clear()
 
+    # Gemini-анализ сразу после онбординга — если есть доход и бюджеты
+    if monthly_income > 0 and budgets:
+        try:
+            from weekly_advice import generate_onboarding_gemini_analysis
+            from db import get_scheduled_payments
+            payments = await get_scheduled_payments(uid)
+            analysis_text = await generate_onboarding_gemini_analysis(
+                user_id=uid,
+                monthly_income=monthly_income,
+                budgets=budgets,
+                payments=payments,
+                salary_days=salary_days or [],
+            )
+            if analysis_text:
+                await message.answer(
+                    f"<b>Предварительный финансовый анализ</b>\n\n{analysis_text}",
+                    parse_mode="HTML",
+                )
+        except Exception as e:
+            logging.error(f"onboarding gemini analysis error: {e}")
+
 
 # ─── НАСТРОЙКИ ────────────────────────────────────────────────────────────────
 
@@ -413,16 +456,14 @@ async def settings_menu(message: Message):
 @router.callback_query(F.data == "settings:restart_onboarding")
 async def restart_onboarding(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    await state.set_state(OnboardingState.step_salary)
-    user = await get_user(callback.from_user.id)
-    name = (user.get("first_name") or "друг") if user else "друг"
+    await state.set_state(OnboardingState.step_salary_amount)
     await callback.message.answer(
         "Перезапускаем настройку.\n\n"
-        "<b>Шаг 1/4.</b> В какие числа получаешь зарплату?\n\n"
-        "<i>«9 и 23»</i>, <i>«1, 15, 28»</i>",
+        "<b>Шаг 1/3.</b> Сколько зарабатываешь в месяц?\n\n"
+        "<i>«85000»</i> или <i>«85к»</i>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Пропустить", callback_data="onboarding:skip_salary")]
+            [InlineKeyboardButton(text="Пропустить", callback_data="onboarding:skip_salary_amount")]
         ])
     )
     await callback.answer()

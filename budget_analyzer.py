@@ -544,11 +544,22 @@ def analyze_month(
 ) -> dict:
     """
     Главная функция — полный анализ месяца.
-    Возвращает профиль + денежные потоки + инсайты.
+    Режим новичка: если истории < 10 транзакций, строим профиль
+    от заявленного дохода и платежей, а не от транзакций.
     """
     today   = date.today()
     target  = target_month or today
     profile = build_user_profile(transactions)
+
+    # ── РЕЖИМ НОВИЧКА ──────────────────────────────────────────────────────────
+    # Если транзакций мало, профиль пустой — строим "синтетический" профиль
+    # от заявленного дохода, чтобы советы были полезными с первого дня
+    if not profile.get("has_enough_data") and known_salary_amount > 0:
+        profile = _build_beginner_profile(
+            known_salary_amount=known_salary_amount,
+            scheduled_payments=scheduled_payments,
+            real_profile=profile,
+        )
 
     weekly = calculate_weekly_cashflows(
         year=target.year,
@@ -579,6 +590,59 @@ def analyze_month(
         "current_week": current_week,
         "insights": insights,
         "analyzed_at": today.isoformat(),
+        "beginner_mode": profile.get("beginner_mode", False),
+    }
+
+
+def _build_beginner_profile(
+    known_salary_amount: float,
+    scheduled_payments: list[dict],
+    real_profile: dict,
+) -> dict:
+    """
+    Синтетический профиль для новичка — от заявленного дохода.
+    Используем усреднённые доли трат россиян как отправную точку.
+    Реальные данные перекроют это через 2-3 недели.
+    """
+    payments_sum = sum(float(p.get("amount", 0)) for p in scheduled_payments)
+    free = known_salary_amount - payments_sum
+
+    if free <= 0:
+        return {**real_profile, "beginner_mode": True}
+
+    # Типичное распределение трат городского жителя России
+    typical_shares = {
+        "Еда":               0.30,
+        "Транспорт":         0.11,
+        "Здоровье":          0.07,
+        "Кафе и рестораны":  0.10,
+        "Развлечения":       0.09,
+        "Одежда":            0.09,
+        "Связь":             0.02,
+        "Образование":       0.04,
+        "Прочее":            0.06,
+    }
+
+    avg_weekly_by_cat: dict[str, float] = {}
+    for cat, share in typical_shares.items():
+        avg_weekly_by_cat[cat] = round(free * share / 4.33)  # месяц ÷ 4.33 недели
+
+    total_avg_weekly = sum(avg_weekly_by_cat.values())
+
+    return {
+        **real_profile,
+        "avg_weekly_by_cat": avg_weekly_by_cat,
+        "avg_when_present_by_cat": avg_weekly_by_cat,
+        "frequency_by_cat": {cat: 1.0 for cat in typical_shares},
+        "total_avg_weekly": round(total_avg_weekly),
+        "income_profile": {
+            "avg_income": known_salary_amount,
+            "total_income": known_salary_amount,
+            "income_count": 1,
+            "regularity": "стабильный (заявленный)",
+        },
+        "has_enough_data": True,   # синтетический — считаем достаточным для расчётов
+        "beginner_mode": True,     # флаг: данные синтетические
     }
 
 

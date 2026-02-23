@@ -29,11 +29,22 @@ def _get_client() -> AsyncGroq:
     return _client
 
 
+GROQ_NO_CALC_SYSTEM = (
+    "Ты финансовый помощник. ВАЖНО: ты НЕ делаешь математических вычислений — "
+    "никаких сложений, вычитаний, умножений, процентов, прогнозов в цифрах. "
+    "Все расчёты уже сделаны Python-кодом и переданы тебе в виде готовых чисел. "
+    "Твоя задача: интерпретировать, объяснять, советовать — словами. "
+    "Если тебя просят посчитать — скажи, что расчёты делает система, и дай совет по ситуации."
+)
+
+
 async def _generate(prompt: str, system: str = None, max_tokens: int = 800) -> str:
     client = _get_client()
     messages = []
-    if system:
-        messages.append({"role": "system", "content": system})
+    # Базовый запрет вычислений — всегда, если не переопределён
+    base_system = system if system else "Финансовый помощник. Кратко, на «ты». Без эмодзи."
+    full_system = GROQ_NO_CALC_SYSTEM + "\n\n" + base_system
+    messages.append({"role": "system", "content": full_system})
     messages.append({"role": "user", "content": prompt})
     response = await client.chat.completions.create(
         model=GROQ_MODEL,
@@ -44,9 +55,9 @@ async def _generate(prompt: str, system: str = None, max_tokens: int = 800) -> s
 
 
 EXPENSE_CATEGORIES = [
-    "Еда", "Транспорт", "Жильё", "Развлечения",
-    "Здоровье", "Одежда", "Связь", "Образование",
-    "Обязательные", "Прочее"
+    "Еда", "Кафе и рестораны", "Транспорт", "Жильё",
+    "Развлечения", "Здоровье", "Одежда", "Связь",
+    "Образование", "Кредиты", "Обязательные", "Прочее"
 ]
 
 INCOME_CATEGORIES = [

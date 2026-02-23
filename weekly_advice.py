@@ -194,7 +194,107 @@ async def _ask_gemini_full_report(context: str, analysis: dict, user_id: int = N
         return None
 
 
-# ─── БЫСТРЫЙ АНАЛИЗ ДЛЯ ОНБОРДИНГА ──────────────────────────────────────────
+# ─── ФОРМИРОВАНИЕ БЮДЖЕТОВ С ПРИОРИТИЗАЦИЕЙ ──────────────────────────────────
+#
+# Логика основана на реальных тратах россиян (Росстат + банковские данные 2024):
+# Приоритеты:
+#   1. Жильё — уже в обязательных платежах, пропускаем
+#   2. Еда (продукты) — базовая потребность, минимум 15 000 р.
+#   3. Транспорт — минимум 3 000 р.
+#   4. Кредиты — уже в платежах, пропускаем
+#   5. Связь — минимум 500 р.
+#   6. Здоровье — минимум 2 000 р.
+#   --- всё ниже только если осталось ---
+#   7. Кафе и рестораны
+#   8. Развлечения
+#   9. Одежда
+#  10. Образование
+#  11. Прочее
+
+# Минимальные жизненные нормы (рублей в месяц)
+BUDGET_MINIMUMS = {
+    "Еда":               15_000,
+    "Транспорт":          3_000,
+    "Связь":                500,
+    "Здоровье":           2_000,
+    "Кафе и рестораны":   1_500,
+    "Развлечения":        1_000,
+    "Одежда":             1_500,
+    "Образование":            0,
+    "Прочее":             1_000,
+}
+
+# Целевые доли от свободных денег (после обязательных платежей)
+# Выстроены по приоритету — сначала насыщаем важные категории
+BUDGET_PRIORITY = [
+    ("Еда",               0.28),   # 28% — главное
+    ("Транспорт",         0.10),   # 10%
+    ("Связь",             0.02),   # 2%
+    ("Здоровье",          0.07),   # 7%
+    ("Кафе и рестораны",  0.10),   # 10%
+    ("Развлечения",       0.09),   # 9%
+    ("Одежда",            0.08),   # 8%
+    ("Образование",       0.04),   # 4%
+    ("Прочее",            0.06),   # 6%
+]
+# Итого: 84% → остаток 16% идёт в запас/накопления
+
+
+def calculate_priority_budgets(
+    monthly_income: float,
+    scheduled_payments: list[dict],
+    user_description: str = "",
+) -> dict[str, float]:
+    """
+    Чистая Python-математика без AI.
+    Распределяет свободные деньги по приоритету:
+    - Сначала насыщаем важные категории до минимума
+    - Потом распределяем остаток по долям
+    - Если денег не хватает — не заполняем низкоприоритетные совсем
+    """
+    payments_sum = sum(float(p.get("amount", 0)) for p in (scheduled_payments or []))
+    free = monthly_income - payments_sum
+
+    if free <= 0:
+        return {}
+
+    # Корректировка: если пользователь упомянул специфику трат
+    desc_lower = (user_description or "").lower()
+    share_overrides: dict[str, float] = {}
+    if any(w in desc_lower for w in ["кафе", "ресторан", "бар", "часто хожу"]):
+        share_overrides["Кафе и рестораны"] = 0.15
+    if any(w in desc_lower for w in ["спорт", "фитнес", "спортзал", "здоровь"]):
+        share_overrides["Здоровье"] = 0.10
+    if any(w in desc_lower for w in ["одежд", "обувь", "шопинг"]):
+        share_overrides["Одежда"] = 0.12
+    if any(w in desc_lower for w in ["курс", "обучени", "образовани", "учус"]):
+        share_overrides["Образование"] = 0.08
+    if any(w in desc_lower for w in ["машин", "авто", "бензин", "парковк"]):
+        share_overrides["Транспорт"] = 0.15
+
+    remaining = free
+    result: dict[str, float] = {}
+
+    for cat, target_share in BUDGET_PRIORITY:
+        minimum = BUDGET_MINIMUMS.get(cat, 0)
+        share = share_overrides.get(cat, target_share)
+        target = round(free * share)
+        amount = max(target, minimum)
+
+        if remaining <= 0:
+            break  # деньги кончились — низкоприоритетные не добавляем
+
+        if remaining < minimum and minimum > 0:
+            # Денег меньше минимума — даём что есть, дальше стоп
+            result[cat] = round(remaining)
+            remaining = 0
+        else:
+            amount = min(amount, remaining)
+            result[cat] = amount
+            remaining -= amount
+
+    return result
+
 
 async def generate_initial_budgets(
     monthly_income: float,
@@ -202,51 +302,84 @@ async def generate_initial_budgets(
     user_description: str = "",
 ) -> dict[str, float]:
     """
-    После онбординга генерирует начальные лимиты бюджета на основе:
-    - заявленного дохода
-    - обязательных платежей
-    - описания пользователя о своих расходах
-    Возвращает dict {категория: лимит}
+    Генерирует начальные лимиты бюджета.
+    Использует чистую Python-математику с приоритизацией (не AI).
+    AI (Groq) используется только для парсинга — но не для расчётов.
     """
-    from ai_service import _generate
+    return calculate_priority_budgets(monthly_income, scheduled_payments, user_description)
 
-    payments_sum = sum(p.get("amount", 0) for p in (scheduled_payments or []))
+
+# ─── GEMINI-АНАЛИЗ ПОСЛЕ ОНБОРДИНГА (режим новичка) ─────────────────────────
+
+async def generate_onboarding_gemini_analysis(
+    user_id: int,
+    monthly_income: float,
+    budgets: dict[str, float],
+    payments: list[dict],
+    salary_days: list[int],
+) -> str | None:
+    """
+    Сразу после онбординга: Gemini делает предварительный анализ
+    финансового состояния на основе заявленных данных (без истории транзакций).
+    Использует лимит Gemini — если уже потрачен, возвращает None.
+    """
+    if not can_use_gemini_today(user_id):
+        return None
+
+    payments_sum = sum(float(p.get("amount", 0)) for p in payments)
     free = monthly_income - payments_sum
+    savings_potential = monthly_income - payments_sum - sum(budgets.values())
 
-    from keyboards import EXPENSE_CATEGORIES
-    cats_list = ", ".join(EXPENSE_CATEGORIES)
+    days_str = ", ".join(str(d) for d in salary_days) if salary_days else "не указаны"
+    budgets_str = "\n".join(f"  {cat}: {amt:,.0f} руб." for cat, amt in budgets.items())
+    payments_str = "\n".join(
+        f"  {p.get('name', '?')}: {float(p.get('amount', 0)):,.0f} руб., {p.get('day_of_month', '?')}-е"
+        for p in payments
+    ) or "  нет"
 
-    prompt = (
-        f"Пользователь зарабатывает {monthly_income:,.0f} руб/мес.\n"
-        f"Обязательные платежи: {payments_sum:,.0f} руб/мес.\n"
-        f"Свободных денег: {free:,.0f} руб/мес.\n"
-        + (f"Сам о себе: {user_description}\n" if user_description else "")
-        + f"\nКатегории: {cats_list}\n\n"
-        "Распредели свободные деньги по категориям расходов. "
-        "Верни JSON объект {{\"Категория\": сумма_в_рублях}} только для реалистичных категорий. "
-        "Суммы должны в итоге примерно равняться свободным деньгам. "
-        "Только JSON, без пояснений."
-    )
+    prompt = f"""Новый пользователь только что настроил финансовый трекер.
+
+ДАННЫЕ ПОЛЬЗОВАТЕЛЯ:
+Ежемесячный доход: {monthly_income:,.0f} руб.
+Дни зарплаты: {days_str}
+
+Обязательные платежи ({payments_sum:,.0f} руб./мес.):
+{payments_str}
+
+Свободные деньги после платежей: {free:,.0f} руб./мес.
+
+Сформированные бюджеты по категориям:
+{budgets_str}
+
+Потенциал накопления: {savings_potential:,.0f} руб./мес.
+
+ЗАДАНИЕ: Сделай предварительный анализ финансового состояния и дай практические советы.
+
+ФОРМАТ (обычный текст, без *, #, ```. Обращайся на "ты"):
+
+ПЕРВЫЙ ВЗГЛЯД НА ТВОИ ФИНАНСЫ
+(Честная оценка: доля платежей в доходе, сколько остаётся, реалистично ли это)
+
+ГДЕ ПОТЕНЦИАЛЬНЫЕ РИСКИ
+(Что бросается в глаза: перекос в сторону платежей? мало на здоровье? нет накоплений?)
+
+КАК ЛУЧШЕ ВЕСТИ БЮДЖЕТЫ
+(3-4 конкретных совета: какие категории контролировать в первую очередь, как не выйти за лимиты, когда пересматривать)
+
+ПЕРВЫЙ ШАГ
+(Одно конкретное действие прямо сейчас — с суммой и категорией)
+
+Стиль: честно, конкретно, с цифрами в рублях. Без воды и без занудства."""
 
     try:
-        raw = await _generate(prompt)
-        raw = raw.replace("```json", "").replace("```", "").strip()
-        import json
-        result = json.loads(raw)
-        return {k: float(v) for k, v in result.items() if isinstance(v, (int, float)) and v > 0}
+        model = _get_gemini()
+        response = await model.generate_content_async(prompt)
+        raw = response.text.strip()
+        mark_gemini_used(user_id)
+        return _strip_markdown(raw)
     except Exception as e:
-        logging.error(f"generate_initial_budgets error: {e}")
-        # Fallback: простое распределение
-        if free <= 0:
-            return {}
-        return {
-            "Еда": round(free * 0.35),
-            "Транспорт": round(free * 0.12),
-            "Развлечения": round(free * 0.10),
-            "Здоровье": round(free * 0.08),
-            "Одежда": round(free * 0.08),
-            "Прочее": round(free * 0.10),
-        }
+        logging.error(f"onboarding gemini analysis error: {e}")
+        return None
 
 
 # ─── ХЕНДЛЕР ДЛЯ БОТА ────────────────────────────────────────────────────────
@@ -254,10 +387,11 @@ async def generate_initial_budgets(
 async def handle_weekly_advice_request(user_id: int) -> str:
     """
     Вызывается из jobs.py (по понедельникам) и по команде /week.
+    Единый gate для Gemini — не позволяет запустить дважды в день.
     """
     from db import (
         get_transactions, get_salary_days, get_scheduled_payments,
-        get_stats, get_planned_income,
+        get_stats, get_planned_income, get_user,
     )
 
     today = date.today()
@@ -266,6 +400,10 @@ async def handle_weekly_advice_request(user_id: int) -> str:
     scheduled_payments = await get_scheduled_payments(user_id)
     stats = await get_stats(user_id, "month")
     current_balance = stats.get("balance", 0)
+
+    # Берём заявленный доход из профиля пользователя (режим новичка)
+    user = await get_user(user_id)
+    known_salary_amount = float(user.get("monthly_income") or 0) if user else 0
 
     planned = []
     try:
@@ -284,6 +422,7 @@ async def handle_weekly_advice_request(user_id: int) -> str:
         current_balance=current_balance,
         planned_income=planned,
         user_id=user_id,
+        known_salary_amount=known_salary_amount,
     )
 
     summary  = result["budget_summary"]
@@ -326,7 +465,11 @@ async def handle_weekly_advice_request(user_id: int) -> str:
         lines.append("")
 
     profile = analysis.get("profile", {})
-    if not profile.get("has_enough_data"):
+    beginner_mode = analysis.get("beginner_mode", False) or profile.get("beginner_mode", False)
+
+    if beginner_mode:
+        lines.append("(Режим новичка: прогноз строится от заявленного дохода. Точность вырастет через 2-3 недели реальных трат.)\n")
+    elif not profile.get("has_enough_data"):
         weeks = profile.get("weeks_analyzed", 0)
         lines.append(f"(История: {weeks} нед. Советы станут точнее через 2-3 недели)\n")
 
