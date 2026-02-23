@@ -38,53 +38,83 @@ class OnboardingState(StatesGroup):
 
 def _parse_combined_step(text: str) -> dict:
     """
-    Разбирает: зарплата + дни + текущий баланс из одного сообщения.
-    «9-го 60000 и 23-го 25000, на счету 12000»
-    «получаю 50000 десятого, в кармане 5000»
+    Разбирает: дни зарплаты + текущий баланс + планируемый доход + средний доход.
+    «9-го и 23-го, на счету 12000, планирую 40000, средний 55000»
+    «получаю в среднем 60к, сейчас 5000 в кармане, жду 30000 в этом месяце»
     """
     from categorizer import parse_salary_days
-    result = {"days": [], "income": None, "balance": None}
+    result = {"days": [], "planned_income": None, "avg_income": None, "balance": None}
     lower = text.lower()
 
-    # 1. Ищем текущий баланс по маркерам
-    balance_patterns = [
-        r'(?:на\s+счету|на\s+счёте|в\s+кармане|баланс|осталось|сейчас|счёт|кошелёк|кошелек)\s*:?\s*(\d[\d\s]*(?:[.,]\d{1,2})?)',
-        r'(\d[\d\s]*(?:[.,]\d{1,2})?)\s*(?:руб|₽|р\.?)\s*(?:на\s+счету|на\s+счёте|в\s+кармане|осталось)',
-    ]
-    for pat in balance_patterns:
-        m = re.search(pat, lower)
-        if m:
-            try:
-                val = float(m.group(1).replace(' ', '').replace(',', '.'))
-                if 0 <= val <= 50_000_000:
-                    result["balance"] = val
-                    text = text[:m.start()] + " " + text[m.end():]
-                    lower = text.lower()
-                    break
-            except Exception:
-                pass
+    def _normalize_k(s: str) -> str:
+        return re.sub(
+            r'(\d+(?:[.,]\d+)?)\s*(?:тысяч(?:и|а)?|тыс\.?|к)\b',
+            lambda m: str(int(float(m.group(1).replace(',', '.')) * 1000)),
+            s
+        )
 
-    # 2. Дни зарплаты
+    def _extract_amount(pattern: str, src: str) -> tuple[float | None, str]:
+        """Извлекает первую сумму по паттерну и возвращает (сумма, очищенный текст)."""
+        m = re.search(pattern, src)
+        if m:
+            raw = _normalize_k(m.group(0))
+            nums = re.findall(r'\d[\d\s]*(?:[.,]\d{1,2})?', raw)
+            for n in nums:
+                try:
+                    val = float(n.replace(' ', '').replace(',', '.'))
+                    if 500 <= val <= 50_000_000:
+                        cleaned = src[:m.start()] + " " + src[m.end():]
+                        return val, cleaned
+                except Exception:
+                    pass
+        return None, src
+
+    # 1. Текущий баланс (на счету, в кармане, сейчас)
+    bal_pat = (
+        r'(?:на\s+счету|на\s+счёте|в\s+кармане|баланс\s*:?|осталось|счёт\s*:?|кошелёк\s*:?|кошелек\s*:?)'
+        r'\s*(?:сейчас\s*)?(\d[\d\s]*(?:[.,]\d{1,2})?(?:\s*(?:тыс\.?|тысяч(?:и|а)?|к)\b)?)'
+    )
+    bal_val, lower_tmp = _extract_amount(bal_pat, lower)
+    if bal_val is not None and 0 <= bal_val <= 50_000_000:
+        result["balance"] = bal_val
+        lower = lower_tmp
+        text = lower
+
+    # 2. Средний доход (в среднем, обычно, средний, стабильный)
+    avg_pat = (
+        r'(?:в\s+среднем|средний\s+доход|обычно\s+(?:получаю|зарабатываю)|'
+        r'стабильно|примерно\s+(?:получаю|зарабатываю)|обычно)\s*'
+        r'(\d[\d\s]*(?:[.,]\d{1,2})?(?:\s*(?:тыс\.?|тысяч(?:и|а)?|к)\b)?)'
+    )
+    avg_val, lower_tmp = _extract_amount(avg_pat, lower)
+    if avg_val is not None and 5_000 <= avg_val <= 5_000_000:
+        result["avg_income"] = round(avg_val)
+        lower = lower_tmp
+        text = lower
+
+    # 3. Планируемый доход (планирую, жду, ожидаю, получу)
+    plan_pat = (
+        r'(?:планирую|жду|ожидаю|получу|собираюсь\s+получить|рассчитываю)\s*'
+        r'(?:заработать\s*|получить\s*)?(\d[\d\s]*(?:[.,]\d{1,2})?(?:\s*(?:тыс\.?|тысяч(?:и|а)?|к)\b)?)'
+    )
+    plan_val, lower_tmp = _extract_amount(plan_pat, lower)
+    if plan_val is not None and 1_000 <= plan_val <= 5_000_000:
+        result["planned_income"] = round(plan_val)
+        lower = lower_tmp
+        text = lower
+
+    # 4. Дни зарплаты (из оставшегося текста)
     result["days"] = parse_salary_days(text)
 
-    # 3. Суммы дохода (нормализуем к/тыс)
-    normalized = re.sub(
-        r'(\d+(?:[.,]\d+)?)\s*(?:тысяч(?:и|а)?|тыс\.?|к)\b',
-        lambda m: str(int(float(m.group(1).replace(',', '.')) * 1000)),
-        lower
-    )
-    amounts = []
-    for m in re.findall(r'\b(\d[\d\s]{0,6}(?:[.,]\d{1,2})?)\b', normalized):
-        try:
-            val = float(m.replace(' ', '').replace(',', '.'))
-            if 5_000 <= val <= 5_000_000:
-                if result["balance"] and abs(val - result["balance"]) < 1:
-                    continue
-                amounts.append(val)
-        except Exception:
-            pass
-    if amounts:
-        result["income"] = round(sum(amounts))
+    # 5. Если avg_income не нашли — пробуем общий паттерн "получаю/зарабатываю N"
+    if result["avg_income"] is None:
+        general_pat = (
+            r'(?:получаю|зарабатываю|доход|зп|зарплата)\s*'
+            r'(\d[\d\s]*(?:[.,]\d{1,2})?(?:\s*(?:тыс\.?|тысяч(?:и|а)?|к)\b)?)'
+        )
+        gen_val, _ = _extract_amount(general_pat, lower)
+        if gen_val and 5_000 <= gen_val <= 5_000_000:
+            result["avg_income"] = round(gen_val)
 
     return result
 
@@ -96,13 +126,13 @@ async def _send_step1(message, name: str):
         f"Привет, {name}.\n\n"
         "Я веду бюджет, слежу за тратами и предупреждаю до того, как деньги закончатся.\n\n"
         "<b>Шаг 1/3.</b> Напиши в одном сообщении:\n"
-        "— в какие числа получаешь зарплату\n"
-        "— сколько зарабатываешь\n"
-        "— сколько сейчас денег на счету\n\n"
-        "Примеры:\n"
-        "<i>«9-го 60000 и 23-го аванс 25000, на счету 12000»</i>\n"
-        "<i>«1 и 15 числа, зп 85к, сейчас 30000 на счету»</i>\n"
-        "<i>«получаю 50000 десятого, в кармане 5000»</i>",
+        "— <b>Дни зарплаты</b> — поставлю напоминание, даже если сумма ещё неизвестна\n"
+        "— <b>Сколько сейчас на счету</b> — отправная точка\n"
+        "— <b>Сколько планируешь заработать в ближайшее время</b> — буду считать на это\n"
+        "— <b>Средний доход в месяц</b> — чтобы Gemini видел общую картину\n\n"
+        "Пример:\n"
+        "<i>«Зарплата 9-го и 23-го. На счету 12000. Планирую получить 40000. В среднем 65000 в месяц»</i>\n"
+        "<i>«Получаю 1-го и 15-го. Сейчас в кармане 5000. Жду 30000. Обычно зарабатываю 50к»</i>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Пропустить", callback_data="onboarding:skip_step1")]
@@ -161,42 +191,82 @@ async def cmd_help(message: Message):
 @router.message(OnboardingState.step_combined)
 async def onboarding_combined(message: Message, state: FSMContext):
     parsed = _parse_combined_step(message.text or "")
-    if not parsed["days"] and not parsed["income"]:
+    if not parsed["days"] and not parsed["avg_income"] and not parsed["planned_income"] and parsed["balance"] is None:
         await message.answer(
             "Не разобрал. Попробуй так:\n"
-            "<i>«9-го 60000 и 23-го 25000, на счету 12000»</i>",
+            "<i>«Зарплата 9-го и 23-го. На счету 12000. Планирую 40000. В среднем 65000»</i>",
             parse_mode="HTML"
         )
         return
 
+    # Дни зарплаты → сохранить и поставить напоминания
     if parsed["days"]:
         await set_salary_days(message.from_user.id, parsed["days"])
-    if parsed["income"]:
-        await update_user(message.from_user.id, {"monthly_income": parsed["income"]})
-        await state.update_data(monthly_income=float(parsed["income"]))
+
+    # Средний доход → используется для формирования бюджетов
+    if parsed["avg_income"]:
+        await update_user(message.from_user.id, {
+            "monthly_income": parsed["avg_income"],
+            "average_income": parsed["avg_income"],
+        })
+        await state.update_data(monthly_income=float(parsed["avg_income"]))
+
+    # Прогнозируемый доход → отдельный учёт
+    if parsed["planned_income"]:
+        await update_user(message.from_user.id, {"predicted_income": parsed["planned_income"]})
+        await state.update_data(planned_income=float(parsed["planned_income"]))
+        # Записываем как планируемый доход в таблицу
+        try:
+            from db import add_planned_income
+            from datetime import date, timedelta
+            await add_planned_income(
+                user_id=message.from_user.id,
+                amount=float(parsed["planned_income"]),
+                expected_date=(date.today() + timedelta(days=7)).isoformat(),
+                description="Прогнозируемый доход (онбординг)",
+                type_="income",
+            )
+        except Exception as e:
+            logging.error(f"add_planned_income error: {e}")
+
+    # Текущий баланс → фиксируем и пишем транзакцию "Начальный баланс"
     if parsed["balance"] is not None:
         await set_current_balance(message.from_user.id, parsed["balance"])
         await state.update_data(current_balance=float(parsed["balance"]))
+        if parsed["balance"] > 0:
+            try:
+                from db import add_transaction
+                await add_transaction(
+                    user_id=message.from_user.id,
+                    type_="income",
+                    amount=float(parsed["balance"]),
+                    category="Доходы",
+                    description="Начальный баланс (онбординг)",
+                )
+            except Exception as e:
+                logging.error(f"balance transaction error: {e}")
 
     parts = []
     if parsed["days"]:
-        parts.append(f"Дни зарплаты: {', '.join(map(str, parsed['days']))}-е числа")
-    if parsed["income"]:
-        parts.append(f"Доход: {parsed['income']:,.0f} ₽/мес")
+        parts.append(f"Дни зарплаты: {', '.join(map(str, parsed['days']))}-е числа — <b>напоминания поставлены</b>")
+    if parsed["avg_income"]:
+        parts.append(f"Средний доход: {parsed['avg_income']:,.0f} ₽/мес")
+    if parsed["planned_income"]:
+        parts.append(f"Прогнозируемый доход (ближайший): {parsed['planned_income']:,.0f} ₽")
     if parsed["balance"] is not None:
-        parts.append(f"Баланс сейчас: {parsed['balance']:,.0f} ₽")
+        parts.append(f"Баланс сейчас: {parsed['balance']:,.0f} ₽ — записан в доходы")
 
     confirm_text = "\n".join(f"• {p}" for p in parts)
 
     await message.answer(
         f"Принял:\n{confirm_text}\n\n"
-        "<b>Шаг 2/3.</b> Регулярные платежи — аренда, ипотека, кредиты, подписки.\n\n"
-        "Всё одним сообщением:\n"
-        "<i>«Аренда 35000 первого, кредит Сбер 12000, Netflix 699»</i>\n\n"
-        "Кредиты и ипотека автоматически пойдут в бюджет кредитов.",
+        "<b>Шаг 2/3.</b> Кредиты и ипотека.\n\n"
+        "Напиши все свои кредиты, займы, рассрочки:\n"
+        "<i>«Кредит Сбер 12000, ипотека 45000 первого, рассрочка телефон 3500»</i>\n\n"
+        "Из них автоматически сформируется бюджет Кредиты.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Нет регулярных платежей", callback_data="onboarding:skip_payments")]
+            [InlineKeyboardButton(text="Нет кредитов", callback_data="onboarding:skip_payments")]
         ])
     )
     await state.set_state(OnboardingState.step_payments)
@@ -205,11 +275,12 @@ async def onboarding_combined(message: Message, state: FSMContext):
 @router.callback_query(F.data == "onboarding:skip_step1")
 async def onboarding_skip_step1(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
-        "<b>Шаг 2/3.</b> Регулярные платежи:\n"
-        "<i>«Аренда 35000 первого, кредит Сбер 12000, Netflix 699»</i>",
+        "<b>Шаг 2/3.</b> Кредиты и ипотека.\n\n"
+        "Напиши все свои кредиты, займы, рассрочки:\n"
+        "<i>«Кредит Сбер 12000, ипотека 45000 первого, рассрочка телефон 3500»</i>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Нет регулярных платежей", callback_data="onboarding:skip_payments")]
+            [InlineKeyboardButton(text="Нет кредитов", callback_data="onboarding:skip_payments")]
         ])
     )
     await state.set_state(OnboardingState.step_payments)
@@ -231,10 +302,19 @@ async def onboarding_payments(message: Message, state: FSMContext):
         logging.error(f"onboarding parse payments error: {e}")
         payments = []
 
-    if not payments:
+    # Фильтруем только кредиты/ипотеку/займы
+    credit_payments = [
+        p for p in payments
+        if any(kw in p["name"].lower() for kw in CREDIT_KEYWORDS)
+    ]
+    # Если ничего не распознали как кредит — считаем всё кредитами на этом шаге
+    if not credit_payments and payments:
+        credit_payments = payments
+
+    if not credit_payments:
         await message.answer(
             "Не смог разобрать. Попробуй иначе:\n"
-            "<i>«Аренда 35000, Netflix 699, интернет 600»</i>",
+            "<i>«Кредит Сбер 12000, ипотека 45000, рассрочка 3500»</i>",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="Пропустить", callback_data="onboarding:skip_payments")]
@@ -242,22 +322,22 @@ async def onboarding_payments(message: Message, state: FSMContext):
         )
         return
 
-    await state.update_data(parsed_payments=payments)
+    # Принудительно метим все как кредиты (шаг только для кредитов)
+    for p in credit_payments:
+        p["category"] = "Кредиты"
+        if not any(kw in p["name"].lower() for kw in CREDIT_KEYWORDS):
+            p["name"] = "Кредит " + p["name"]
 
-    credit_sum = sum(
-        float(p["amount"]) for p in payments
-        if any(kw in p["name"].lower() for kw in CREDIT_KEYWORDS)
-    )
+    await state.update_data(parsed_payments=credit_payments)
+
+    credit_sum = sum(float(p["amount"]) for p in credit_payments)
     lines = []
-    for p in payments:
-        is_credit = any(kw in p["name"].lower() for kw in CREDIT_KEYWORDS)
-        cat_label = " (→ бюджет Кредиты)" if is_credit else ""
-        lines.append(f"• {p['name']} — {p['amount']:,.0f} ₽, {p['day']}-е числа{cat_label}")
-
-    credit_note = f"\n\nКредитный бюджет: {credit_sum:,.0f} ₽/мес будет создан автоматически." if credit_sum > 0 else ""
+    for p in credit_payments:
+        lines.append(f"• {p['name']} — {p['amount']:,.0f} ₽, {p['day']}-е числа → бюджет Кредиты")
 
     await message.answer(
-        f"Вот что понял:\n\n" + "\n".join(lines) + credit_note + "\n\nВерно?",
+        f"Вот что понял:\n\n" + "\n".join(lines) +
+        f"\n\n💳 Бюджет Кредиты: {credit_sum:,.0f} ₽/мес будет создан автоматически.\n\nВерно?",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [
@@ -277,9 +357,8 @@ async def onboarding_payments_confirmed(callback: CallbackQuery, state: FSMConte
 
     for p in payments:
         try:
-            name_lower = p["name"].lower()
-            is_credit = any(kw in name_lower for kw in CREDIT_KEYWORDS)
-            cat = "Кредиты" if is_credit else p.get("category", "Обязательные")
+            # На этом шаге все платежи — кредиты
+            cat = "Кредиты"
             await add_scheduled_payment(
                 user_id=callback.from_user.id,
                 name=p["name"],
@@ -287,8 +366,21 @@ async def onboarding_payments_confirmed(callback: CallbackQuery, state: FSMConte
                 day=int(p.get("day", 1)),
                 category=cat,
             )
-            if is_credit:
-                credit_sum += float(p["amount"])
+            credit_sum += float(p["amount"])
+
+            # Записываем как расход в транзакции (Обязательные платежи)
+            try:
+                from db import add_transaction
+                await add_transaction(
+                    user_id=callback.from_user.id,
+                    type_="expense",
+                    amount=float(p["amount"]),
+                    category="Кредиты",
+                    description=f"Обязательный платёж: {p['name']} (онбординг)",
+                )
+            except Exception as e:
+                logging.error(f"credit transaction record error: {e}")
+
         except Exception as e:
             logging.error(f"onboarding save payment error: {e}")
 
@@ -300,12 +392,12 @@ async def onboarding_payments_confirmed(callback: CallbackQuery, state: FSMConte
             logging.error(f"auto budget credits error: {e}")
 
     await callback.message.answer(
-        f"Сохранено {len(payments)} платежей.\n\n"
+        f"Сохранено {len(payments)} кредитов. Бюджет Кредиты: {credit_sum:,.0f} ₽/мес.\n\n"
         "<b>Шаг 3/3.</b> На что тратишься каждый месяц?\n\n"
-        "Пиши с конкретными суммами — их не буду занижать:\n"
-        "<i>«Еда 20000, такси 5000, танцы 6900, связь МТС 800, "
+        "Пиши с конкретными суммами:\n"
+        "<i>«Еда 20000, такси 5000, спортзал 6900, подписки 1500, "
         "кофе 3000, иногда одежда»</i>\n\n"
-        "Если пишешь «связь 800» — бюджет будет 800, а не 660.",
+        "Если пишешь «еда 20000» — бюджет будет 20000, а не меньше.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Пропустить — настрою сам", callback_data="onboarding:skip_brief")]
@@ -318,10 +410,10 @@ async def onboarding_payments_confirmed(callback: CallbackQuery, state: FSMConte
 @router.callback_query(F.data == "onboarding:payments_retry", OnboardingState.step_payments_confirm)
 async def onboarding_payments_retry(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
-        "Напиши ещё раз:\n<i>«Аренда 35000 первого, Netflix 699»</i>",
+        "Напиши ещё раз:\n<i>«Кредит Сбер 12000, ипотека 45000, рассрочка 3500»</i>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Пропустить", callback_data="onboarding:skip_payments")]
+            [InlineKeyboardButton(text="Нет кредитов", callback_data="onboarding:skip_payments")]
         ])
     )
     await state.set_state(OnboardingState.step_payments)
@@ -333,7 +425,7 @@ async def onboarding_skip_payments(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
         "<b>Шаг 3/3.</b> На что тратишься?\n\n"
         "Пиши с конкретными суммами:\n"
-        "<i>«Еда 20000, такси 5000, танцы 6900, связь 800»</i>",
+        "<i>«Еда 20000, такси 5000, спортзал 6900, подписки 1500»</i>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Пропустить — настрою сам", callback_data="onboarding:skip_brief")]
@@ -361,6 +453,7 @@ async def onboarding_skip_brief(callback: CallbackQuery, state: FSMContext):
 async def _generate_and_confirm_budgets(message, state: FSMContext, user_id: int = None):
     data = await state.get_data()
     monthly_income = data.get("monthly_income", 0)
+    planned_income_val = data.get("planned_income", 0)
     description = data.get("spending_description", "")
     auto_credits = data.get("auto_budget_credits", 0)
     uid = user_id or message.chat.id
@@ -369,11 +462,16 @@ async def _generate_and_confirm_budgets(message, state: FSMContext, user_id: int
         user = await get_user(uid)
         if user:
             monthly_income = float(user.get("monthly_income") or 0)
+            if not planned_income_val:
+                planned_income_val = float(user.get("predicted_income") or 0)
+
+    # Для расчёта бюджетов используем средний доход (если есть), иначе прогнозируемый
+    budget_income = monthly_income or planned_income_val
 
     result_obj = None
     budgets: dict[str, float] = {}
 
-    if monthly_income > 0:
+    if budget_income > 0:
         try:
             from db import get_scheduled_payments
             from budget_engine import parse_user_spending_ai, build_budgets
@@ -382,7 +480,7 @@ async def _generate_and_confirm_budgets(message, state: FSMContext, user_id: int
             if description:
                 user_expenses = await parse_user_spending_ai(description)
             result_obj = build_budgets(
-                monthly_income=monthly_income,
+                monthly_income=budget_income,
                 scheduled_payments=payments,
                 user_expenses=user_expenses,
             )
@@ -405,12 +503,20 @@ async def _generate_and_confirm_budgets(message, state: FSMContext, user_id: int
     if auto_credits > 0 and "Кредиты" not in budgets:
         lines.insert(0, f"• Кредиты: {auto_credits:,.0f} ₽/мес ✓")
 
+    income_note = ""
+    if planned_income_val and monthly_income and planned_income_val != monthly_income:
+        income_note = (
+            f"\n\nИспользован средний доход {monthly_income:,.0f} ₽ для расчёта. "
+            f"Прогнозируемый ({planned_income_val:,.0f} ₽) учтён отдельно."
+        )
+
     deficit_warn = "\n\nВнимание: расходы превышают доход. Категории урезаны по иерархии." if (result_obj and result_obj.is_deficit) else ""
     skipped_note = f"\nНе включено (нет бюджета): {', '.join(result_obj.skipped_categories)}" if (result_obj and result_obj.skipped_categories) else ""
 
     await message.answer(
         "<b>Бюджеты на основе твоих данных:</b>\n\n"
         + "\n".join(lines)
+        + income_note
         + deficit_warn
         + skipped_note
         + "\n\n✓ = конкретная сумма из твоего описания, не урезана."
@@ -450,6 +556,7 @@ async def _onboarding_finish(message, state: FSMContext, budgets: dict = None, u
     salary_days = await get_salary_days(user_id)
     data = await state.get_data()
     monthly_income = data.get("monthly_income", 0)
+    planned_income_val = data.get("planned_income", 0)
 
     parts = []
     if salary_days:
@@ -472,17 +579,20 @@ async def _onboarding_finish(message, state: FSMContext, budgets: dict = None, u
     )
     await state.clear()
 
-    if monthly_income > 0 and budgets:
+    if (monthly_income > 0 or planned_income_val > 0) and budgets:
         try:
             from weekly_advice import generate_onboarding_gemini_analysis
             from db import get_scheduled_payments
             payments = await get_scheduled_payments(user_id)
+            avg_income = float(user.get("average_income") or monthly_income) if user else monthly_income
             analysis_text = await generate_onboarding_gemini_analysis(
                 user_id=user_id,
-                monthly_income=monthly_income,
+                monthly_income=monthly_income or planned_income_val,
                 budgets=budgets,
                 payments=payments,
                 salary_days=salary_days or [],
+                planned_income=planned_income_val,
+                average_income=avg_income,
             )
             if analysis_text:
                 await message.answer(

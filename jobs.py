@@ -275,6 +275,82 @@ async def sync_google_calendar_events(bot):
             logging.error(f"Calendar sync error {user_id}: {e}")
 
 
+async def check_spend_rate_alerts(bot):
+    """
+    Push-уведомления: "тратишь быстро, можешь не дотянуть до зарплаты".
+    Срабатывает если дневной темп расходов превышает безопасный лимит.
+    Запускается раз в день (в 14:00).
+    """
+    from datetime import date
+    users = await get_all_active_users()
+    today = date.today()
+
+    for user in users:
+        user_id = user["id"]
+        try:
+            salary_days = await get_salary_days(user_id)
+            if not salary_days:
+                continue
+
+            # Ближайший день зарплаты
+            next_sal = next((d for d in sorted(salary_days) if d > today.day), None)
+            if next_sal is None:
+                next_sal = sorted(salary_days)[0]
+                days_left = (31 - today.day) + next_sal
+            else:
+                days_left = next_sal - today.day
+
+            if days_left <= 0:
+                continue
+
+            stats = await get_stats(user_id, "month")
+            current_month_expenses = stats.get("expenses", 0)
+            current_balance = stats.get("balance", 0)
+
+            # Дней прошло с начала месяца
+            days_passed = today.day
+            if days_passed == 0:
+                continue
+
+            daily_rate = current_month_expenses / days_passed
+            projected_total = daily_rate * 30  # прогноз на месяц
+
+            # Прогноз расходов до зарплаты
+            projected_till_salary = daily_rate * days_left
+
+            # Получаем запланированные обязательные платежи впереди
+            payments = await get_scheduled_payments(user_id)
+            upcoming_mandatory = sum(
+                p["amount"] for p in payments
+                if 0 < p["day_of_month"] - today.day <= days_left
+            )
+
+            total_outgo = projected_till_salary + upcoming_mandatory
+
+            # Алерт: прогнозируемые расходы > 85% текущего баланса
+            if current_balance > 0 and total_outgo > current_balance * 0.85:
+                shortage = total_outgo - current_balance
+                safe_daily = max(0, (current_balance - upcoming_mandatory) / max(days_left, 1))
+
+                msg = (
+                    f"⚠️ <b>Темп трат высокий.</b>\n\n"
+                    f"Сейчас тратишь <b>{daily_rate:,.0f} ₽/день</b>.\n"
+                    f"До зарплаты ({next_sal}-го) осталось <b>{days_left} дн.</b>\n\n"
+                )
+                if upcoming_mandatory > 0:
+                    msg += f"Обязательных платежей впереди: <b>{upcoming_mandatory:,.0f} ₽</b>\n"
+                msg += (
+                    f"Прогноз расходов: <b>{total_outgo:,.0f} ₽</b> при балансе <b>{current_balance:,.0f} ₽</b>\n\n"
+                    f"Безопасный темп: <b>{safe_daily:,.0f} ₽/день</b>. "
+                    f"Постарайся не превышать."
+                )
+
+                await bot.send_message(user_id, msg, parse_mode="HTML")
+
+        except Exception as e:
+            logging.error(f"check_spend_rate_alerts error for {user_id}: {e}")
+
+
 # ─── НАСТРОЙКА ПЛАНИРОВЩИКА ───────────────────────────────────────────────────
 
 def setup_scheduler(bot) -> AsyncIOScheduler:
@@ -303,6 +379,9 @@ def setup_scheduler(bot) -> AsyncIOScheduler:
 
     # Умный анализ бюджета (Gemini) — каждый понедельник 9:00
     scheduler.add_job(send_smart_budget_advice, CronTrigger(day_of_week="mon", hour=9), args=[bot])
+
+    # Push-уведомления "тратишь быстро" — каждый день в 14:00
+    scheduler.add_job(check_spend_rate_alerts, CronTrigger(hour=14, minute=0), args=[bot])
 
     # Синхронизация Google Calendar — каждый день в 3:00
     scheduler.add_job(sync_google_calendar_events, CronTrigger(hour=3, minute=0), args=[bot])
