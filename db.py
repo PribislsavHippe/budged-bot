@@ -120,12 +120,14 @@ async def get_stats(user_id: int, period: str = "month") -> dict:
 # ─── SCHEDULED PAYMENTS ──────────────────────────────────
 
 async def add_scheduled_payment(user_id: int, name: str, amount: float, day: int,
+                                 category: str = "Обязательные",
                                  remind_days_before: int = 2, calendar_event_id: str = None):
     data = {
         "user_id": user_id,
         "name": name,
         "amount": amount,
         "day_of_month": day,
+        "category": category,
         "remind_days_before": remind_days_before,
     }
     if calendar_event_id:

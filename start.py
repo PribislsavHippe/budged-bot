@@ -367,10 +367,24 @@ async def onboarding_payments_confirmed(callback: CallbackQuery, state: FSMConte
         except Exception as e:
             logging.error(f"auto budget credits error: {e}")
 
-    credit_display = f"{credit_sum:,.0f}" if credit_sum > 0 else "не удалось сохранить — проверь БД"
+    credit_display = f"{credit_sum:,.0f}" if credit_sum > 0 else "0"
+
+    if saved_count == 0 and len(payments) > 0:
+        # Критическая ошибка — не пускаем дальше, предлагаем повторить
+        await callback.message.answer(
+            "⚠️ <b>Не удалось сохранить кредиты.</b> Скорее всего, временный сбой базы данных.\n\n"
+            "Попробуй ещё раз — просто напиши кредиты заново.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Пропустить и продолжить", callback_data="onboarding:skip_payments")]
+            ])
+        )
+        await state.set_state(OnboardingState.step_payments)
+        await callback.answer()
+        return
 
     await callback.message.answer(
-        f"Сохранено {saved_count} из {len(payments)} кредитов. Бюджет Кредиты: {credit_display} ₽/мес.\n\n"
+        f"Сохранено {saved_count} кредитов. Бюджет Кредиты: {credit_display} ₽/мес.\n\n"
         "<b>Шаг 3/3.</b> На что тратишься каждый месяц?\n\n"
         "Пиши с конкретными суммами:\n"
         "<i>«Еда 20000, такси 5000, спортзал 6900, подписки 1500, "

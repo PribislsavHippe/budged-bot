@@ -85,6 +85,7 @@ async def get_weekly_advice(
     planned_income: list[dict] = None,
     week_num: int = None,
     known_salary_amount: float = 0,
+    predicted_income: float = 0,
     user_id: int = None,
 ) -> dict:
     """
@@ -118,7 +119,9 @@ async def get_weekly_advice(
         ai_report = None
         used_ai = False
     else:
-        ai_report = await _ask_gemini_full_report(context, analysis, user_id)
+        ai_report = await _ask_gemini_full_report(
+            context, analysis, user_id, predicted_income=predicted_income
+        )
         used_ai = True
 
     budget_summary = _make_summary(target_week, analysis["profile"])
@@ -133,7 +136,8 @@ async def get_weekly_advice(
     }
 
 
-async def _ask_gemini_full_report(context: str, analysis: dict, user_id: int = None) -> str:
+async def _ask_gemini_full_report(context: str, analysis: dict, user_id: int = None,
+                                   predicted_income: float = 0) -> str:
     """
     Подробный финансовый отчёт через Gemini 2.5 Flash.
     Анализ денежных потоков на неделю и на месяц.
@@ -141,6 +145,7 @@ async def _ask_gemini_full_report(context: str, analysis: dict, user_id: int = N
     """
     profile = analysis.get("profile", {})
     weekly = analysis.get("weekly_cashflows", [])
+    known_salary = float(profile.get("known_salary_amount") or 0)
 
     # Строим данные по каждому периоду
     periods_text = ""
@@ -164,8 +169,20 @@ async def _ask_gemini_full_report(context: str, analysis: dict, user_id: int = N
             mc = ", ".join([f"{c['category']} сократить на {c['suggested_cut']:,} руб." for c in w["must_cut"]])
             periods_text += f"  Сократить: {mc}\n"
 
-    prompt = f"""Сегодня {date.today().strftime('%d %B %Y')} ({date.today().strftime('%A')}).
+    # Поясняем Gemini логику нестабильного дохода
+    income_clarification = ""
+    if predicted_income > 0 and known_salary > 0 and abs(predicted_income - known_salary) > 1000:
+        income_clarification = (
+            f"\nВАЖНО ПРО ДОХОД: у пользователя нестабильный доход."
+            f" Средний месячный доход: {known_salary:,.0f} руб. — это база для бюджетов."
+            f" Подтверждённые поступления в ближайшие ~2 недели: {predicted_income:,.0f} руб."
+            f" Это НЕ весь месячный доход, а уже известная его часть."
+            f" Остаток ({known_salary - predicted_income:,.0f} руб.) будет заработан позже."
+            f" Не делай вывод о дефиците только на основании разницы между этими числами.\n"
+        )
 
+    prompt = f"""Сегодня {date.today().strftime('%d %B %Y')} ({date.today().strftime('%A')}).
+{income_clarification}
 {context}
 
 ЗАДАНИЕ: Сделай подробный финансовый отчёт по следующим разделам.
@@ -369,18 +386,31 @@ async def generate_onboarding_gemini_analysis(
     ) or "  нет"
 
     income_context = ""
+    income_instruction = ""
     if planned_income and average_income and planned_income != average_income:
         income_context = (
-            f"\nПрогнозируемый доход (ближайшее время): {planned_income:,.0f} руб.\n"
-            f"Средний доход в месяц: {average_income:,.0f} руб.\n"
-            f"ВАЖНО: у пользователя нестабильный доход. "
-            f"Советы строить исходя из прогнозируемого ({planned_income:,.0f} руб.), "
-            f"а не из среднего."
+            f"\n\nСТРУКТУРА ДОХОДА:\n"
+            f"  Средний доход в месяц: {average_income:,.0f} руб. (нестабильный, исторический ориентир)\n"
+            f"  Подтверждённый доход на ближайшие ~2 недели: {planned_income:,.0f} руб.\n"
+            f"  → Это НЕ весь месячный доход, а только известная часть.\n"
+            f"  → Оставшиеся ~{average_income - planned_income:,.0f} руб. обычно зарабатываются позже.\n"
+            f"  → Бюджеты корректно рассчитаны от среднего {average_income:,.0f} руб."
+        )
+        income_instruction = (
+            f"\n\nВАЖНО: {planned_income:,.0f} руб. — это подтверждённые поступления за 2 недели, "
+            f"НЕ месячный доход. Месячный ориентир — {average_income:,.0f} руб. "
+            f"Не делай вывод о дефиците бюджета на основе {planned_income:,.0f} руб."
         )
     elif planned_income:
-        income_context = f"\nПрогнозируемый доход (ближайшее время): {planned_income:,.0f} руб."
+        income_context = (
+            f"\n\nПодтверждённый доход на ближайшие ~2 недели: {planned_income:,.0f} руб. "
+            f"(нестабильный доход, точная сумма за месяц неизвестна)"
+        )
+        income_instruction = (
+            f"\n\nВАЖНО: {planned_income:,.0f} руб. — только ближайшие поступления, не месячный доход."
+        )
     elif average_income:
-        income_context = f"\nСредний доход: {average_income:,.0f} руб./мес."
+        income_context = f"\n\nСредний доход: {average_income:,.0f} руб./мес."
 
     prompt = f"""Сегодня {today.strftime('%d %B %Y')} ({today.strftime('%A')}).
 Новый пользователь только что настроил финансовый трекер.
@@ -400,7 +430,7 @@ async def generate_onboarding_gemini_analysis(
 Потенциал накопления: {savings_potential:,.0f} руб./мес.
 
 ЗАДАНИЕ: Сделай предварительный анализ финансового состояния и дай практические советы.
-Учти текущую дату — советы должны быть актуальны именно сейчас (какой день месяца, сколько до следующей зарплаты и т.д.).
+Учти текущую дату — советы должны быть актуальны именно сейчас (какой день месяца, сколько до следующей зарплаты и т.д.).{income_instruction}
 
 ФОРМАТ (обычный текст, без *, #, ```. Обращайся на "ты"):
 
@@ -464,7 +494,9 @@ async def handle_weekly_advice_request(user_id: int) -> str:
     else:
         current_balance = stats_balance
 
-    # Для анализа: если есть predicted_income — используем его как ориентир ближайшего дохода
+    # known_salary_amount = средний доход (база для расчётов)
+    # predicted_income = подтверждённая часть, которая придёт в ближайшие ~2 недели
+    # Они НЕ конкурируют — predicted это часть known_salary
     effective_salary = known_salary_amount or predicted_income
 
     planned = []
@@ -485,6 +517,7 @@ async def handle_weekly_advice_request(user_id: int) -> str:
         planned_income=planned,
         user_id=user_id,
         known_salary_amount=effective_salary,
+        predicted_income=predicted_income,
     )
 
     summary  = result["budget_summary"]
