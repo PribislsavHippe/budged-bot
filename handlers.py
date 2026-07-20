@@ -3,6 +3,8 @@
 Никаких многошаговых диалогов, кроме единственного вопроса при онбординге.
 """
 import logging
+import os
+import re
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
@@ -15,12 +17,17 @@ from aiogram.types import (
     KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
+    WebAppInfo,
 )
 
 import db
 import parser as p
 
 router = Router()
+
+WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
+
+SHIFT_SPEND_CATEGORIES = ["Мойка", "Бар", "Еда", "Такси"]
 
 KIND_SIGN = {"income": 1, "expense": -1}
 KIND_EMOJI = {"income": "➕", "expense": "➖", "adjustment": "🔧"}
@@ -29,6 +36,10 @@ KIND_EMOJI = {"income": "➕", "expense": "➖", "adjustment": "🔧"}
 class Onboarding(StatesGroup):
     waiting_balances = State()
     waiting_account_choice = State()
+
+
+class ShiftSpend(StatesGroup):
+    waiting_amount = State()
 
 
 # ─── форматирование ──────────────────────────────────────────────────────────
@@ -51,10 +62,14 @@ def fmt_balances(b: dict) -> str:
 
 
 def main_menu() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="💰 Баланс"), KeyboardButton(text="📋 История")]],
-        resize_keyboard=True,
-    )
+    rows = [[KeyboardButton(text="💰 Баланс"), KeyboardButton(text="📋 История")]]
+    row2 = [KeyboardButton(text="🧾 Закрыть смену")]
+    if WEBHOOK_HOST:
+        row2.append(KeyboardButton(
+            text="📊 Статистика", web_app=WebAppInfo(url=f"{WEBHOOK_HOST}/app")
+        ))
+    rows.append(row2)
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
 def entry_line(e: dict) -> str:
@@ -306,6 +321,123 @@ async def cb_toggle_account(callback: CallbackQuery):
     await callback.answer(f"Перенёс на {db.ACCOUNT_LABELS[other].lower()}")
 
 
+# ─── план смены ──────────────────────────────────────────────────────────────
+
+PLAN_RE = re.compile(r"^\s*план(?:\s+смены)?\s*[:\-—]?\s*(\d[\d ]*)?\s*$", re.IGNORECASE)
+
+
+@router.message(F.text.regexp(PLAN_RE))
+async def shift_plan(message: Message):
+    m = PLAN_RE.match(message.text)
+    raw = m.group(1)
+    if raw is None:
+        goal = await db.get_shift_goal(message.from_user.id)
+        if goal:
+            await message.answer(
+                f"План смены: <b>{fmt(goal)} ₽</b>.\n"
+                "Изменить: <i>план 2500</i> · Убрать: <i>план 0</i>"
+            )
+        else:
+            await message.answer("План не задан. Задай: <i>план 2000</i>")
+        return
+    goal = float(raw.replace(" ", ""))
+    if goal <= 0:
+        await db.set_shift_goal(message.from_user.id, None)
+        await message.answer("План смены убрал.")
+        return
+    await db.set_shift_goal(message.from_user.id, goal)
+    await message.answer(f"План смены: <b>{fmt(goal)} ₽ чая</b>. Вечером посмотрим, как получилось.")
+
+
+# ─── закрытие смены: траты кнопками ──────────────────────────────────────────
+
+def shift_spend_kb() -> InlineKeyboardMarkup:
+    row = [
+        InlineKeyboardButton(text=c, callback_data=f"ss:{c}")
+        for c in SHIFT_SPEND_CATEGORIES
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        row[:2], row[2:],
+        [InlineKeyboardButton(text="✅ Готово, ничего больше", callback_data="ss:done")],
+    ])
+
+
+async def send_shift_close_prompt(message: Message):
+    await message.answer(
+        "Закрываем смену. Что потратил за день?\n"
+        "Жми категорию и пиши сумму — или сразу «Готово».",
+        reply_markup=shift_spend_kb(),
+    )
+
+
+@router.message(F.text == "🧾 Закрыть смену")
+async def shift_close_button(message: Message):
+    await send_shift_close_prompt(message)
+
+
+@router.message(F.web_app_data)
+async def web_app_data_handler(message: Message):
+    if message.web_app_data.data == "close_shift":
+        await send_shift_close_prompt(message)
+
+
+@router.callback_query(F.data.startswith("ss:"))
+async def shift_spend_chip(callback: CallbackQuery, state: FSMContext):
+    choice = callback.data.split(":", 1)[1]
+    if choice == "done":
+        await state.clear()
+        await _send_day_summary(callback.message, callback.from_user.id)
+        await callback.answer()
+        return
+    await state.set_state(ShiftSpend.waiting_amount)
+    await state.update_data(shift_category=choice)
+    await callback.message.answer(f"Сколько ушло на «{choice}»? Просто число.")
+    await callback.answer()
+
+
+@router.message(ShiftSpend.waiting_amount)
+async def shift_spend_amount(message: Message, state: FSMContext):
+    amount = p.extract_amount(message.text or "")
+    if amount is None:
+        await message.answer("Нужно число, например: <i>350</i>. Или /cancel.")
+        return
+    data = await state.get_data()
+    category = data.get("shift_category", "Прочее")
+    entry = await db.add_entry(
+        message.from_user.id, "expense", db.CASH, -amount,
+        category=category, note="трата смены",
+    )
+    await state.clear()
+    await message.answer(
+        f"➖ {category} {fmt(amount)} ₽ (наличные)\n\nЕщё что-то?",
+        reply_markup=shift_spend_kb(),
+    )
+
+
+async def _send_day_summary(message: Message, user_id: int):
+    """Итог дня: чай − траты = чистыми, плюс план если задан."""
+    from datetime import datetime, timedelta, timezone
+    msk = timezone(timedelta(hours=3))
+    day_start = datetime.now(msk).replace(hour=0, minute=0, second=0, microsecond=0)
+    entries = await db.get_entries_since(user_id, day_start.astimezone(timezone.utc).isoformat())
+    income = sum(float(e["signed_amount"]) for e in entries if e["kind"] == "income")
+    spent = -sum(float(e["signed_amount"]) for e in entries if e["kind"] == "expense")
+    net = income - spent
+
+    lines = [
+        f"<b>За сегодня: {fmt(net)} ₽ чистыми</b>",
+        f"Заработал {fmt(income)} − потратил {fmt(spent)}",
+    ]
+    goal = await db.get_shift_goal(user_id)
+    if goal:
+        pct = round(min(income / goal, 1.0) * 100)
+        mark = "✅ План сделан!" if income >= goal else f"{pct}% плана"
+        lines.append(f"План {fmt(goal)}: {mark}")
+    if income > 0 and net <= 0:
+        lines.append("Смена ушла в минус — загляни в статистику, куда утекло.")
+    await message.answer("\n".join(lines))
+
+
 # ─── кнопки старой версии бота ───────────────────────────────────────────────
 
 LEGACY_BUTTONS = {"Статистика", "Платежи", "Бюджеты", "Настройки", "Доходы", "Цели", "ИИ-чат"}
@@ -338,15 +470,24 @@ async def legacy_button(message: Message, state: FSMContext):
 
 # ─── главный обработчик текста ───────────────────────────────────────────────
 
-async def _save_bank_tips(message: Message, tips: float):
-    """Чаевые из банковского уведомления → доход на карту."""
+async def _save_bank_tips(message: Message, notif: dict):
+    """Чаевые из банковского уведомления → доход на карту, с чеком и процентом."""
+    tips = notif["amount"]
     entry = await db.add_entry(
         message.from_user.id, "income", db.CARD, tips,
         category="Чаевые", note="из банка",
+        order_amount=notif.get("order_amount"),
+        tip_percent=notif.get("tip_percent"),
     )
+    details = []
+    if notif.get("order_amount"):
+        details.append(f"чек {fmt(notif['order_amount'])}")
+    if notif.get("tip_percent"):
+        details.append(f"{notif['tip_percent']:g}%")
+    details_str = f" ({', '.join(details)})" if details else ""
     balances = await db.get_balances(message.from_user.id)
     await message.answer(
-        f"➕ Чаевые <b>{fmt(tips)} ₽</b> → карта\n\n" + fmt_balances(balances),
+        f"➕ Чаевые <b>{fmt(tips)} ₽</b>{details_str} → карта\n\n" + fmt_balances(balances),
         reply_markup=undo_kb([entry["id"]], toggle_entry=entry),
     )
 
@@ -367,9 +508,9 @@ async def handle_text(message: Message, state: FSMContext):
 
     # 1. Пересланное сообщение банка о чаевых → сразу на карту
     if message.forward_origin is not None:
-        tips = p.parse_bank_tips(text)
-        if tips is not None:
-            await _save_bank_tips(message, tips)
+        notif = p.parse_bank_notification(text)
+        if notif is not None:
+            await _save_bank_tips(message, notif)
         else:
             await message.answer(
                 "В пересланном сообщении не нашёл сумму чаевых.\n"
@@ -379,9 +520,9 @@ async def handle_text(message: Message, state: FSMContext):
 
     # 2. Текст уведомления банка, скопированный без пересылки
     if p.looks_like_bank_tips(text):
-        tips = p.parse_bank_tips(text)
-        if tips is not None:
-            await _save_bank_tips(message, tips)
+        notif = p.parse_bank_notification(text)
+        if notif is not None:
+            await _save_bank_tips(message, notif)
             return
 
     # 3. Сверка: «наличными 3200, на карте 8100»

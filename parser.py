@@ -182,6 +182,47 @@ def looks_like_bank_tips(text: str) -> bool:
     return bool(_BANK_SIGNATURE.search(text))
 
 
+_BANK_ORDER = re.compile(
+    r"сумма\s+заказа\s*[:\-—]?\s*(\d[\d ]*(?:[.,]\d{1,2})?)",
+    re.IGNORECASE,
+)
+_BANK_PERCENT = re.compile(r"\(\s*(\d{1,2}(?:[.,]\d)?)\s*%\s*\)")
+
+
+def parse_bank_notification(text: str) -> dict | None:
+    """Полный разбор банковского уведомления о чаевых.
+
+    Возвращает {'amount', 'order_amount', 'tip_percent'} (последние два могут
+    быть None). Процент берём из скобок «(7 %)», а если его нет — считаем сами
+    из чека.
+    """
+    amount = parse_bank_tips(text)
+    if amount is None:
+        return None
+    normalized = _normalize(text)
+
+    order_amount = None
+    m = _BANK_ORDER.search(normalized)
+    if m:
+        try:
+            val = float(m.group(1).replace(" ", "").replace(",", "."))
+            if 0 < val <= 10_000_000:
+                order_amount = round(val, 2)
+        except ValueError:
+            pass
+
+    tip_percent = None
+    m = _BANK_PERCENT.search(text)
+    if m:
+        tip_percent = float(m.group(1).replace(",", "."))
+    elif order_amount:
+        tip_percent = round(amount / order_amount * 100, 1)
+    if tip_percent is not None and not 0 < tip_percent <= 100:
+        tip_percent = None
+
+    return {"amount": amount, "order_amount": order_amount, "tip_percent": tip_percent}
+
+
 def parse_bank_tips(text: str) -> float | None:
     """Ищет сумму чаевых в тексте банковского уведомления.
 

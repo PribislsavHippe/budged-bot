@@ -11,6 +11,7 @@ CREATE TABLE users (
     username TEXT,
     first_name TEXT,
     onboarded BOOLEAN DEFAULT FALSE,    -- прошёл ли стартовую сверку балансов
+    shift_goal NUMERIC(12, 2),          -- план смены (цель по чаю)
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -25,6 +26,8 @@ CREATE TABLE entries (
     signed_amount NUMERIC(12, 2) NOT NULL,
     category TEXT NOT NULL DEFAULT 'Прочее',
     note TEXT,                          -- исходный текст пользователя / банка
+    order_amount NUMERIC(12, 2),        -- чек заказа (из банковского уведомления)
+    tip_percent NUMERIC(5, 1),          -- процент чаевых от чека
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

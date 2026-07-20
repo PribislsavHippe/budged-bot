@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Статистика</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;800&display=swap">
+<style>
+  :root {
+    --molten-lava: #780000;
+    --brick-red: #c1121f;
+    --paper: #fffdf8;
+    --deep-space-blue: #003049;
+    --steel-blue: #669bbc;
+    --line: #111111;
+    --ink: #111111;
+    --ink-soft: #6b6b6b;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+    padding: 24px 20px 40px;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+  .date { font-size: 12px; font-weight: 600; color: var(--ink-soft); letter-spacing: .08em; text-transform: uppercase; margin-bottom: 24px; }
+  .label { font-size: 13px; font-weight: 500; }
+  .hero { font-size: 46px; font-weight: 800; letter-spacing: -0.02em; color: var(--brick-red); line-height: 1.1; }
+  .hero.minus { color: var(--molten-lava); }
+  .sub { font-size: 13px; color: var(--ink-soft); margin-bottom: 20px; }
+  .row { border-top: 1px solid var(--line); padding: 14px 0; display: flex; justify-content: space-between; align-items: baseline; }
+  .row:last-of-type { border-bottom: 1px solid var(--line); }
+  .row b { font-size: 20px; font-weight: 600; }
+  .plan { margin: 20px 0 24px; }
+  .plan-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .plan-edit { font-size: 13px; font-weight: 600; color: var(--brick-red); border-bottom: 2px solid var(--brick-red); cursor: pointer; }
+  .bar { height: 6px; background: #efe8d8; border-radius: 3px; overflow: hidden; }
+  .bar div { height: 100%; background: var(--brick-red); width: 0; }
+  .plan-sub { font-size: 12px; color: var(--ink-soft); margin-top: 6px; }
+  .btn { display: block; width: 100%; text-align: center; padding: 14px; border-radius: 10px; font-size: 14px; font-weight: 600; border: none; cursor: pointer; font-family: inherit; }
+  .btn-red { background: var(--brick-red); color: var(--paper); margin-bottom: 10px; }
+  .btn-outline { background: transparent; border: 1.5px solid var(--ink); color: var(--ink); }
+  h2 { font-size: 12px; font-weight: 600; color: var(--ink-soft); letter-spacing: .08em; text-transform: uppercase; margin: 36px 0 20px; }
+  .kpis { display: flex; gap: 24px; margin-bottom: 20px; }
+  .kpis p:first-child { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; }
+  .kpis .accent { color: var(--brick-red); }
+  .kpis p:last-child { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+  .section-label { font-size: 13px; font-weight: 500; margin-bottom: 8px; }
+  .bars { display: flex; align-items: flex-end; gap: 4px; height: 64px; }
+  .bars div { flex: 1; background: var(--steel-blue); }
+  .bars div.peak { background: var(--brick-red); }
+  .bar-labels { display: flex; gap: 4px; font-size: 11px; color: var(--ink-soft); text-align: center; margin: 4px 0 20px; }
+  .bar-labels span { flex: 1; }
+  .ach { border-top: 1px solid var(--line); padding: 10px 0; display: flex; justify-content: space-between; align-items: center; }
+  .ach:last-of-type { border-bottom: 1px solid var(--line); margin-bottom: 20px; }
+  .ach .name { font-size: 14px; font-weight: 600; }
+  .ach .desc { font-size: 12px; font-weight: 400; color: var(--ink-soft); }
+  .pill { font-size: 13px; font-weight: 600; background: var(--brick-red); color: var(--paper); padding: 2px 10px; border-radius: 20px; }
+  .pill.blue { background: var(--deep-space-blue); }
+  .pill.mute { background: none; color: var(--ink-soft); }
+  .heatmap { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-bottom: 6px; }
+  .heatmap div { aspect-ratio: 1; border-radius: 2px; background: #f3ead2; }
+  .hint { font-size: 11px; color: var(--ink-soft); }
+  #err { font-size: 13px; color: var(--molten-lava); padding: 20px 0; display: none; }
+</style>
+</head>
+<body>
+  <p class="date" id="date">—</p>
+
+  <p class="label">За сегодня</p>
+  <p class="hero" id="today">— ₽</p>
+  <p class="sub" id="today-sub">Загружаю…</p>
+
+  <div class="row"><span class="label">За неделю</span><b id="week">—</b></div>
+  <div class="row"><span class="label">За месяц</span><b id="month">—</b></div>
+  <div class="row"><span class="label">Всего</span><b id="total">—</b></div>
+
+  <div class="plan" id="plan-block" style="display:none">
+    <div class="plan-head">
+      <span class="label" id="plan-label">План смены</span>
+      <span class="plan-edit" id="plan-edit">Изменить</span>
+    </div>
+    <div class="bar"><div id="plan-bar"></div></div>
+    <p class="plan-sub" id="plan-sub"></p>
+  </div>
+
+  <button class="btn btn-red" id="close-shift" style="margin-top:20px">Внести траты смены</button>
+  <button class="btn btn-outline" id="to-stats">Статистика</button>
+
+  <p id="err"></p>
+
+  <div id="stats">
+    <h2 id="stats-title">Статистика</h2>
+
+    <div class="kpis">
+      <div><p id="avg-pct">—</p><p>Средний чай</p></div>
+      <div><p id="shifts">—</p><p>Смен</p></div>
+      <div><p class="accent" id="vs-prev">—</p><p>К прошлому месяцу</p></div>
+    </div>
+
+    <p class="section-label">Чай по дням недели</p>
+    <div class="bars" id="weekday-bars"></div>
+    <div class="bar-labels" id="weekday-labels"></div>
+
+    <p class="section-label">Достижения</p>
+    <div id="achievements"></div>
+
+    <p class="section-label">Рабочие дни, 4 недели</p>
+    <div class="heatmap" id="heatmap"></div>
+    <p class="hint">Темнее — больше чай за смену</p>
+  </div>
+
+<script>
+const tg = window.Telegram ? window.Telegram.WebApp : null;
+if (tg) { tg.ready(); tg.expand(); }
+
+const MONTHS = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"];
+const DAYS = ["Вс","Пн","Вт","Ср","Чт","Пт","Сб"];
+const WD = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
+
+const now = new Date();
+document.getElementById("date").textContent =
+  DAYS[now.getDay()] + ", " + now.getDate() + " " + MONTHS[now.getMonth()];
+
+function rub(v) {
+  return Math.round(v).toLocaleString("ru-RU").replace(/ /g, " ") + " ₽";
+}
+
+function render(s) {
+  const today = document.getElementById("today");
+  today.textContent = rub(s.today_net);
+  if (s.today_net < 0) today.classList.add("minus");
+  document.getElementById("today-sub").textContent =
+    "Заработал " + rub(s.today_income) + " − потратил " + rub(s.today_spent);
+  document.getElementById("week").textContent = rub(s.week_net);
+  document.getElementById("month").textContent = rub(s.month_net);
+  document.getElementById("total").textContent = rub(s.total_net);
+
+  if (s.shift_goal) {
+    document.getElementById("plan-block").style.display = "block";
+    document.getElementById("plan-label").textContent = "План смены — " + rub(s.shift_goal);
+    document.getElementById("plan-bar").style.width = s.goal_pct + "%";
+    document.getElementById("plan-sub").textContent =
+      rub(s.today_income) + " из " + rub(s.shift_goal) + " · " + s.goal_pct + "%";
+  }
+
+  document.getElementById("avg-pct").textContent = s.avg_tip_pct != null ? (s.avg_tip_pct + "%") : "—";
+  document.getElementById("shifts").textContent = s.shifts_count;
+  document.getElementById("vs-prev").textContent =
+    s.vs_prev_month_pct != null ? ((s.vs_prev_month_pct >= 0 ? "+" : "") + s.vs_prev_month_pct + "%") : "—";
+
+  const max = Math.max.apply(null, s.weekday_avg_tips.concat([1]));
+  const bars = document.getElementById("weekday-bars");
+  const labels = document.getElementById("weekday-labels");
+  s.weekday_avg_tips.forEach(function(v, i) {
+    const d = document.createElement("div");
+    d.style.height = Math.max(Math.round(v / max * 100), v > 0 ? 8 : 3) + "%";
+    if (v === max && v > 0) d.className = "peak";
+    bars.appendChild(d);
+    const l = document.createElement("span");
+    l.textContent = WD[i];
+    labels.appendChild(l);
+  });
+
+  const a = s.achievements;
+  const defs = [
+    ["Кит", "— чек от 10 000", a.whale, ""],
+    ["Щедрость", "— чай от 15%", a.generous, ""],
+    ["Серия", "— смены в плюс подряд", a.streak, "blue"],
+    ["Дно", "— чай меньше 500", a.bottom, "mute"],
+  ];
+  const wrap = document.getElementById("achievements");
+  defs.forEach(function(d) {
+    const row = document.createElement("div");
+    row.className = "ach";
+    row.innerHTML = '<span class="name">' + d[0] +
+      ' <span class="desc">' + d[1] + '</span></span>' +
+      '<span class="pill ' + d[3] + '">' + (d[3] === "blue" ? d[2] : "×" + d[2]) + '</span>';
+    wrap.appendChild(row);
+  });
+
+  const hm = document.getElementById("heatmap");
+  const tipsVals = s.heatmap.map(function(d) { return d.tips; }).filter(function(v) { return v > 0; });
+  const hmax = Math.max.apply(null, tipsVals.concat([1]));
+  s.heatmap.forEach(function(d) {
+    const cell = document.createElement("div");
+    if (d.tips > 0) {
+      const r = d.tips / hmax;
+      cell.style.background = r > 0.66 ? "#003049" : (r > 0.33 ? "#669bbc" : "#a8c5d8");
+    }
+    cell.title = d.date + ": " + rub(d.tips);
+    hm.appendChild(cell);
+  });
+}
+
+document.getElementById("to-stats").onclick = function() {
+  document.getElementById("stats-title").scrollIntoView({ behavior: "smooth" });
+};
+document.getElementById("close-shift").onclick = function() {
+  if (tg && tg.sendData) { tg.sendData("close_shift"); }
+  else if (tg) { tg.showAlert("Нажми в чате кнопку «🧾 Закрыть смену»"); }
+};
+document.getElementById("plan-edit").onclick = function() {
+  if (tg) tg.showAlert("Напиши боту в чат: план 2500 (любая сумма)");
+};
+
+fetch("/api/stats", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ initData: tg ? tg.initData : "" }),
+})
+  .then(function(r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+  .then(render)
+  .catch(function(e) {
+    const el = document.getElementById("err");
+    el.style.display = "block";
+    el.textContent = "Не смог загрузить данные. Открой мини-ап из чата с ботом. (" + e.message + ")";
+    document.getElementById("today-sub").textContent = "";
+  });
+</script>
+</body>
+</html>

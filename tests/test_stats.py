@@ -1,0 +1,135 @@
+"""Тесты статистики. Запуск: python tests/test_stats.py"""
+import os
+import sys
+from datetime import date
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from stats import compute_stats
+
+TODAY = date(2026, 7, 20)
+
+
+def e(day, kind, amount, category="Чаевые", order=None, pct=None):
+    return {
+        "kind": kind,
+        "account": "card",
+        "signed_amount": amount,
+        "category": category,
+        "order_amount": order,
+        "tip_percent": pct,
+        "created_at": f"2026-07-{day:02d}T18:00:00+03:00",
+    }
+
+
+def test_empty():
+    s = compute_stats([], today=TODAY)
+    assert s["today_net"] == 0
+    assert s["total_net"] == 0
+    assert s["shifts_count"] == 0
+    assert s["achievements"]["streak"] == 0
+    assert len(s["heatmap"]) == 28
+
+
+def test_today_net():
+    entries = [
+        e(20, "income", 2340),
+        e(20, "expense", -680, category="Бар"),
+    ]
+    s = compute_stats(entries, today=TODAY)
+    assert s["today_net"] == 1660
+    assert s["today_income"] == 2340
+    assert s["today_spent"] == 680
+
+
+def test_adjustment_not_counted():
+    entries = [
+        {"kind": "adjustment", "account": "cash", "signed_amount": 5000,
+         "category": "Сверка", "created_at": "2026-07-01T10:00:00+03:00"},
+        e(20, "income", 1000),
+    ]
+    s = compute_stats(entries, today=TODAY)
+    assert s["total_net"] == 1000
+
+
+def test_periods():
+    entries = [
+        e(20, "income", 1000),   # сегодня (пн=20? 20.07.2026 — понедельник)
+        e(19, "income", 2000),   # вчера, вс — прошлая неделя
+        e(1, "income", 4000),    # начало месяца
+    ]
+    s = compute_stats(entries, today=TODAY)
+    assert s["today_net"] == 1000
+    # 20.07.2026 — понедельник, неделя начинается сегодня
+    assert s["week_net"] == 1000
+    assert s["month_net"] == 7000
+    assert s["total_net"] == 7000
+
+
+def test_goal():
+    entries = [e(20, "income", 1660)]
+    s = compute_stats(entries, today=TODAY, shift_goal=2000)
+    assert s["goal_pct"] == 83
+    s2 = compute_stats(entries, today=TODAY, shift_goal=1000)
+    assert s2["goal_pct"] == 100
+
+
+def test_avg_tip_pct_and_achievements():
+    entries = [
+        e(18, "income", 500, order=7690, pct=7.0),
+        e(18, "income", 800, order=12000, pct=16.0),
+        e(19, "income", 300, pct=20.0),
+        e(19, "income", 100),
+    ]
+    s = compute_stats(entries, today=TODAY)
+    assert s["avg_tip_pct"] == 14.3
+    assert s["achievements"]["whale"] == 1
+    assert s["achievements"]["generous"] == 2
+    # 18-го чай 1300 (плюс), 19-го чай 400 < 500 → «дно», но день в плюсе
+    assert s["achievements"]["bottom"] == 1
+    assert s["achievements"]["streak"] == 2
+
+
+def test_streak_breaks_on_minus_day():
+    entries = [
+        e(17, "income", 1000),
+        e(18, "income", 500),
+        e(18, "expense", -900, category="Бар"),  # день в минусе
+        e(19, "income", 1000),
+        e(20, "income", 1000),
+    ]
+    s = compute_stats(entries, today=TODAY)
+    assert s["achievements"]["streak"] == 2
+
+
+def test_weekday_avg():
+    entries = [
+        e(13, "income", 1000),  # пн
+        e(20, "income", 3000),  # пн
+        e(17, "income", 5000),  # пт
+    ]
+    s = compute_stats(entries, today=TODAY)
+    assert s["weekday_avg_tips"][0] == 2000
+    assert s["weekday_avg_tips"][4] == 5000
+    assert s["weekday_avg_tips"][1] == 0
+
+
+def test_heatmap():
+    entries = [e(20, "income", 1500)]
+    s = compute_stats(entries, today=TODAY)
+    assert s["heatmap"][-1] == {"date": "2026-07-20", "tips": 1500}
+    assert s["heatmap"][0]["date"] == "2026-06-23"
+
+
+if __name__ == "__main__":
+    failed = 0
+    for name, fn in sorted(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            try:
+                fn()
+                print(f"  ok  {name}")
+            except AssertionError as ex:
+                failed += 1
+                print(f"FAIL  {name}: {ex}")
+    print("\nFAILED" if failed else "\nALL PASSED")
+    sys.exit(1 if failed else 0)

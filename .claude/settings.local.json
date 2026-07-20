@@ -3,7 +3,18 @@
     "allow": [
       "Bash(git add *)",
       "Bash(git commit --quiet -m 'fix: банковское уведомление о чаевых — берём сумму чаевых, а не заказа *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "WebFetch(domain:cuiet.livejournal.com)",
+      "WebSearch",
+      "WebFetch(domain:medium.com)",
+      "WebFetch(domain:kirillbelyaev.com)",
+      "WebFetch(domain:dianov.org)",
+      "mcp__visualize__show_widget",
+      "Bash(python3 tests/test_parser.py)",
+      "Bash(python3 -c \"from datetime import date; print\\(date\\(2026,7,20\\).weekday\\(\\)\\)\")",
+      "Bash(python3 tests/test_stats.py)",
+      "Bash(python3 -m py_compile main.py handlers.py db.py parser.py stats.py jobs.py webapp_api.py)",
+      "Bash(git commit --quiet -m 'Смены и мини-ап: план, вечерние траты, статистика, /app *)"
     ]
   }
 }

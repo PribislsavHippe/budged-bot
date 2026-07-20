@@ -47,17 +47,24 @@ async def add_entry(
     signed_amount: float,
     category: str = "Прочее",
     note: str | None = None,
+    order_amount: float | None = None,
+    tip_percent: float | None = None,
 ) -> dict:
     assert kind in ("income", "expense", "adjustment"), kind
     assert account in ACCOUNTS, account
-    res = supabase.table("entries").insert({
+    data = {
         "user_id": user_id,
         "kind": kind,
         "account": account,
         "signed_amount": round(signed_amount, 2),
         "category": category,
         "note": note,
-    }).execute()
+    }
+    if order_amount is not None:
+        data["order_amount"] = order_amount
+    if tip_percent is not None:
+        data["tip_percent"] = tip_percent
+    res = supabase.table("entries").insert(data).execute()
     return res.data[0]
 
 
@@ -106,3 +113,27 @@ async def get_entries_since(user_id: int, since_iso: str) -> list[dict]:
         .gte("created_at", since_iso) \
         .order("created_at", desc=True).execute()
     return res.data
+
+
+async def get_all_entries(user_id: int) -> list[dict]:
+    res = supabase.table("entries").select("*") \
+        .eq("user_id", user_id).order("created_at").execute()
+    return res.data
+
+
+# ─── план смены ──────────────────────────────────────────────────────────────
+
+async def get_shift_goal(user_id: int) -> float | None:
+    res = supabase.table("users").select("shift_goal").eq("id", user_id).execute()
+    if res.data and res.data[0].get("shift_goal") is not None:
+        return float(res.data[0]["shift_goal"])
+    return None
+
+
+async def set_shift_goal(user_id: int, goal: float | None) -> None:
+    supabase.table("users").update({"shift_goal": goal}).eq("id", user_id).execute()
+
+
+async def get_onboarded_user_ids() -> list[int]:
+    res = supabase.table("users").select("id").eq("onboarded", True).execute()
+    return [row["id"] for row in res.data]

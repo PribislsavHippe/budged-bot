@@ -143,6 +143,25 @@ def test_real_bank_notification():
     assert looks_like_bank_tips(REAL_BANK_NOTIFICATION)
 
 
+def test_bank_notification_full():
+    from parser import parse_bank_notification
+    r = parse_bank_notification(REAL_BANK_NOTIFICATION)
+    assert r == {"amount": 500, "order_amount": 7690, "tip_percent": 7.0}
+
+
+def test_bank_notification_percent_computed():
+    from parser import parse_bank_notification
+    r = parse_bank_notification("Получены чаевые\nСумма заказа: 5000.00 р.\nЧаевые: 400.00 р.")
+    assert r["order_amount"] == 5000
+    assert r["tip_percent"] == 8.0
+
+
+def test_bank_notification_minimal():
+    from parser import parse_bank_notification
+    r = parse_bank_notification("Вам оставили чаевые: 350 ₽")
+    assert r == {"amount": 350, "order_amount": None, "tip_percent": None}
+
+
 def test_looks_like_bank_tips():
     assert looks_like_bank_tips("Вам оставили чаевые: 350 ₽")
     assert looks_like_bank_tips("Получены чаевые\nЧаевые: 120.00 р.")
