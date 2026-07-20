@@ -155,27 +155,49 @@ def parse_transactions(text: str) -> list[dict]:
     return items
 
 
-# ─── банковские уведомления (пересланные) ────────────────────────────────────
+# ─── банковские уведомления (пересланные или скопированные) ──────────────────
 
-_BANK_TIPS = re.compile(
-    r"чаевы[ех]?\D{0,30}?(\d[\d ]*(?:[.,]\d{1,2})?)|"
+# Точная форма: сумма стоит сразу после «Чаевые:» — только она защищает от
+# соседних сумм в том же сообщении («Сумма заказа: 7690.00 р.»).
+_BANK_TIPS_TIGHT = re.compile(
+    r"чаевы[ех]?\s*[:\-—]?\s*(\d[\d ]*(?:[.,]\d{1,2})?)",
+    re.IGNORECASE,
+)
+# Свободная форма: сумма до слова «чаевые» («Перевод 500 ₽ — чаевые от гостя»)
+_BANK_TIPS_LOOSE = re.compile(
     r"(\d[\d ]*(?:[.,]\d{1,2})?)\s*(?:₽|руб\.?|р\.?)?\D{0,20}?чаевы",
     re.IGNORECASE | re.DOTALL,
 )
+
+# Признаки, что это текст уведомления банка, а не ручной ввод пользователя
+_BANK_SIGNATURE = re.compile(
+    r"получен[ыо]\s+чаевые|вам\s+(?:оставили|перевели|отправили)\s+чаевые|"
+    r"чаевы[ех]?\s*[:\-—]\s*\d",
+    re.IGNORECASE,
+)
+
+
+def looks_like_bank_tips(text: str) -> bool:
+    """Похоже ли сообщение на уведомление банка/сервиса чаевых."""
+    return bool(_BANK_SIGNATURE.search(text))
 
 
 def parse_bank_tips(text: str) -> float | None:
     """Ищет сумму чаевых в тексте банковского уведомления.
 
-    Работает с CloudTips, netmonet, СберЧаевые и т.п. — любое сообщение,
-    где рядом стоят слово «чаевые» и сумма.
+    Сначала точная форма «Чаевые: 500.00» (защита от других сумм в сообщении,
+    например «Сумма заказа»), затем свободная «500 ₽ — чаевые».
     """
-    m = _BANK_TIPS.search(_normalize(text))
-    if not m:
+    normalized = _normalize(text)
+    m = _BANK_TIPS_TIGHT.search(normalized)
+    raw = m.group(1) if m else None
+    if raw is None:
+        m = _BANK_TIPS_LOOSE.search(normalized)
+        raw = m.group(1) if m else None
+    if raw is None:
         return None
-    raw = (m.group(1) or m.group(2)).replace(" ", "").replace(",", ".")
     try:
-        value = float(raw)
+        value = float(raw.replace(" ", "").replace(",", "."))
     except ValueError:
         return None
     if value <= 0 or value > 1_000_000:

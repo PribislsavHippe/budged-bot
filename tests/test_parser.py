@@ -8,9 +8,17 @@ from parser import (
     CARD,
     CASH,
     extract_amount,
+    looks_like_bank_tips,
     parse_bank_tips,
     parse_reconciliation,
     parse_transactions,
+)
+
+REAL_BANK_NOTIFICATION = (
+    "Уведомление: Получены чаевые\n"
+    "Сумма заказа: 7690.00 р.\n"
+    "Чаевые: 500.00 р. (7 %)\n"
+    "Команда: СЧАСТЬЕ на Итальянской"
 )
 
 
@@ -127,6 +135,21 @@ def test_bank_tips_amount_first():
 def test_bank_tips_none():
     assert parse_bank_tips("Покупка 500 ₽ Пятёрочка") is None
     assert parse_bank_tips("чаевые скоро придут") is None
+
+
+def test_real_bank_notification():
+    # Берётся именно сумма чаевых (500), а не сумма заказа (7690)
+    assert parse_bank_tips(REAL_BANK_NOTIFICATION) == 500
+    assert looks_like_bank_tips(REAL_BANK_NOTIFICATION)
+
+
+def test_looks_like_bank_tips():
+    assert looks_like_bank_tips("Вам оставили чаевые: 350 ₽")
+    assert looks_like_bank_tips("Получены чаевые\nЧаевые: 120.00 р.")
+    # ручной ввод — НЕ банковское уведомление
+    assert not looks_like_bank_tips("чай 500")
+    assert not looks_like_bank_tips("чаевые 500")
+    assert not looks_like_bank_tips("кофе 200")
 
 
 if __name__ == "__main__":

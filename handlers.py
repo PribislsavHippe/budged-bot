@@ -338,6 +338,19 @@ async def legacy_button(message: Message, state: FSMContext):
 
 # ─── главный обработчик текста ───────────────────────────────────────────────
 
+async def _save_bank_tips(message: Message, tips: float):
+    """Чаевые из банковского уведомления → доход на карту."""
+    entry = await db.add_entry(
+        message.from_user.id, "income", db.CARD, tips,
+        category="Чаевые", note="из банка",
+    )
+    balances = await db.get_balances(message.from_user.id)
+    await message.answer(
+        f"➕ Чаевые <b>{fmt(tips)} ₽</b> → карта\n\n" + fmt_balances(balances),
+        reply_markup=undo_kb([entry["id"]], toggle_entry=entry),
+    )
+
+
 @router.message(F.text)
 async def handle_text(message: Message, state: FSMContext):
     user = await db.get_or_create_user(
@@ -356,15 +369,7 @@ async def handle_text(message: Message, state: FSMContext):
     if message.forward_origin is not None:
         tips = p.parse_bank_tips(text)
         if tips is not None:
-            entry = await db.add_entry(
-                message.from_user.id, "income", db.CARD, tips,
-                category="Чаевые", note="из банка",
-            )
-            balances = await db.get_balances(message.from_user.id)
-            await message.answer(
-                f"➕ Чаевые <b>{fmt(tips)} ₽</b> → карта\n\n" + fmt_balances(balances),
-                reply_markup=undo_kb([entry["id"]], toggle_entry=entry),
-            )
+            await _save_bank_tips(message, tips)
         else:
             await message.answer(
                 "В пересланном сообщении не нашёл сумму чаевых.\n"
@@ -372,7 +377,14 @@ async def handle_text(message: Message, state: FSMContext):
             )
         return
 
-    # 2. Сверка: «наличными 3200, на карте 8100»
+    # 2. Текст уведомления банка, скопированный без пересылки
+    if p.looks_like_bank_tips(text):
+        tips = p.parse_bank_tips(text)
+        if tips is not None:
+            await _save_bank_tips(message, tips)
+            return
+
+    # 3. Сверка: «наличными 3200, на карте 8100»
     stated = p.parse_reconciliation(text)
     if stated is not None:
         balances = await db.get_balances(message.from_user.id)
@@ -400,22 +412,9 @@ async def handle_text(message: Message, state: FSMContext):
         )
         return
 
-    # 3. Обычные операции
+    # 4. Обычные операции
     items = p.parse_transactions(text)
     if not items:
-        # Может, это банковское уведомление, скопированное текстом
-        tips = p.parse_bank_tips(text)
-        if tips is not None:
-            entry = await db.add_entry(
-                message.from_user.id, "income", db.CARD, tips,
-                category="Чаевые", note="из банка",
-            )
-            balances = await db.get_balances(message.from_user.id)
-            await message.answer(
-                f"➕ Чаевые <b>{fmt(tips)} ₽</b> → карта\n\n" + fmt_balances(balances),
-                reply_markup=undo_kb([entry["id"]], toggle_entry=entry),
-            )
-            return
         await message.answer(
             "Не нашёл сумму. Примеры:\n"
             "<i>чай 500</i> · <i>кофе 200</i> · <i>зп 30000</i>\n"
