@@ -124,6 +124,33 @@ def compute_stats(entries: list[dict], today: date | None = None, shift_goal: fl
         "bottom": sum(1 for tips in shifts.values() if tips < ACH_BOTTOM_TIPS),
     }
 
+    # Наличка vs электронные чаевые (месяц)
+    cash_tips = sum(
+        float(e["signed_amount"]) for e in month_entries
+        if e["kind"] == "income" and e["category"] == "Чаевые" and e["account"] == "cash"
+    )
+    card_tips = sum(
+        float(e["signed_amount"]) for e in month_entries
+        if e["kind"] == "income" and e["category"] == "Чаевые" and e["account"] == "card"
+    )
+    tips_total = cash_tips + card_tips
+    summary["tips_split"] = {
+        "cash": round(cash_tips),
+        "card": round(card_tips),
+        "cash_pct": round(cash_tips / tips_total * 100) if tips_total > 0 else None,
+    }
+
+    # Динамика процента от чека: средний % по дням, последние 14 смен с данными
+    pct_days: dict[date, list[float]] = {}
+    for e in entries:
+        if e.get("tip_percent") and _entry_date(e) <= today:
+            pct_days.setdefault(_entry_date(e), []).append(float(e["tip_percent"]))
+    daily = [
+        {"date": d.isoformat(), "pct": round(sum(v) / len(v), 1)}
+        for d, v in sorted(pct_days.items())
+    ]
+    summary["tip_pct_daily"] = daily[-14:]
+
     # Теплокарта: последние 28 дней, чай по дням
     heatmap = []
     for i in range(27, -1, -1):

@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta http-equiv="Cache-Control" content="no-store">
 <title>Статистика</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -44,18 +45,27 @@
   .plan-sub { font-size: 12px; color: var(--ink-soft); margin-top: 6px; }
   .btn { display: block; width: 100%; text-align: center; padding: 14px; border-radius: 10px; font-size: 14px; font-weight: 600; border: none; cursor: pointer; font-family: inherit; }
   .btn-red { background: var(--brick-red); color: var(--paper); margin-bottom: 10px; }
+  .btn-red:active { background: var(--molten-lava); }
   .btn-outline { background: transparent; border: 1.5px solid var(--ink); color: var(--ink); }
   h2 { font-size: 12px; font-weight: 600; color: var(--ink-soft); letter-spacing: .08em; text-transform: uppercase; margin: 36px 0 20px; }
   .kpis { display: flex; gap: 24px; margin-bottom: 20px; }
   .kpis p:first-child { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; }
   .kpis .accent { color: var(--brick-red); }
   .kpis p:last-child { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
-  .section-label { font-size: 13px; font-weight: 500; margin-bottom: 8px; }
+  .section-label { font-size: 13px; font-weight: 500; margin: 20px 0 8px; }
   .bars { display: flex; align-items: flex-end; gap: 4px; height: 64px; }
   .bars div { flex: 1; background: var(--steel-blue); }
   .bars div.peak { background: var(--brick-red); }
-  .bar-labels { display: flex; gap: 4px; font-size: 11px; color: var(--ink-soft); text-align: center; margin: 4px 0 20px; }
+  .bar-labels { display: flex; gap: 4px; font-size: 11px; color: var(--ink-soft); text-align: center; margin: 4px 0 0; }
   .bar-labels span { flex: 1; }
+  .split { display: flex; height: 14px; border-radius: 7px; overflow: hidden; margin-bottom: 6px; }
+  .split .cash { background: var(--steel-blue); }
+  .split .card { background: var(--deep-space-blue); }
+  .split-legend { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-soft); }
+  .split-legend b { color: var(--ink); font-weight: 600; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: 0; }
+  svg.chart { width: 100%; height: 96px; display: block; }
+  .chart-legend { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
   .ach { border-top: 1px solid var(--line); padding: 10px 0; display: flex; justify-content: space-between; align-items: center; }
   .ach:last-of-type { border-bottom: 1px solid var(--line); margin-bottom: 20px; }
   .ach .name { font-size: 14px; font-weight: 600; }
@@ -66,6 +76,7 @@
   .heatmap { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-bottom: 6px; }
   .heatmap div { aspect-ratio: 1; border-radius: 2px; background: #f3ead2; }
   .hint { font-size: 11px; color: var(--ink-soft); }
+  .empty { font-size: 12px; color: var(--ink-soft); padding: 8px 0; }
   #err { font-size: 13px; color: var(--molten-lava); padding: 20px 0; display: none; }
 </style>
 </head>
@@ -103,6 +114,15 @@
       <div><p class="accent" id="vs-prev">—</p><p>К прошлому месяцу</p></div>
     </div>
 
+    <p class="section-label">Наличка и электронные чаевые</p>
+    <div id="split-wrap">
+      <div class="split" id="split"></div>
+      <div class="split-legend" id="split-legend"></div>
+    </div>
+
+    <p class="section-label">Процент от чека по дням</p>
+    <div id="pct-chart-wrap"></div>
+
     <p class="section-label">Чай по дням недели</p>
     <div class="bars" id="weekday-bars"></div>
     <div class="bar-labels" id="weekday-labels"></div>
@@ -119,6 +139,8 @@
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 if (tg) { tg.ready(); tg.expand(); }
 
+let botUsername = null;
+
 const MONTHS = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"];
 const DAYS = ["Вс","Пн","Вт","Ср","Чт","Пт","Сб"];
 const WD = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
@@ -128,25 +150,33 @@ document.getElementById("date").textContent =
   DAYS[now.getDay()] + ", " + now.getDate() + " " + MONTHS[now.getMonth()];
 
 function rub(v) {
-  return Math.round(v).toLocaleString("ru-RU").replace(/ /g, " ") + " ₽";
+  return Math.round(v).toLocaleString("ru-RU") + " ₽";
+}
+function ddmm(iso) {
+  return iso.slice(8, 10) + "." + iso.slice(5, 7);
 }
 
 function render(s) {
+  botUsername = s.bot_username || botUsername;
+
   const today = document.getElementById("today");
   today.textContent = rub(s.today_net);
-  if (s.today_net < 0) today.classList.add("minus");
+  today.classList.toggle("minus", s.today_net < 0);
   document.getElementById("today-sub").textContent =
     "Заработал " + rub(s.today_income) + " − потратил " + rub(s.today_spent);
   document.getElementById("week").textContent = rub(s.week_net);
   document.getElementById("month").textContent = rub(s.month_net);
   document.getElementById("total").textContent = rub(s.total_net);
 
+  const planBlock = document.getElementById("plan-block");
   if (s.shift_goal) {
-    document.getElementById("plan-block").style.display = "block";
+    planBlock.style.display = "block";
     document.getElementById("plan-label").textContent = "План смены — " + rub(s.shift_goal);
     document.getElementById("plan-bar").style.width = s.goal_pct + "%";
     document.getElementById("plan-sub").textContent =
       rub(s.today_income) + " из " + rub(s.shift_goal) + " · " + s.goal_pct + "%";
+  } else {
+    planBlock.style.display = "none";
   }
 
   document.getElementById("avg-pct").textContent = s.avg_tip_pct != null ? (s.avg_tip_pct + "%") : "—";
@@ -154,9 +184,62 @@ function render(s) {
   document.getElementById("vs-prev").textContent =
     s.vs_prev_month_pct != null ? ((s.vs_prev_month_pct >= 0 ? "+" : "") + s.vs_prev_month_pct + "%") : "—";
 
+  const split = document.getElementById("split");
+  const legend = document.getElementById("split-legend");
+  split.innerHTML = ""; legend.innerHTML = "";
+  const ts = s.tips_split;
+  if (ts && ts.cash_pct != null) {
+    const cash = document.createElement("div");
+    cash.className = "cash";
+    cash.style.width = Math.max(ts.cash_pct, 2) + "%";
+    const card = document.createElement("div");
+    card.className = "card";
+    card.style.width = Math.max(100 - ts.cash_pct, 2) + "%";
+    split.appendChild(cash); split.appendChild(card);
+    legend.innerHTML =
+      '<span><span class="dot" style="background:var(--steel-blue)"></span>Наличкой <b>' +
+      ts.cash_pct + "%</b> · " + rub(ts.cash) + "</span>" +
+      '<span><span class="dot" style="background:var(--deep-space-blue)"></span>На карту <b>' +
+      (100 - ts.cash_pct) + "%</b> · " + rub(ts.card) + "</span>";
+  } else {
+    legend.innerHTML = '<span class="empty">В этом месяце чаевых пока нет</span>';
+  }
+
+  const pctWrap = document.getElementById("pct-chart-wrap");
+  pctWrap.innerHTML = "";
+  const pts = s.tip_pct_daily || [];
+  if (pts.length >= 2) {
+    const W = 440, H = 96, PAD = 8;
+    const vals = pts.map(function(p) { return p.pct; });
+    const vmin = Math.min.apply(null, vals), vmax = Math.max.apply(null, vals);
+    const span = (vmax - vmin) || 1;
+    const x = function(i) { return PAD + i / (pts.length - 1) * (W - 2 * PAD); };
+    const y = function(v) { return H - PAD - (v - vmin) / span * (H - 2 * PAD - 14); };
+    let path = "";
+    pts.forEach(function(p, i) { path += (i ? " L" : "M") + x(i).toFixed(1) + " " + y(p.pct).toFixed(1); });
+    let dots = "";
+    pts.forEach(function(p, i) {
+      const peak = p.pct === vmax;
+      dots += '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(p.pct).toFixed(1) +
+        '" r="' + (peak ? 4 : 2.5) + '" fill="' + (peak ? "#c1121f" : "#669bbc") + '"/>';
+      if (peak) {
+        dots += '<text x="' + x(i).toFixed(1) + '" y="' + (y(p.pct) - 8).toFixed(1) +
+          '" text-anchor="middle" font-size="11" font-weight="600" fill="#c1121f">' + p.pct + "%</text>";
+      }
+    });
+    pctWrap.innerHTML =
+      '<svg class="chart" viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="none">' +
+      '<path d="' + path + '" fill="none" stroke="#669bbc" stroke-width="2"/>' + dots + "</svg>" +
+      '<div class="chart-legend"><span>' + ddmm(pts[0].date) + "</span><span>" +
+      ddmm(pts[pts.length - 1].date) + "</span></div>";
+  } else {
+    pctWrap.innerHTML = '<p class="empty">Пересылай уведомления банка — здесь появится динамика процента</p>';
+  }
+
   const max = Math.max.apply(null, s.weekday_avg_tips.concat([1]));
   const bars = document.getElementById("weekday-bars");
   const labels = document.getElementById("weekday-labels");
+  bars.innerHTML = ""; labels.innerHTML = "";
   s.weekday_avg_tips.forEach(function(v, i) {
     const d = document.createElement("div");
     d.style.height = Math.max(Math.round(v / max * 100), v > 0 ? 8 : 3) + "%";
@@ -169,22 +252,24 @@ function render(s) {
 
   const a = s.achievements;
   const defs = [
-    ["Кит", "— чек от 10 000", a.whale, ""],
-    ["Щедрость", "— чай от 15%", a.generous, ""],
+    ["Кит", "— чек от 10 000", "×" + a.whale, ""],
+    ["Щедрость", "— чай от 15%", "×" + a.generous, ""],
     ["Серия", "— смены в плюс подряд", a.streak, "blue"],
-    ["Дно", "— чай меньше 500", a.bottom, "mute"],
+    ["Дно", "— чай меньше 500", "×" + a.bottom, "mute"],
   ];
   const wrap = document.getElementById("achievements");
+  wrap.innerHTML = "";
   defs.forEach(function(d) {
     const row = document.createElement("div");
     row.className = "ach";
     row.innerHTML = '<span class="name">' + d[0] +
       ' <span class="desc">' + d[1] + '</span></span>' +
-      '<span class="pill ' + d[3] + '">' + (d[3] === "blue" ? d[2] : "×" + d[2]) + '</span>';
+      '<span class="pill ' + d[3] + '">' + d[2] + "</span>";
     wrap.appendChild(row);
   });
 
   const hm = document.getElementById("heatmap");
+  hm.innerHTML = "";
   const tipsVals = s.heatmap.map(function(d) { return d.tips; }).filter(function(v) { return v > 0; });
   const hmax = Math.max.apply(null, tipsVals.concat([1]));
   s.heatmap.forEach(function(d) {
@@ -193,35 +278,51 @@ function render(s) {
       const r = d.tips / hmax;
       cell.style.background = r > 0.66 ? "#003049" : (r > 0.33 ? "#669bbc" : "#a8c5d8");
     }
-    cell.title = d.date + ": " + rub(d.tips);
+    cell.title = ddmm(d.date) + ": " + rub(d.tips);
     hm.appendChild(cell);
   });
+}
+
+function load() {
+  fetch("/api/stats?t=" + Date.now(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    cache: "no-store",
+    body: JSON.stringify({ initData: tg ? tg.initData : "" }),
+  })
+    .then(function(r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(function(s) {
+      document.getElementById("err").style.display = "none";
+      render(s);
+    })
+    .catch(function(e) {
+      const el = document.getElementById("err");
+      el.style.display = "block";
+      el.textContent = "Не смог загрузить данные. Открой мини-ап из чата с ботом. (" + e.message + ")";
+      document.getElementById("today-sub").textContent = "";
+    });
 }
 
 document.getElementById("to-stats").onclick = function() {
   document.getElementById("stats-title").scrollIntoView({ behavior: "smooth" });
 };
 document.getElementById("close-shift").onclick = function() {
-  if (tg && tg.sendData) { tg.sendData("close_shift"); }
-  else if (tg) { tg.showAlert("Нажми в чате кнопку «🧾 Закрыть смену»"); }
+  if (tg && botUsername) {
+    tg.openTelegramLink("https://t.me/" + botUsername + "?start=close_shift");
+    tg.close();
+  } else if (tg && tg.sendData) {
+    tg.sendData("close_shift");
+  }
 };
 document.getElementById("plan-edit").onclick = function() {
   if (tg) tg.showAlert("Напиши боту в чат: план 2500 (любая сумма)");
 };
 
-fetch("/api/stats", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ initData: tg ? tg.initData : "" }),
-})
-  .then(function(r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-  .then(render)
-  .catch(function(e) {
-    const el = document.getElementById("err");
-    el.style.display = "block";
-    el.textContent = "Не смог загрузить данные. Открой мини-ап из чата с ботом. (" + e.message + ")";
-    document.getElementById("today-sub").textContent = "";
-  });
+load();
+setInterval(load, 60000);
+document.addEventListener("visibilitychange", function() {
+  if (!document.hidden) load();
+});
 </script>
 </body>
 </html>

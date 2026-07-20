@@ -3,13 +3,28 @@
 Шлём только тем, у кого сегодня был доход (была смена) — остальных не дёргаем.
 """
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
+import aiohttp
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import db
 
 MSK = timezone(timedelta(hours=3))
+
+
+async def self_ping():
+    """Будит Render: бесплатный план засыпает через 15 минут без запросов."""
+    host = os.getenv("WEBHOOK_HOST")
+    if not host:
+        return
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(host, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+                logging.info(f"self-ping: {resp.status}")
+    except Exception as e:
+        logging.warning(f"self-ping failed: {e}")
 
 
 async def evening_shift_prompt(bot):
@@ -46,4 +61,5 @@ async def evening_shift_prompt(bot):
 def setup_scheduler(bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
     scheduler.add_job(evening_shift_prompt, "cron", hour=22, minute=30, args=[bot])
+    scheduler.add_job(self_ping, "interval", minutes=10)
     return scheduler

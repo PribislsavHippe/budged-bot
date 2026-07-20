@@ -38,11 +38,12 @@ async def run_polling(bot: Bot, dp: Dispatcher):
 
 
 async def run_webhook(bot: Bot, dp: Dispatcher):
+    me = await bot.get_me()
     app = web.Application()
     app.router.add_get("/", lambda _: web.Response(text="OK"))
     SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=WEBHOOK_PATH)
     setup_application(app, dp, bot=bot)
-    register_webapp_routes(app, BOT_TOKEN)
+    register_webapp_routes(app, BOT_TOKEN, me.username)
 
     runner = web.AppRunner(app)
     await runner.setup()

@@ -121,6 +121,10 @@ async def cmd_start(message: Message, state: FSMContext):
     user = await db.get_or_create_user(
         message.from_user.id, message.from_user.username, message.from_user.first_name
     )
+    # Deep-link из мини-апа: кнопка «Внести траты смены»
+    if user.get("onboarded") and (message.text or "").strip().endswith("close_shift"):
+        await send_shift_close_prompt(message)
+        return
     if user.get("onboarded"):
         balances = await db.get_balances(message.from_user.id)
         await message.answer(fmt_balances(balances), reply_markup=main_menu())

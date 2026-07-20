@@ -36,8 +36,12 @@ def validate_init_data(init_data: str, bot_token: str) -> int | None:
         return None
 
 
+NO_CACHE = {"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"}
+
+
 async def serve_app(request: web.Request) -> web.Response:
-    return web.FileResponse(os.path.join(WEBAPP_DIR, "index.html"))
+    # Telegram WebView агрессивно кэширует — запрещаем явно
+    return web.FileResponse(os.path.join(WEBAPP_DIR, "index.html"), headers=NO_CACHE)
 
 
 async def api_stats(request: web.Request) -> web.Response:
@@ -53,10 +57,13 @@ async def api_stats(request: web.Request) -> web.Response:
 
     entries = await db.get_all_entries(user_id)
     goal = await db.get_shift_goal(user_id)
-    return web.json_response(compute_stats(entries, shift_goal=goal))
+    payload = compute_stats(entries, shift_goal=goal)
+    payload["bot_username"] = request.app.get("bot_username")
+    return web.json_response(payload, headers=NO_CACHE)
 
 
-def register_webapp_routes(app: web.Application, bot_token: str):
+def register_webapp_routes(app: web.Application, bot_token: str, bot_username: str | None = None):
     app["bot_token"] = bot_token
+    app["bot_username"] = bot_username
     app.router.add_get("/app", serve_app)
     app.router.add_post("/api/stats", api_stats)

@@ -114,6 +114,37 @@ def test_weekday_avg():
     assert s["weekday_avg_tips"][1] == 0
 
 
+def test_tips_split():
+    entries = [
+        {"kind": "income", "account": "cash", "signed_amount": 3000, "category": "Чаевые",
+         "created_at": "2026-07-18T18:00:00+03:00"},
+        {"kind": "income", "account": "card", "signed_amount": 7000, "category": "Чаевые",
+         "created_at": "2026-07-19T18:00:00+03:00"},
+        {"kind": "income", "account": "card", "signed_amount": 30000, "category": "Зарплата",
+         "created_at": "2026-07-19T18:00:00+03:00"},
+    ]
+    s = compute_stats(entries, today=TODAY)
+    assert s["tips_split"] == {"cash": 3000, "card": 7000, "cash_pct": 30}
+
+
+def test_tips_split_empty():
+    s = compute_stats([], today=TODAY)
+    assert s["tips_split"]["cash_pct"] is None
+
+
+def test_tip_pct_daily():
+    entries = [
+        e(18, "income", 500, pct=7.0),
+        e(18, "income", 300, pct=9.0),
+        e(19, "income", 400, pct=12.0),
+    ]
+    s = compute_stats(entries, today=TODAY)
+    assert s["tip_pct_daily"] == [
+        {"date": "2026-07-18", "pct": 8.0},
+        {"date": "2026-07-19", "pct": 12.0},
+    ]
+
+
 def test_heatmap():
     entries = [e(20, "income", 1500)]
     s = compute_stats(entries, today=TODAY)
