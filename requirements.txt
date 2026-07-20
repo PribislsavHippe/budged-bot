@@ -6,13 +6,6 @@ storage3==0.7.7
 supafunc==0.3.3
 realtime==1.0.6
 httpx==0.25.2
-APScheduler==3.10.4
-google-api-python-client==2.118.0
-google-auth-httplib2==0.2.0
-google-auth-oauthlib==1.2.0
-google-generativeai>=0.8.0
-python-dotenv==1.0.1
-pytz==2024.1
 aiohttp==3.9.3
+python-dotenv==1.0.1
 pydantic==2.6.4
-groq>=0.27.0

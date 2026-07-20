@@ -5,11 +5,9 @@ services:
     pythonVersion: "3.11.9"
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
-    # Render бесплатный план засыпает после 15 мин неактивности.
-    # Решение 1: self-ping в jobs.py (уже добавлен, каждые 10 минут).
-    # Решение 2 (надёжнее): зарегистрируй сервис на https://uptimerobot.com
-    #   Тип: HTTP(s), URL: https://your-app.onrender.com/, интервал: 5 минут.
-    #   Это бесплатно и гарантирует что бот не засыпает.
+    # Бесплатный план Render засыпает после 15 мин без запросов.
+    # Зарегистрируй сервис на https://uptimerobot.com:
+    #   HTTP(s), URL: https://your-app.onrender.com/, интервал 5 минут.
     envVars:
       - key: BOT_TOKEN
         sync: false
@@ -17,21 +15,9 @@ services:
         sync: false
       - key: SUPABASE_KEY
         sync: false
-      - key: GROQ_API_KEY
-        sync: false
-      - key: GEMINI_API_KEY
-        sync: false
-      - key: GOOGLE_CLIENT_ID
-        sync: false
-      - key: GOOGLE_CLIENT_SECRET
-        sync: false
-      - key: GOOGLE_REDIRECT_URI
-        sync: false
       - key: WEBHOOK_HOST
         sync: false
       - key: WEBHOOK_PATH
         value: /webhook
       - key: WEBAPP_HOST
         value: 0.0.0.0
-      - key: WEBAPP_PORT
-        value: "8080"
