@@ -30,3 +30,9 @@ CREATE TABLE entries (
 
 CREATE INDEX idx_entries_user ON entries(user_id, created_at DESC);
 CREATE INDEX idx_entries_user_account ON entries(user_id, account);
+
+-- Supabase в новых проектах включает Row Level Security по умолчанию,
+-- и анонимный ключ не может писать в таблицы. Ключ хранится только на
+-- сервере бота, наружу не отдаётся — поэтому RLS выключаем.
+ALTER TABLE users DISABLE ROW LEVEL SECURITY;
+ALTER TABLE entries DISABLE ROW LEVEL SECURITY;
