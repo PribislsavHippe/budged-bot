@@ -90,9 +90,63 @@ async def api_shift_spend(request: web.Request) -> web.Response:
     return web.json_response(await _stats_payload(request.app, user_id), headers=NO_CACHE)
 
 
+async def api_entries(request: web.Request) -> web.Response:
+    """Последние записи для правки в мини-апе."""
+    user_id, body = await _auth(request)
+    if user_id is None:
+        return body
+    entries = await db.get_recent_entries(user_id, limit=30)
+    return web.json_response({"entries": entries}, headers=NO_CACHE)
+
+
+async def api_entry_edit(request: web.Request) -> web.Response:
+    """Правка записи из мини-апа: изменить сумму/счёт или удалить.
+
+    action: 'delete' | 'amount' (+amount) | 'account' (+account).
+    Возвращает свежие stats и список записей.
+    """
+    user_id, body = await _auth(request)
+    if user_id is None:
+        return body
+    try:
+        entry_id = int(body.get("entry_id"))
+    except (TypeError, ValueError):
+        return web.json_response({"error": "bad id"}, status=400)
+
+    entry = await db.get_entry(entry_id, user_id)
+    if entry is None:
+        return web.json_response({"error": "not found"}, status=404)
+
+    action = body.get("action")
+    if action == "delete":
+        await db.delete_entry(entry_id, user_id)
+    elif action == "account":
+        account = body.get("account")
+        if account not in ("cash", "card"):
+            return web.json_response({"error": "bad account"}, status=400)
+        await db.update_entry_account(entry_id, user_id, account)
+    elif action == "amount":
+        try:
+            amount = float(body.get("amount"))
+        except (TypeError, ValueError):
+            return web.json_response({"error": "bad amount"}, status=400)
+        if not (0 < amount <= 10_000_000):
+            return web.json_response({"error": "bad amount"}, status=400)
+        sign = 1 if entry["kind"] == "income" else -1
+        await db.update_entry_amount(entry_id, user_id, sign * round(amount, 2))
+    else:
+        return web.json_response({"error": "bad action"}, status=400)
+
+    stats = await _stats_payload(request.app, user_id)
+    entries = await db.get_recent_entries(user_id, limit=30)
+    return web.json_response({"stats": stats, "entries": entries}, headers=NO_CACHE)
+
+
 def register_webapp_routes(app: web.Application, bot_token: str, bot_username: str | None = None):
     app["bot_token"] = bot_token
     app["bot_username"] = bot_username
     app.router.add_get("/app", serve_app)
     app.router.add_post("/api/stats", api_stats)
     app.router.add_post("/api/shift_spend", api_shift_spend)
+    app.router.add_post("/api/entries", api_entries)
+    app.router.add_post("/api/entry_edit", api_entry_edit)

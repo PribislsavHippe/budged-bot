@@ -66,6 +66,31 @@
   #spend-submit { flex: 0 0 auto; padding: 11px 16px; border-radius: 10px; border: none; background: var(--ink); color: #fff; font-weight: 600; font-family: inherit; font-size: 15px; cursor: pointer; }
   .spend-note { font-size: 13px; color: var(--ink-soft); min-height: 18px; margin-bottom: 12px; }
 
+  /* ── история и правки ── */
+  #history { position: fixed; inset: 0; background: #fff; z-index: 95; display: none; overflow-y: auto; }
+  #history.on { display: block; }
+  .hist-inner { max-width: 480px; margin: 0 auto; padding: 24px 20px 40px; }
+  .hist-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .hist-title { font-size: 18px; font-weight: 800; }
+  .hist-x { background: none; border: none; font-family: inherit; font-size: 14px; font-weight: 600; color: var(--ink-soft); cursor: pointer; }
+  .hist-item { border-bottom: 1px solid #f0f0f0; }
+  .hist-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 2px; cursor: pointer; }
+  .hist-cat { font-size: 15px; font-weight: 600; }
+  .hist-meta { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+  .hist-amt { font-size: 15px; font-weight: 700; white-space: nowrap; margin-left: 12px; }
+  .hist-edit { display: none; padding: 2px 2px 16px; }
+  .hist-item.open .hist-edit { display: block; }
+  .hist-edit-row { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; }
+  .hist-edit input { flex: 1; min-width: 0; font-family: inherit; font-size: 15px; padding: 10px 12px; border: 1px solid var(--faint); border-radius: 10px; }
+  .hist-edit input:focus { outline: none; border-color: var(--ink); }
+  .acc-toggle { display: flex; gap: 6px; }
+  .acc-btn { font-size: 13px; font-weight: 600; padding: 9px 13px; border-radius: 18px; border: 1px solid var(--faint); background: #fff; cursor: pointer; font-family: inherit; color: var(--ink); }
+  .acc-btn.sel { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .hist-actions { display: flex; gap: 8px; }
+  .hist-save { flex: 1; padding: 11px; border: none; border-radius: 10px; background: var(--ink); color: #fff; font-weight: 600; font-family: inherit; font-size: 14px; cursor: pointer; }
+  .hist-del { padding: 11px 16px; border: 1px solid #e0b4b4; border-radius: 10px; background: #fff; color: #a02020; font-weight: 600; font-family: inherit; font-size: 14px; cursor: pointer; }
+  .hist-empty { font-size: 14px; color: var(--ink-soft); padding: 20px 2px; }
+
   /* ── «Итоги месяца» (тёмный экран) ── */
   #poster { position: fixed; inset: 0; background: var(--deep); color: #fff; z-index: 100; display: none; overflow-y: auto; }
   #poster.on { display: block; }
@@ -126,6 +151,7 @@
 
   <button class="btn" id="open-spend">Внести траты смены</button>
   <button class="btn btn-ghost" id="open-poster">Итоги месяца</button>
+  <button class="btn btn-ghost" id="open-history">История и правки</button>
 
   <!-- Панель трат за смену -->
   <div id="spend">
@@ -140,6 +166,17 @@
       </div>
       <p class="spend-note" id="spend-note"></p>
       <button class="btn btn-ghost" id="spend-close" style="margin-top:0">Готово</button>
+    </div>
+  </div>
+
+  <!-- История и правки -->
+  <div id="history">
+    <div class="hist-inner">
+      <div class="hist-top">
+        <span class="hist-title">История</span>
+        <button class="hist-x" id="hist-close">Готово</button>
+      </div>
+      <div id="hist-list"></div>
     </div>
   </div>
 
@@ -397,6 +434,117 @@ document.getElementById("open-poster").onclick = function () {
 };
 document.getElementById("close-poster").onclick = function () {
   document.getElementById("poster").classList.remove("on");
+};
+
+// ── история и правки ──
+let histEntries = [];
+
+function accLabel(a) { return a === "cash" ? "Наличные" : "Карта"; }
+function fmtDT(iso) {
+  return new Date(iso).toLocaleString("ru-RU", {
+    timeZone: "Europe/Moscow", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
+  }).replace(",", "");
+}
+
+function renderHistory() {
+  const list = document.getElementById("hist-list");
+  list.innerHTML = "";
+  if (!histEntries.length) { list.innerHTML = '<p class="hist-empty">Пока пусто.</p>'; return; }
+  histEntries.forEach(function (e) {
+    const amt = Math.abs(e.signed_amount);
+    const income = e.kind === "income";
+    const item = document.createElement("div");
+    item.className = "hist-item";
+    item.innerHTML =
+      '<div class="hist-row">' +
+        '<div><div class="hist-cat">' + e.category + '</div>' +
+        '<div class="hist-meta">' + fmtDT(e.created_at) + ' · ' + accLabel(e.account) + '</div></div>' +
+        '<div class="hist-amt">' + (income ? "+" : "−") + rub(amt) + ' ₽</div>' +
+      '</div>' +
+      '<div class="hist-edit">' +
+        '<div class="hist-edit-row">' +
+          '<input type="number" inputmode="numeric" class="hist-amt-input" value="' + amt + '">' +
+          '<div class="acc-toggle">' +
+            '<button class="acc-btn" data-acc="cash">Нал</button>' +
+            '<button class="acc-btn" data-acc="card">Карта</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="hist-actions">' +
+          '<button class="hist-save">Сохранить</button>' +
+          '<button class="hist-del">Удалить</button>' +
+        '</div>' +
+      '</div>';
+
+    item.querySelector(".hist-row").onclick = function () {
+      const wasOpen = item.classList.contains("open");
+      [].forEach.call(list.children, function (c) { c.classList.remove("open"); });
+      if (!wasOpen) item.classList.add("open");
+    };
+
+    let selAcc = e.account;
+    const accBtns = item.querySelectorAll(".acc-btn");
+    function paintAcc() { [].forEach.call(accBtns, function (b) { b.classList.toggle("sel", b.dataset.acc === selAcc); }); }
+    paintAcc();
+    [].forEach.call(accBtns, function (b) { b.onclick = function () { selAcc = b.dataset.acc; paintAcc(); }; });
+
+    item.querySelector(".hist-save").onclick = function () {
+      const newAmt = parseFloat(item.querySelector(".hist-amt-input").value);
+      const tasks = [];
+      if (newAmt > 0 && newAmt !== amt) tasks.push({ action: "amount", amount: newAmt });
+      if (selAcc !== e.account) tasks.push({ action: "account", account: selAcc });
+      if (!tasks.length) { item.classList.remove("open"); return; }
+      chainEdits(e.id, tasks);
+    };
+    item.querySelector(".hist-del").onclick = function () { editEntry(e.id, { action: "delete" }); };
+
+    list.appendChild(item);
+  });
+}
+
+function editEntry(id, payload, silent) {
+  return fetch("/api/entry_edit", {
+    method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+    body: JSON.stringify(Object.assign({ initData: tg ? tg.initData : "", entry_id: id }, payload)),
+  })
+    .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(function (resp) {
+      if (!silent) { histEntries = resp.entries; applyStats(resp.stats); renderHistory(); }
+      return resp;
+    })
+    .catch(function (err) {
+      document.getElementById("hist-list").insertAdjacentHTML("afterbegin",
+        '<p class="hist-empty">Не вышло: ' + err.message + '</p>');
+      return null;
+    });
+}
+
+function chainEdits(id, tasks) {
+  let p = Promise.resolve(null);
+  tasks.forEach(function (t) { p = p.then(function () { return editEntry(id, t, true); }); });
+  p.then(function (resp) {
+    if (resp) { histEntries = resp.entries; applyStats(resp.stats); renderHistory(); }
+  });
+}
+
+function openHistory() {
+  document.getElementById("history").classList.add("on");
+  window.scrollTo(0, 0);
+  document.getElementById("hist-list").innerHTML = '<p class="hist-empty">Загружаю…</p>';
+  fetch("/api/entries", {
+    method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+    body: JSON.stringify({ initData: tg ? tg.initData : "" }),
+  })
+    .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(function (resp) { histEntries = resp.entries; renderHistory(); })
+    .catch(function (err) {
+      document.getElementById("hist-list").innerHTML =
+        '<p class="hist-empty">Не смог загрузить (' + err.message + ')</p>';
+    });
+}
+
+document.getElementById("open-history").onclick = openHistory;
+document.getElementById("hist-close").onclick = function () {
+  document.getElementById("history").classList.remove("on");
 };
 
 // ── анимированный mesh-градиент «Bloom Field» (21st.dev) ──

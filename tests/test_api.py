@@ -56,6 +56,22 @@ _db = types.ModuleType("db")
 _db.CASH = "cash"
 _db.CARD = "card"
 _db.added = []
+_db.store = []      # list of entry dicts
+_db.next_id = [1]
+
+
+def _seed(user_id, kind, account, signed_amount, category="Чаевые"):
+    e = {
+        "id": _db.next_id[0], "user_id": user_id, "kind": kind, "account": account,
+        "signed_amount": signed_amount, "category": category, "note": None,
+        "created_at": "2026-07-20T18:00:00+00:00",
+    }
+    _db.next_id[0] += 1
+    _db.store.append(e)
+    return e
+
+
+_db.seed = _seed
 
 
 async def _add_entry(user_id, kind, account, signed_amount, category="Прочее",
@@ -64,11 +80,44 @@ async def _add_entry(user_id, kind, account, signed_amount, category="Проче
         "user_id": user_id, "kind": kind, "account": account,
         "signed_amount": signed_amount, "category": category, "note": note,
     })
-    return {"id": len(_db.added)}
+    e = _seed(user_id, kind, account, signed_amount, category)
+    e["note"] = note
+    return e
 
 
 async def _get_all_entries(uid):
-    return []
+    return [e for e in _db.store if e["user_id"] == uid]
+
+
+async def _get_recent_entries(uid, limit=15):
+    return list(reversed([e for e in _db.store if e["user_id"] == uid]))[:limit]
+
+
+async def _get_entry(eid, uid):
+    for e in _db.store:
+        if e["id"] == eid and e["user_id"] == uid:
+            return e
+    return None
+
+
+async def _delete_entry(eid, uid):
+    before = len(_db.store)
+    _db.store[:] = [e for e in _db.store if not (e["id"] == eid and e["user_id"] == uid)]
+    return len(_db.store) < before
+
+
+async def _update_entry_account(eid, uid, account):
+    e = await _get_entry(eid, uid)
+    if e:
+        e["account"] = account
+    return e
+
+
+async def _update_entry_amount(eid, uid, signed_amount):
+    e = await _get_entry(eid, uid)
+    if e:
+        e["signed_amount"] = signed_amount
+    return e
 
 
 async def _get_shift_goal(uid):
@@ -77,6 +126,11 @@ async def _get_shift_goal(uid):
 
 _db.add_entry = _add_entry
 _db.get_all_entries = _get_all_entries
+_db.get_recent_entries = _get_recent_entries
+_db.get_entry = _get_entry
+_db.delete_entry = _delete_entry
+_db.update_entry_account = _update_entry_account
+_db.update_entry_amount = _update_entry_amount
 _db.get_shift_goal = _get_shift_goal
 sys.modules["db"] = _db
 
@@ -193,6 +247,95 @@ def test_api_stats_ok():
     r = run(webapp_api.api_stats(Req({"initData": init_data(TOKEN, 42)})))
     assert r.status == 200
     assert "today_net" in r.data and r.data["bot_username"] == "b"
+
+
+# ─── /api/entries и /api/entry_edit ──────────────────────────────────────────
+
+def test_entries_list():
+    _db.store.clear()
+    _db.seed(42, "income", "card", 500)
+    _db.seed(42, "income", "cash", 300)
+    _db.seed(99, "income", "card", 700)  # чужой — не должен попасть
+    r = run(webapp_api.api_entries(Req({"initData": init_data(TOKEN, 42)})))
+    assert r.status == 200
+    assert len(r.data["entries"]) == 2
+
+
+def test_entry_delete():
+    _db.store.clear()
+    e = _db.seed(42, "income", "card", 500)
+    r = run(webapp_api.api_entry_edit(Req({
+        "initData": init_data(TOKEN, 42), "entry_id": e["id"], "action": "delete",
+    })))
+    assert r.status == 200
+    assert "stats" in r.data and "entries" in r.data
+    assert run(_db.get_entry(e["id"], 42)) is None
+
+
+def test_entry_amount_keeps_sign():
+    _db.store.clear()
+    inc = _db.seed(42, "income", "card", 500)
+    exp = _db.seed(42, "expense", "cash", -300, category="Бар")
+    run(webapp_api.api_entry_edit(Req({
+        "initData": init_data(TOKEN, 42), "entry_id": inc["id"], "action": "amount", "amount": 700,
+    })))
+    run(webapp_api.api_entry_edit(Req({
+        "initData": init_data(TOKEN, 42), "entry_id": exp["id"], "action": "amount", "amount": 350,
+    })))
+    assert run(_db.get_entry(inc["id"], 42))["signed_amount"] == 700
+    assert run(_db.get_entry(exp["id"], 42))["signed_amount"] == -350
+
+
+def test_entry_account_change():
+    _db.store.clear()
+    e = _db.seed(42, "income", "card", 500)
+    run(webapp_api.api_entry_edit(Req({
+        "initData": init_data(TOKEN, 42), "entry_id": e["id"], "action": "account", "account": "cash",
+    })))
+    assert run(_db.get_entry(e["id"], 42))["account"] == "cash"
+
+
+def test_entry_bad_amount():
+    _db.store.clear()
+    e = _db.seed(42, "income", "card", 500)
+    for bad in [0, -5, "x", 20_000_000]:
+        r = run(webapp_api.api_entry_edit(Req({
+            "initData": init_data(TOKEN, 42), "entry_id": e["id"], "action": "amount", "amount": bad,
+        })))
+        assert r.status == 400, f"amount={bad!r}"
+    assert run(_db.get_entry(e["id"], 42))["signed_amount"] == 500
+
+
+def test_entry_not_found():
+    _db.store.clear()
+    r = run(webapp_api.api_entry_edit(Req({
+        "initData": init_data(TOKEN, 42), "entry_id": 12345, "action": "delete",
+    })))
+    assert r.status == 404
+
+
+def test_entry_foreign_forbidden():
+    _db.store.clear()
+    e = _db.seed(99, "income", "card", 500)  # чужая запись
+    r = run(webapp_api.api_entry_edit(Req({
+        "initData": init_data(TOKEN, 42), "entry_id": e["id"], "action": "delete",
+    })))
+    assert r.status == 404  # для user 42 её не существует
+    assert run(_db.get_entry(e["id"], 99)) is not None  # чужая цела
+
+
+def test_entry_bad_action():
+    _db.store.clear()
+    e = _db.seed(42, "income", "card", 500)
+    r = run(webapp_api.api_entry_edit(Req({
+        "initData": init_data(TOKEN, 42), "entry_id": e["id"], "action": "nuke",
+    })))
+    assert r.status == 400
+
+
+def test_entry_edit_unauthorized():
+    r = run(webapp_api.api_entry_edit(Req({"initData": "", "entry_id": 1, "action": "delete"})))
+    assert r.status == 401
 
 
 if __name__ == "__main__":

@@ -81,6 +81,12 @@ async def update_entry_account(entry_id: int, user_id: int, account: str) -> dic
     return res.data[0] if res.data else None
 
 
+async def update_entry_amount(entry_id: int, user_id: int, signed_amount: float) -> dict | None:
+    res = supabase.table("entries").update({"signed_amount": round(signed_amount, 2)}) \
+        .eq("id", entry_id).eq("user_id", user_id).execute()
+    return res.data[0] if res.data else None
+
+
 async def delete_entry(entry_id: int, user_id: int) -> bool:
     """Возвращает True, если запись существовала и была удалена."""
     res = supabase.table("entries").delete() \
