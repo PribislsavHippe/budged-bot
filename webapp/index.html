@@ -7,7 +7,7 @@
 <title>Мой Бюджет</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&family=Inter:wght@400;500;600;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Momo+Signature&family=Inter:wght@400;500;600;800&display=swap">
 <style>
   :root {
     --ink: #111111;
@@ -19,7 +19,7 @@
     --cash: #a7c6dc;   /* наличка — светлее */
     --card: #4f89ab;   /* карта — насыщеннее */
     --paper: #ffffff;
-    --font-accent: 'Dancing Script', 'Inter', cursive;  /* плейсхолдер Momo Signature */
+    --font-accent: 'Momo Signature', 'Inter', cursive;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html { background: #ffffff; }
@@ -37,7 +37,7 @@
   }
   .head { font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 24px; }
   .hero-label { font-size: 13px; color: var(--ink-soft); }
-  .hero { font-family: var(--font-accent); font-size: 60px; font-weight: 700; line-height: 1; margin-bottom: 20px; }
+  .hero { font-family: var(--font-accent); font-size: 52px; font-weight: 400; line-height: 1.05; margin-bottom: 20px; white-space: nowrap; }
   @keyframes blurIn { from { filter: blur(12px); opacity: 0; } to { filter: blur(0); opacity: 1; } }
   .hero.blur-in { animation: blurIn 0.85s cubic-bezier(0.2, 0.6, 0.2, 1); }
   .r { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
@@ -102,11 +102,11 @@
   .pt-back-top { display: inline-flex; align-items: center; gap: 6px; background: none; border: none; font-family: inherit; font-size: 15px; font-weight: 600; color: var(--ink); cursor: pointer; padding: 0; margin-bottom: 22px; }
   .pt-head { font-size: 12px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 6px; }
   .pt-lbl { font-size: 15px; color: var(--ink-soft); margin-bottom: 2px; }
-  .pt-hero { font-family: var(--font-accent); font-size: 64px; font-weight: 700; line-height: 1; margin-bottom: 6px; }
+  .pt-hero { font-family: var(--font-accent); font-size: 52px; font-weight: 400; line-height: 1.05; margin-bottom: 6px; white-space: nowrap; }
   .pt-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 18px 0 8px; }
   .pt-tile { background: rgba(255,255,255,0.38); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-radius: 16px; padding: 16px 18px; }
   .pt-tile .t-lbl { font-size: 13px; color: var(--ink-soft); margin-bottom: 6px; }
-  .pt-tile .t-val { font-family: var(--font-accent); font-size: 34px; font-weight: 700; line-height: 1; }
+  .pt-tile .t-val { font-family: var(--font-accent); font-size: 38px; font-weight: 400; line-height: 1; }
   .pt-chart-title { font-size: 14px; font-weight: 600; margin: 26px 0 12px; }
   .pt-cal { display: flex; align-items: flex-end; gap: 2px; height: 80px; }
   .pt-cal .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; }
