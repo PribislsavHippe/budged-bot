@@ -37,6 +37,8 @@
   .head { font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 24px; }
   .hero-label { font-size: 13px; color: var(--ink-soft); }
   .hero { font-size: 44px; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 20px; }
+  @keyframes blurIn { from { filter: blur(12px); opacity: 0; } to { filter: blur(0); opacity: 1; } }
+  .hero.blur-in { animation: blurIn 0.85s cubic-bezier(0.2, 0.6, 0.2, 1); }
   .r { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
   .r .lbl { font-size: 14px; white-space: nowrap; }
   .r .tag { font-size: 11px; font-weight: 600; color: var(--ink-soft); white-space: nowrap; }
@@ -132,10 +134,10 @@
   <div id="bg"></div>
   <p class="head" id="head">Загружаю…</p>
 
-  <p class="hero-label">За сегодня</p>
-  <p class="hero" id="today">—</p>
+  <p class="hero-label">За неделю</p>
+  <p class="hero" id="hero-num">—</p>
 
-  <div class="r"><span class="lbl">Неделя</span><span class="val" id="week">—</span></div>
+  <div class="r"><span class="lbl">Сегодня</span><span class="val" id="today">—</span></div>
   <div class="r"><span class="lbl">Месяц</span><span class="tag" id="month-tag"></span><span class="val" id="month">—</span></div>
   <div class="r"><span class="lbl">Заработал всего</span><span class="val" id="total">—</span></div>
 
@@ -220,6 +222,15 @@ const MONTHS_GEN = ["января","февраля","марта","апреля",
 const WD = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
 
 function rub(v) { return Math.round(v).toLocaleString("ru-RU"); }
+
+function setHero(text) {
+  const el = document.getElementById("hero-num");
+  if (el.textContent === text) return;   // не мигаем при неизменном значении
+  el.textContent = text;
+  el.classList.remove("blur-in");
+  void el.offsetWidth;                    // форсируем reflow, чтобы анимация перезапустилась
+  el.classList.add("blur-in");
+}
 function shiftsWord(n) {
   const m10 = n % 10, m100 = n % 100;
   if (m10 === 1 && m100 !== 11) return n + " смена";
@@ -250,8 +261,8 @@ function render(s) {
   const now = new Date();
   document.getElementById("head").textContent =
     MONTHS_UP[now.getMonth()] + " · " + shiftsWord(s.shifts_count);
-  document.getElementById("today").textContent = rub(s.today_net) + " ₽";
-  document.getElementById("week").textContent = rub(s.week_net);
+  setHero(rub(s.week_net) + " ₽");
+  document.getElementById("today").textContent = rub(s.today_net);
   document.getElementById("month").textContent = rub(s.month_net);
   document.getElementById("total").textContent = rub(s.total_net);
   document.getElementById("month-tag").textContent =
