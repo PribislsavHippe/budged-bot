@@ -88,17 +88,6 @@ async def delete_entry(entry_id: int, user_id: int) -> bool:
     return bool(res.data)
 
 
-async def get_balances(user_id: int) -> dict:
-    """{'cash': float, 'card': float, 'total': float} — всегда из журнала."""
-    res = supabase.table("entries").select("account, signed_amount") \
-        .eq("user_id", user_id).execute()
-    balances = {CASH: 0.0, CARD: 0.0}
-    for row in res.data:
-        balances[row["account"]] += float(row["signed_amount"])
-    balances["total"] = balances[CASH] + balances[CARD]
-    return {k: round(v, 2) for k, v in balances.items()}
-
-
 async def get_recent_entries(user_id: int, limit: int = 15) -> list[dict]:
     res = supabase.table("entries").select("*") \
         .eq("user_id", user_id) \

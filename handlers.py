@@ -1,8 +1,8 @@
-"""Все хендлеры бота. Принцип: записываем сразу, отмена — одной кнопкой.
+"""Все хендлеры бота. Трекер чаевых: регистрируем чай (и траты за смену),
+считаем «чистыми за смену». Никакого баланса/остатка — это не бюджет.
 
-Никаких многошаговых диалогов, кроме единственного вопроса при онбординге.
+Принцип: записываем сразу, отмена — одной кнопкой. Многошаговых диалогов нет.
 """
-import logging
 import os
 import re
 
@@ -30,12 +30,7 @@ WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
 SHIFT_SPEND_CATEGORIES = ["Мойка", "Бар", "Еда", "Такси"]
 
 KIND_SIGN = {"income": 1, "expense": -1}
-KIND_EMOJI = {"income": "➕", "expense": "➖", "adjustment": "🔧"}
-
-
-class Onboarding(StatesGroup):
-    waiting_balances = State()
-    waiting_account_choice = State()
+KIND_EMOJI = {"income": "➕", "expense": "➖"}
 
 
 class ShiftSpend(StatesGroup):
@@ -47,28 +42,40 @@ class ShiftSpend(StatesGroup):
 def fmt(v: float) -> str:
     """12345.0 → «12 345», 250.5 → «250,50»"""
     if v == int(v):
-        s = f"{int(v):,}".replace(",", " ")
-    else:
-        s = f"{v:,.2f}".replace(",", " ").replace(".", ",")
-    return s
+        return f"{int(v):,}".replace(",", " ")
+    return f"{v:,.2f}".replace(",", " ").replace(".", ",")
 
 
-def fmt_balances(b: dict) -> str:
-    return (
-        f"💵 Наличные: <b>{fmt(b['cash'])} ₽</b>\n"
-        f"💳 Карта: <b>{fmt(b['card'])} ₽</b>\n"
-        f"Всего: <b>{fmt(b['total'])} ₽</b>"
-    )
+def today_line(income: float, spent: float) -> str:
+    """«За сегодня» = чай − траты смены."""
+    net = income - spent
+    if spent > 0:
+        return f"<b>За сегодня: {fmt(net)} ₽</b>\nЧай {fmt(income)} − траты {fmt(spent)}"
+    return f"<b>За сегодня: {fmt(income)} ₽</b>"
+
+
+async def today_totals(user_id: int):
+    from datetime import datetime, timedelta, timezone
+    msk = timezone(timedelta(hours=3))
+    day_start = datetime.now(msk).replace(hour=0, minute=0, second=0, microsecond=0)
+    entries = await db.get_entries_since(user_id, day_start.astimezone(timezone.utc).isoformat())
+    income = sum(float(e["signed_amount"]) for e in entries if e["kind"] == "income")
+    spent = -sum(float(e["signed_amount"]) for e in entries if e["kind"] == "expense")
+    return income, spent
+
+
+async def today_block(user_id: int) -> str:
+    income, spent = await today_totals(user_id)
+    return today_line(income, spent)
 
 
 def main_menu() -> ReplyKeyboardMarkup:
-    rows = [[KeyboardButton(text="💰 Баланс"), KeyboardButton(text="📋 История")]]
-    row2 = [KeyboardButton(text="🧾 Закрыть смену")]
+    row1 = [KeyboardButton(text="📋 История"), KeyboardButton(text="🧾 Закрыть смену")]
+    rows = [row1]
     if WEBHOOK_HOST:
-        row2.append(KeyboardButton(
+        rows.append([KeyboardButton(
             text="📊 Статистика", web_app=WebAppInfo(url=f"{WEBHOOK_HOST}/app")
-        ))
-    rows.append(row2)
+        )])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
@@ -77,9 +84,8 @@ def entry_line(e: dict) -> str:
     emoji = KIND_EMOJI.get(e["kind"], "•")
     acc = db.ACCOUNT_LABELS[e["account"]]
     sign = "+" if amount > 0 else "−"
-    label = e["category"] if e["kind"] != "adjustment" else "Сверка"
-    note = f" ({e['note']})" if e.get("note") and e["kind"] != "adjustment" else ""
-    return f"{emoji} {sign}{fmt(abs(amount))} ₽ · {label} · {acc}{note}"
+    note = f" ({e['note']})" if e.get("note") else ""
+    return f"{emoji} {sign}{fmt(abs(amount))} ₽ · {e['category']} · {acc}{note}"
 
 
 def undo_kb(entry_ids: list[int], toggle_entry: dict | None = None) -> InlineKeyboardMarkup:
@@ -95,24 +101,22 @@ def undo_kb(entry_ids: list[int], toggle_entry: dict | None = None) -> InlineKey
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-# ─── /start и онбординг ──────────────────────────────────────────────────────
-
-ONBOARD_PROMPT = (
-    "<b>Шаг 1 из 2.</b> Сколько у тебя сейчас денег?\n\n"
-    "Напиши, например:\n"
-    "<i>наличными 5000, на карте 12000</i>\n\n"
-    "Если всё в одном месте — просто <i>на карте 17000</i>.\n"
-    "Если наличных нет — <i>наличными 0</i>. С этой точки считаю каждый рубль."
-)
-
+# ─── /start и знакомство ─────────────────────────────────────────────────────
 
 def _welcome_text(name: str) -> str:
     return (
-        f"Привет, {name}! Я — точный учёт твоих денег.\n\n"
-        "— пишешь <i>«чай 500»</i> или <i>«кофе 200»</i> — записываю сразу\n"
+        f"Привет, {name}! Я считаю твои чаевые.\n\n"
+        "— пишешь <i>«чай 500»</i> — записываю сразу\n"
         "— пересылаешь сообщение банка о чаевых — записываю сам\n"
-        "— в любой момент знаешь, сколько наличными и сколько на карте\n\n"
+        "— в конце смены жмёшь «🧾 Закрыть смену» и вносишь траты — "
+        "покажу, сколько подняла смена чистыми\n\n"
+        "Запиши первую: <i>чай 500</i>"
     )
+
+
+async def _greet(message: Message, name: str):
+    await db.set_onboarded(message.from_user.id)
+    await message.answer(_welcome_text(name), reply_markup=main_menu())
 
 
 @router.message(CommandStart())
@@ -126,119 +130,34 @@ async def cmd_start(message: Message, state: FSMContext):
         await send_shift_close_prompt(message)
         return
     if user.get("onboarded"):
-        balances = await db.get_balances(message.from_user.id)
-        await message.answer(fmt_balances(balances), reply_markup=main_menu())
+        await message.answer(await today_block(message.from_user.id), reply_markup=main_menu())
         return
-    name = user.get("first_name") or "друг"
-    await message.answer(_welcome_text(name) + ONBOARD_PROMPT, reply_markup=main_menu())
-    await state.set_state(Onboarding.waiting_balances)
-
-
-async def _finish_onboarding_step1(message: Message, state: FSMContext, user_id: int, stated: dict):
-    """Записывает стартовые остатки и показывает шаг 2."""
-    for account in db.ACCOUNTS:
-        await db.add_entry(
-            user_id, "adjustment", account, stated.get(account, 0.0),
-            category="Сверка", note="стартовый баланс",
-        )
-    await db.set_onboarded(user_id)
-    await state.clear()
-
-    balances = await db.get_balances(user_id)
-    await message.answer(
-        "Записал стартовую точку.\n\n" + fmt_balances(balances) + "\n\n"
-        "<b>Шаг 2 из 2.</b> Проверим на деле — запиши первую операцию:\n"
-        "<i>чай 500</i> — чаевые наличными\n"
-        "<i>зп 30000</i> — зарплата на карту\n"
-        "<i>кофе 200</i> — трата с карты\n\n"
-        "Или перешли мне сообщение банка о чаевых — разберу сам.",
-        reply_markup=main_menu(),
-    )
-
-
-@router.message(Onboarding.waiting_balances)
-async def onboarding_balances(message: Message, state: FSMContext):
-    text = message.text or ""
-    stated = p.parse_reconciliation(text)
-    if stated is not None:
-        await _finish_onboarding_step1(message, state, message.from_user.id, stated)
-        return
-
-    amount = p.extract_amount(text)
-    if amount is not None and p.detect_account(text) is None:
-        # Написал просто число — не гадаем, спрашиваем кнопками.
-        await state.update_data(pending_amount=amount)
-        await state.set_state(Onboarding.waiting_account_choice)
-        await message.answer(
-            f"Понял, <b>{fmt(amount)} ₽</b>. Где эти деньги?",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="💵 Наличные", callback_data="onb_acc:cash"),
-                InlineKeyboardButton(text="💳 Карта", callback_data="onb_acc:card"),
-            ]]),
-        )
-        return
-
-    await message.answer("Не разобрал. Пример:\n<i>наличными 5000, на карте 12000</i>")
-
-
-@router.callback_query(F.data.startswith("onb_acc:"), Onboarding.waiting_account_choice)
-async def onboarding_account_chosen(callback: CallbackQuery, state: FSMContext):
-    account = callback.data.split(":", 1)[1]
-    data = await state.get_data()
-    amount = data.get("pending_amount")
-    if amount is None:
-        await state.set_state(Onboarding.waiting_balances)
-        await callback.message.answer(ONBOARD_PROMPT)
-        await callback.answer()
-        return
-    await callback.message.edit_reply_markup(reply_markup=None)
-    await _finish_onboarding_step1(callback.message, state, callback.from_user.id, {account: amount})
-    await callback.answer()
-
-
-@router.message(Onboarding.waiting_account_choice)
-async def onboarding_account_text(message: Message, state: FSMContext):
-    """Вместо кнопки написал текстом: «карта», «нал» — тоже понимаем."""
-    account = p.detect_account(message.text or "")
-    data = await state.get_data()
-    amount = data.get("pending_amount")
-    if account is not None and amount is not None:
-        await _finish_onboarding_step1(message, state, message.from_user.id, {account: amount})
-        return
-    # Может, прислал полноценную сверку — разберём как на шаге 1
-    await state.set_state(Onboarding.waiting_balances)
-    await onboarding_balances(message, state)
+    await _greet(message, user.get("first_name") or "друг")
 
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     await message.answer(
         "<b>Как я работаю</b>\n\n"
-        "Доход: <i>чай 500</i>, <i>смена 2500</i>, <i>зп 30000</i>\n"
-        "Расход: <i>кофе 200</i>, <i>такси 350 нал</i>\n"
-        "Несколько сразу: <i>кофе 200, такси 350, обед 600</i>\n\n"
-        "Сверка: <i>наличными 3200, на карте 8100</i> — скажу, сходится ли.\n"
-        "Чаевые от банка: перешли мне сообщение банка — запишу сам.\n\n"
-        "💰 Баланс — сколько денег сейчас\n"
+        "Чаевые: <i>чай 500</i>, <i>смена 2500</i>\n"
+        "Перешли сообщение банка о чаевых — запишу сам.\n\n"
+        "🧾 Закрыть смену — внести траты за смену (мойка, бар, еда…), "
+        "покажу чистыми за смену\n"
         "📋 История — последние записи\n"
+        "📊 Статистика — графики за месяц\n\n"
+        "<i>план 2500</i> — цель по чаю на смену\n"
         "/undo — отменить последнюю запись\n"
-        "/reset — начать учёт заново"
+        "/reset — начать заново"
     )
 
 
-# ─── баланс и история ────────────────────────────────────────────────────────
-
-@router.message(F.text == "💰 Баланс")
-async def show_balance(message: Message):
-    balances = await db.get_balances(message.from_user.id)
-    await message.answer(fmt_balances(balances), reply_markup=main_menu())
-
+# ─── история ─────────────────────────────────────────────────────────────────
 
 @router.message(F.text == "📋 История")
 async def show_history(message: Message):
     entries = await db.get_recent_entries(message.from_user.id, limit=15)
     if not entries:
-        await message.answer("Пока пусто. Напиши первую операцию: <i>чай 500</i>")
+        await message.answer("Пока пусто. Напиши первую: <i>чай 500</i>")
         return
     from datetime import datetime, timedelta, timezone
     msk = timezone(timedelta(hours=3))
@@ -259,8 +178,9 @@ async def cmd_undo(message: Message):
         return
     entry = entries[0]
     await db.delete_entry(entry["id"], message.from_user.id)
-    balances = await db.get_balances(message.from_user.id)
-    await message.answer("Отменил:\n" + entry_line(entry) + "\n\n" + fmt_balances(balances))
+    await message.answer(
+        "Отменил:\n" + entry_line(entry) + "\n\n" + await today_block(message.from_user.id)
+    )
 
 
 # ─── сброс ───────────────────────────────────────────────────────────────────
@@ -279,9 +199,9 @@ async def cmd_reset(message: Message):
 @router.callback_query(F.data == "reset:yes")
 async def reset_yes(callback: CallbackQuery, state: FSMContext):
     db.supabase.table("entries").delete().eq("user_id", callback.from_user.id).execute()
-    await state.set_state(Onboarding.waiting_balances)
+    await state.clear()
     await callback.message.edit_text("Журнал очищен.")
-    await callback.message.answer(ONBOARD_PROMPT)
+    await callback.message.answer("Погнали заново. Запиши: <i>чай 500</i>", reply_markup=main_menu())
     await callback.answer()
 
 
@@ -303,8 +223,7 @@ async def cb_undo(callback: CallbackQuery):
     if not deleted:
         await callback.answer("Уже отменено", show_alert=True)
         return
-    balances = await db.get_balances(callback.from_user.id)
-    await callback.message.edit_text("↩️ Отменено.\n\n" + fmt_balances(balances))
+    await callback.message.edit_text("↩️ Отменено.\n\n" + await today_block(callback.from_user.id))
     await callback.answer()
 
 
@@ -317,9 +236,8 @@ async def cb_toggle_account(callback: CallbackQuery):
         return
     other = db.CASH if entry["account"] == db.CARD else db.CARD
     entry = await db.update_entry_account(entry_id, callback.from_user.id, other)
-    balances = await db.get_balances(callback.from_user.id)
     await callback.message.edit_text(
-        entry_line(entry) + "\n\n" + fmt_balances(balances),
+        entry_line(entry) + "\n\n" + await today_block(callback.from_user.id),
         reply_markup=undo_kb([entry_id], toggle_entry=entry),
     )
     await callback.answer(f"Перенёс на {db.ACCOUNT_LABELS[other].lower()}")
@@ -407,36 +325,26 @@ async def shift_spend_amount(message: Message, state: FSMContext):
         return
     data = await state.get_data()
     category = data.get("shift_category", "Прочее")
-    entry = await db.add_entry(
+    await db.add_entry(
         message.from_user.id, "expense", db.CASH, -amount,
         category=category, note="трата смены",
     )
     await state.clear()
     await message.answer(
-        f"➖ {category} {fmt(amount)} ₽ (наличные)\n\nЕщё что-то?",
+        f"➖ {category} {fmt(amount)} ₽\n\nЕщё что-то?",
         reply_markup=shift_spend_kb(),
     )
 
 
 async def _send_day_summary(message: Message, user_id: int):
     """Итог дня: чай − траты = чистыми, плюс план если задан."""
-    from datetime import datetime, timedelta, timezone
-    msk = timezone(timedelta(hours=3))
-    day_start = datetime.now(msk).replace(hour=0, minute=0, second=0, microsecond=0)
-    entries = await db.get_entries_since(user_id, day_start.astimezone(timezone.utc).isoformat())
-    income = sum(float(e["signed_amount"]) for e in entries if e["kind"] == "income")
-    spent = -sum(float(e["signed_amount"]) for e in entries if e["kind"] == "expense")
+    income, spent = await today_totals(user_id)
     net = income - spent
-
-    lines = [
-        f"<b>За сегодня: {fmt(net)} ₽ чистыми</b>",
-        f"Заработал {fmt(income)} − потратил {fmt(spent)}",
-    ]
+    lines = [today_line(income, spent)]
     goal = await db.get_shift_goal(user_id)
     if goal:
         pct = round(min(income / goal, 1.0) * 100)
-        mark = "✅ План сделан!" if income >= goal else f"{pct}% плана"
-        lines.append(f"План {fmt(goal)}: {mark}")
+        lines.append("✅ План сделан!" if income >= goal else f"План {fmt(goal)}: {pct}%")
     if income > 0 and net <= 0:
         lines.append("Смена ушла в минус — загляни в статистику, куда утекло.")
     await message.answer("\n".join(lines))
@@ -444,7 +352,8 @@ async def _send_day_summary(message: Message, user_id: int):
 
 # ─── кнопки старой версии бота ───────────────────────────────────────────────
 
-LEGACY_BUTTONS = {"Статистика", "Платежи", "Бюджеты", "Настройки", "Доходы", "Цели", "ИИ-чат"}
+LEGACY_BUTTONS = {"💰 Баланс", "Баланс", "Статистика", "Платежи", "Бюджеты",
+                  "Настройки", "Доходы", "Цели", "ИИ-чат"}
 
 
 @router.message(F.text == "История")
@@ -453,21 +362,16 @@ async def legacy_history(message: Message):
 
 
 @router.message(F.text.in_(LEGACY_BUTTONS))
-async def legacy_button(message: Message, state: FSMContext):
+async def legacy_button(message: Message):
     user = await db.get_or_create_user(
         message.from_user.id, message.from_user.username, message.from_user.first_name
     )
     if not user.get("onboarded"):
-        name = user.get("first_name") or "друг"
-        await message.answer(
-            "Я обновился и стал проще и надёжнее.\n\n" + _welcome_text(name) + ONBOARD_PROMPT,
-            reply_markup=main_menu(),
-        )
-        await state.set_state(Onboarding.waiting_balances)
+        await _greet(message, user.get("first_name") or "друг")
         return
     await message.answer(
-        "Этого раздела больше нет — я теперь простой и надёжный учёт денег.\n"
-        "💰 Баланс и 📋 История — на клавиатуре, /help — что я умею.",
+        "Я теперь считаю только чаевые.\n"
+        "📋 История и 🧾 Закрыть смену — на клавиатуре, /help — что умею.",
         reply_markup=main_menu(),
     )
 
@@ -475,7 +379,7 @@ async def legacy_button(message: Message, state: FSMContext):
 # ─── главный обработчик текста ───────────────────────────────────────────────
 
 async def _save_bank_tips(message: Message, notif: dict):
-    """Чаевые из банковского уведомления → доход на карту, с чеком и процентом."""
+    """Чаевые из банковского уведомления → на карту, с чеком и процентом."""
     tips = notif["amount"]
     entry = await db.add_entry(
         message.from_user.id, "income", db.CARD, tips,
@@ -489,9 +393,9 @@ async def _save_bank_tips(message: Message, notif: dict):
     if notif.get("tip_percent"):
         details.append(f"{notif['tip_percent']:g}%")
     details_str = f" ({', '.join(details)})" if details else ""
-    balances = await db.get_balances(message.from_user.id)
     await message.answer(
-        f"➕ Чаевые <b>{fmt(tips)} ₽</b>{details_str} → карта\n\n" + fmt_balances(balances),
+        f"➕ Чаевые <b>{fmt(tips)} ₽</b>{details_str} → карта\n\n"
+        + await today_block(message.from_user.id),
         reply_markup=undo_kb([entry["id"]], toggle_entry=entry),
     )
 
@@ -503,14 +407,12 @@ async def handle_text(message: Message, state: FSMContext):
     )
     text = message.text or ""
 
-    # Старый пользователь (или без /start): сначала стартовая сверка балансов
+    # Новый пользователь (или без /start): знакомство
     if not user.get("onboarded"):
-        name = user.get("first_name") or "друг"
-        await message.answer(_welcome_text(name) + ONBOARD_PROMPT, reply_markup=main_menu())
-        await state.set_state(Onboarding.waiting_balances)
+        await _greet(message, user.get("first_name") or "друг")
         return
 
-    # 1. Пересланное сообщение банка о чаевых → сразу на карту
+    # 1. Пересланное сообщение банка о чаевых → на карту
     if message.forward_origin is not None:
         notif = p.parse_bank_notification(text)
         if notif is not None:
@@ -529,48 +431,18 @@ async def handle_text(message: Message, state: FSMContext):
             await _save_bank_tips(message, notif)
             return
 
-    # 3. Сверка: «наличными 3200, на карте 8100»
-    stated = p.parse_reconciliation(text)
-    if stated is not None:
-        balances = await db.get_balances(message.from_user.id)
-        lines, ids = [], []
-        for account, amount in stated.items():
-            diff = round(amount - balances[account], 2)
-            label = db.ACCOUNT_LABELS[account]
-            if abs(diff) < 0.01:
-                lines.append(f"✅ {label}: {fmt(amount)} ₽ — сходится копейка в копейку")
-                continue
-            entry = await db.add_entry(
-                message.from_user.id, "adjustment", account, diff,
-                category="Сверка", note=f"было по журналу {fmt(balances[account])}",
-            )
-            ids.append(entry["id"])
-            sign = "+" if diff > 0 else "−"
-            lines.append(
-                f"🔧 {label}: по журналу было {fmt(balances[account])} ₽, "
-                f"по факту {fmt(amount)} ₽ — расхождение {sign}{fmt(abs(diff))} ₽, учёл"
-            )
-        balances = await db.get_balances(message.from_user.id)
-        await message.answer(
-            "\n".join(lines) + "\n\n" + fmt_balances(balances),
-            reply_markup=undo_kb(ids) if ids else None,
-        )
-        return
-
-    # 4. Обычные операции
+    # 3. Обычные записи: «чай 500», «кофе 200, такси 350»
     items = p.parse_transactions(text)
     if not items:
         await message.answer(
             "Не нашёл сумму. Примеры:\n"
-            "<i>чай 500</i> · <i>кофе 200</i> · <i>зп 30000</i>\n"
+            "<i>чай 500</i> · <i>смена 2500</i>\n"
             "/help — все команды",
             reply_markup=main_menu(),
         )
         return
 
-    # Первая ли это операция? (в журнале пока только стартовые сверки)
-    prior = await db.get_recent_entries(message.from_user.id, limit=3)
-    is_first_tx = all(e["kind"] == "adjustment" for e in prior)
+    is_first_tx = not await db.get_recent_entries(message.from_user.id, limit=1)
 
     saved = []
     for item in items:
@@ -581,15 +453,14 @@ async def handle_text(message: Message, state: FSMContext):
         )
         saved.append(entry)
 
-    balances = await db.get_balances(message.from_user.id)
     body = "\n".join(entry_line(e) for e in saved)
     if is_first_tx:
         body += (
-            "\n\n👌 Готово, ты освоился. Ошибся счётом — кнопка «Перенести», "
-            "передумал — «Отменить». /help — если забудешь примеры."
+            "\n\n👌 Записал. Ошибся счётом — кнопка «Перенести», "
+            "передумал — «Отменить»."
         )
     toggle = saved[0] if len(saved) == 1 else None
     await message.answer(
-        body + "\n\n" + fmt_balances(balances),
+        body + "\n\n" + await today_block(message.from_user.id),
         reply_markup=undo_kb([e["id"] for e in saved], toggle_entry=toggle),
     )
