@@ -14,12 +14,12 @@
     --brick: #c1121f;
     --paper: #fffdf8;
     --deep: #003049;
-    --steel: #669bbc;
+    --steel: #3d7a9c;
     --ink: #111111;
     --ink-soft: #6b6b6b;
     --ink-faint: #b9b2a0;
     --dots: #c9c2ae;
-    --sand: #d8d2c2;
+    --sand: #cdbfa6;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html { background: #FAF8EE; }
@@ -431,10 +431,12 @@ document.getElementById("close-poster").onclick = function() {
   // Статичная пофаза каждого блоба — хэш сида, считается ОДИН раз (не в кадре).
   function phase(n) { const x = Math.sin(n) * 43758.5453; return (x - Math.floor(x)) * Math.PI * 2; }
   const SEED = 1;
+  // peak — пиковая непрозрачность блоба: держим фон очень бледным,
+  // чтобы данные (глубокие синие) читались поверх.
   const blobs = [
-    { rgb: "230,176,147", x: 68.1, y: 46.03, r: 41.1 },   // Apricot
-    { rgb: "163,206,255", x: 25.17, y: 75.99, r: 44.6 },  // Sky blue
-    { rgb: "250,249,239", x: 53.11, y: 12.71, r: 66.65 }, // Paper
+    { rgb: "230,176,147", x: 68.1, y: 46.03, r: 41.1, peak: 0.30 },   // Apricot
+    { rgb: "163,206,255", x: 25.17, y: 75.99, r: 44.6, peak: 0.30 },  // Sky blue
+    { rgb: "250,249,239", x: 53.11, y: 12.71, r: 66.65, peak: 0.50 }, // Paper
   ].map(function(b, i) {
     b.p1 = phase(SEED * 12.9898 + i * 78.233);
     b.p2 = phase(SEED * 39.346 + i * 11.135);
@@ -442,11 +444,12 @@ document.getElementById("close-poster").onclick = function() {
   });
 
   function rg(b, cx, cy) {
+    const a = b.peak;
     return "radial-gradient(circle at " + cx + "% " + cy + "%, " +
-      "rgba(" + b.rgb + ",1) 0%, " +
-      "rgba(" + b.rgb + ",0.844) " + (b.r * 0.25) + "%, " +
-      "rgba(" + b.rgb + ",0.5) " + (b.r * 0.5) + "%, " +
-      "rgba(" + b.rgb + ",0.156) " + (b.r * 0.75) + "%, " +
+      "rgba(" + b.rgb + "," + a + ") 0%, " +
+      "rgba(" + b.rgb + "," + (a * 0.844) + ") " + (b.r * 0.25) + "%, " +
+      "rgba(" + b.rgb + "," + (a * 0.5) + ") " + (b.r * 0.5) + "%, " +
+      "rgba(" + b.rgb + "," + (a * 0.156) + ") " + (b.r * 0.75) + "%, " +
       "rgba(" + b.rgb + ",0) " + b.r + "%)";
   }
 
