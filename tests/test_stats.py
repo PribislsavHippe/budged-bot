@@ -153,12 +153,36 @@ def test_month_days_calendar():
     ]
     s = compute_stats(entries, today=TODAY)
     assert len(s["month_days"]) == 31
-    assert s["month_days"][0] == {"day": 1, "tips": 1000}
-    assert s["month_days"][1] == {"day": 2, "tips": 0}
-    assert s["month_days"][17] == {"day": 18, "tips": 4120}
+    assert s["month_days"][0] == {"day": 1, "tips": 1000, "cash": 0, "card": 1000}
+    assert s["month_days"][1] == {"day": 2, "tips": 0, "cash": 0, "card": 0}
+    assert s["month_days"][17]["tips"] == 4120
     assert s["today_day"] == 20
     assert s["avg_shift_tips"] == round((1000 + 4120 + 1660) / 3)
     assert s["record"] == {"day": 18, "tips": 4120, "weekday": "Сб"}
+
+
+def test_month_days_cash_card_split():
+    # день 1: 300 налом + 700 картой = 1000
+    entries = [
+        {"kind": "income", "account": "cash", "signed_amount": 300, "category": "Чаевые",
+         "order_amount": None, "tip_percent": None, "created_at": "2026-07-01T18:00:00+03:00"},
+        {"kind": "income", "account": "card", "signed_amount": 700, "category": "Чаевые",
+         "order_amount": None, "tip_percent": None, "created_at": "2026-07-01T19:00:00+03:00"},
+    ]
+    s = compute_stats(entries, today=TODAY)
+    assert s["month_days"][0] == {"day": 1, "tips": 1000, "cash": 300, "card": 700}
+
+
+def test_weekday_split():
+    entries = [
+        {"kind": "income", "account": "cash", "signed_amount": 400, "category": "Чаевые",
+         "order_amount": None, "tip_percent": None, "created_at": "2026-07-17T18:00:00+03:00"},
+        {"kind": "income", "account": "card", "signed_amount": 600, "category": "Чаевые",
+         "order_amount": None, "tip_percent": None, "created_at": "2026-07-17T19:00:00+03:00"},
+    ]
+    s = compute_stats(entries, today=TODAY)
+    assert s["weekday_split"][4] == {"cash": 400, "card": 600}  # пятница
+    assert s["weekday_split"][0] == {"cash": 0, "card": 0}      # понедельник
 
 
 def test_avg_pct_delta():

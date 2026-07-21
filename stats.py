@@ -53,6 +53,17 @@ def _shift_days(entries: list[dict]) -> dict[date, float]:
     return days
 
 
+def _shift_days_split(entries: list[dict]) -> dict[date, dict]:
+    """Дни с чаем → {'cash': сумма, 'card': сумма} за день."""
+    days: dict[date, dict] = {}
+    for e in entries:
+        if e["kind"] == "income" and e["category"] == "Чаевые":
+            d = _entry_date(e)
+            rec = days.setdefault(d, {"cash": 0.0, "card": 0.0})
+            rec[e["account"]] = rec.get(e["account"], 0.0) + float(e["signed_amount"])
+    return days
+
+
 def _day_net(entries: list[dict]) -> dict[date, float]:
     days: dict[date, float] = {}
     for e in entries:
@@ -102,13 +113,27 @@ def compute_stats(entries: list[dict], today: date | None = None, shift_goal: fl
         round((month_tips - prev_tips) / prev_tips * 100) if prev_tips > 0 else None
     )
 
-    # Чай по дням недели (среднее за смену в этот день недели, весь журнал)
+    # Чай по дням недели (среднее за смену в этот день недели, весь журнал),
+    # с разбивкой нал/карта — чтобы каждый график показывал состав чая.
     all_shifts = _shift_days(entries)
+    all_split = _shift_days_split(entries)
     by_weekday: list[list[float]] = [[] for _ in range(7)]
+    wd_cash: list[list[float]] = [[] for _ in range(7)]
+    wd_card: list[list[float]] = [[] for _ in range(7)]
     for d, tips in all_shifts.items():
         by_weekday[d.weekday()].append(tips)
+        rec = all_split.get(d, {})
+        wd_cash[d.weekday()].append(rec.get("cash", 0.0))
+        wd_card[d.weekday()].append(rec.get("card", 0.0))
     summary["weekday_avg_tips"] = [
         round(sum(v) / len(v)) if v else 0 for v in by_weekday
+    ]
+    summary["weekday_split"] = [
+        {
+            "cash": round(sum(c) / len(c)) if c else 0,
+            "card": round(sum(k) / len(k)) if k else 0,
+        }
+        for c, k in zip(wd_cash, wd_card)
     ]
 
     # Достижения (за месяц; серия — на текущий момент)
@@ -125,11 +150,18 @@ def compute_stats(entries: list[dict], today: date | None = None, shift_goal: fl
         "bottom": sum(1 for tips in shifts.values() if tips < ACH_BOTTOM_TIPS),
     }
 
-    # Календарный ряд месяца: чай по дням, пустые дни = отдых (тоже информация)
+    # Календарный ряд месяца: чай по дням с разбивкой нал/карта.
+    # Пустые дни = отдых (тоже информация).
     month_shifts = _shift_days(month_entries)
+    month_split = _shift_days_split(month_entries)
     days_in_month = monthrange(today.year, today.month)[1]
     summary["month_days"] = [
-        {"day": day, "tips": round(month_shifts.get(today.replace(day=day), 0))}
+        {
+            "day": day,
+            "tips": round(month_shifts.get(today.replace(day=day), 0)),
+            "cash": round(month_split.get(today.replace(day=day), {}).get("cash", 0)),
+            "card": round(month_split.get(today.replace(day=day), {}).get("card", 0)),
+        }
         for day in range(1, days_in_month + 1)
     ]
     summary["today_day"] = today.day

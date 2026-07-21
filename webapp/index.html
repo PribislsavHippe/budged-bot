@@ -10,16 +10,14 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;800&display=swap">
 <style>
   :root {
-    /* Рабочий экран — монохром. Выделение насыщенностью, не цветом (Тафти). */
     --ink: #111111;
     --ink-soft: #6b6b6b;
-    --bar: #9a9a9a;
     --faint: #cfcfcf;
     --track: #ececec;
-    /* Плакат «Итоги месяца» — отдельный праздничный артефакт, остаётся в цвете. */
-    --brick: #c1121f;
     --deep: #003049;
-    --steel: #3d7a9c;
+    --steel: #669bbc;
+    --cash: #b9d2e4;   /* наличка — светлее */
+    --card: #4f89ab;   /* карта — насыщеннее */
     --paper: #ffffff;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -32,74 +30,77 @@
   }
   body {
     font-family: 'Inter', -apple-system, sans-serif;
-    background: transparent;
-    color: var(--ink);
+    background: transparent; color: var(--ink);
     font-variant-numeric: tabular-nums;
-    padding: 26px 22px 40px;
-    max-width: 480px;
-    margin: 0 auto;
+    padding: 26px 22px 40px; max-width: 480px; margin: 0 auto;
   }
-  .head { font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 22px; }
+  .head { font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 24px; }
   .hero-label { font-size: 13px; color: var(--ink-soft); }
-  .hero { font-size: 40px; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 2px; }
-  .hero-sub { font-size: 12px; color: var(--ink-soft); margin-bottom: 16px; }
-  .r { display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px; }
+  .hero { font-size: 44px; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 20px; }
+  .r { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
   .r .lbl { font-size: 14px; white-space: nowrap; }
   .r .tag { font-size: 11px; font-weight: 600; color: var(--ink-soft); white-space: nowrap; }
-  .r .tag.mute { font-weight: 400; }
   .r .val { font-size: 15px; font-weight: 600; white-space: nowrap; margin-left: auto; }
-  .section { font-size: 13px; font-weight: 600; margin: 26px 0 12px; }
-  .chart-wrap { position: relative; height: 84px; }
-  .avg-line { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--faint); z-index: 1; }
-  .avg-lbl { position: absolute; right: 0; font-size: 10px; color: var(--ink-soft); background: #fff; padding-left: 4px; z-index: 2; }
-  .cal { display: flex; align-items: flex-end; gap: 2px; height: 100%; position: relative; z-index: 1; }
-  .cal div { flex: 1; background: var(--bar); }
-  .cal .rec { background: var(--ink); position: relative; }
-  .rec-lbl { position: absolute; top: -15px; left: 50%; transform: translateX(-50%); font-size: 10px; font-weight: 600; color: var(--ink); white-space: nowrap; }
-  .axis { position: relative; font-size: 11px; color: var(--faint); margin-top: 4px; height: 14px; }
-  .axis .a-left { position: absolute; left: 0; }
-  .axis .a-right { position: absolute; right: 0; }
-  .axis .a-today { position: absolute; transform: translateX(-50%); color: var(--ink-soft); }
-  .minis { display: flex; gap: 20px; margin: 24px 0; }
-  .minis > div { flex: 1; min-width: 0; }
-  .mini-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
-  .wd { display: flex; align-items: flex-end; gap: 3px; height: 40px; }
-  .wd div { flex: 1; background: var(--bar); }
-  .wd .top { background: var(--ink); }
-  .strip { display: flex; height: 12px; overflow: hidden; margin-top: 15px; }
-  .strip .c1 { background: var(--faint); }
-  .strip .c2 { background: var(--ink-soft); }
-  .mini-sub { font-size: 11px; color: var(--ink-soft); margin-top: 6px; }
-  .plan { margin: 16px 0 0; }
+  .plan { margin: 18px 0 0; }
   .plan .bar-track { height: 3px; background: var(--track); overflow: hidden; margin-top: 7px; }
   .plan .bar-fill { height: 100%; background: var(--ink); width: 0; }
-  .btn { display: block; width: 100%; text-align: center; padding: 14px; border-radius: 10px; font-size: 14px; font-weight: 600; border: none; cursor: pointer; font-family: inherit; background: var(--ink); color: #fff; margin-top: 22px; }
+  .btn { display: block; width: 100%; text-align: center; padding: 14px; border-radius: 10px; font-size: 14px; font-weight: 600; border: none; cursor: pointer; font-family: inherit; background: var(--ink); color: #fff; margin-top: 24px; }
   .btn:active { background: #333; }
   .btn-ghost { background: transparent; color: var(--ink); border: 1px solid var(--faint); margin-top: 10px; }
   .btn-ghost:active { background: #f4f4f4; }
   #err { font-size: 13px; color: #780000; padding: 16px 0; display: none; }
 
-  /* Плакат — в цвете, как отдельный праздничный артефакт */
-  #poster { position: fixed; inset: 0; background: var(--deep); color: var(--paper); z-index: 100; display: none; overflow-y: auto; }
+  /* ── панель «Траты за смену» (внутри мини-апа) ── */
+  #spend { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 90; display: none; }
+  #spend.on { display: flex; align-items: flex-end; }
+  .sheet { background: #fff; width: 100%; max-width: 480px; margin: 0 auto; border-radius: 18px 18px 0 0; padding: 22px 20px 26px; }
+  .sheet-title { font-size: 17px; font-weight: 800; }
+  .sheet-sub { font-size: 13px; color: var(--ink-soft); margin: 2px 0 16px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .chip { font-size: 14px; font-weight: 600; padding: 9px 16px; border-radius: 20px; border: 1px solid var(--faint); background: #fff; cursor: pointer; font-family: inherit; color: var(--ink); }
+  .chip.sel { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .spend-inputs { display: none; gap: 8px; margin-bottom: 6px; }
+  .spend-inputs.on { display: flex; }
+  .spend-inputs input { flex: 1; min-width: 0; font-family: inherit; font-size: 15px; padding: 11px 12px; border: 1px solid var(--faint); border-radius: 10px; background: #fff; }
+  .spend-inputs input:focus { outline: none; border-color: var(--ink); }
+  #spend-submit { flex: 0 0 auto; padding: 11px 16px; border-radius: 10px; border: none; background: var(--ink); color: #fff; font-weight: 600; font-family: inherit; font-size: 15px; cursor: pointer; }
+  .spend-note { font-size: 13px; color: var(--ink-soft); min-height: 18px; margin-bottom: 12px; }
+
+  /* ── «Итоги месяца» (тёмный экран) ── */
+  #poster { position: fixed; inset: 0; background: var(--deep); color: #fff; z-index: 100; display: none; overflow-y: auto; }
   #poster.on { display: block; }
-  .poster-inner { max-width: 480px; margin: 0 auto; padding: 30px 26px 26px; min-height: 100%; display: flex; flex-direction: column; }
-  .pt-head { font-size: 12px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--steel); margin-bottom: 26px; }
+  .poster-inner { max-width: 480px; margin: 0 auto; padding: 30px 24px 34px; }
+  .pt-head { font-size: 12px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--steel); margin-bottom: 22px; }
   .pt-lbl { font-size: 15px; color: #9db8c9; margin-bottom: 2px; }
-  .pt-hero { font-size: 52px; font-weight: 800; letter-spacing: -0.03em; line-height: 1; margin-bottom: 24px; }
-  .pt-r { display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px; }
+  .pt-hero { font-size: 50px; font-weight: 800; letter-spacing: -0.03em; line-height: 1; margin-bottom: 22px; }
+  .pt-r { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
   .pt-r .l { font-size: 14px; color: #9db8c9; white-space: nowrap; }
   .pt-r .v { font-size: 15px; font-weight: 600; white-space: nowrap; margin-left: auto; }
   .pt-r .v.pink { color: #ffbac8; }
-  .pt-cal { display: flex; align-items: flex-end; gap: 2px; height: 34px; margin: 22px 0; }
-  .pt-cal div { flex: 1; }
-  .pt-cal .b { background: #1a4a66; }
-  .pt-cal .m { background: var(--steel); }
-  .pt-cal .r { background: var(--brick); }
-  .pt-title-lbl { font-size: 12px; color: #9db8c9; margin-bottom: 3px; }
-  .pt-title { font-size: 22px; font-weight: 800; }
-  .pt-foot { border-top: 1px solid #1a4a66; margin-top: auto; padding-top: 14px; }
-  .pt-foot span { font-size: 11px; color: var(--steel); letter-spacing: .04em; }
-  .pt-hint { font-size: 12px; color: #9db8c9; margin-top: 16px; text-align: center; }
+  .pt-chart-title { font-size: 13px; font-weight: 600; margin: 26px 0 10px; }
+  .pt-cal { display: flex; align-items: flex-end; gap: 2px; height: 72px; }
+  .pt-cal .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; }
+  .pt-wd { display: flex; align-items: flex-end; gap: 5px; height: 56px; }
+  .pt-wd .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; }
+  .seg-cash { background: var(--cash); }
+  .seg-card { background: var(--card); }
+  .pt-axis { position: relative; font-size: 11px; color: #5a7f95; margin-top: 5px; height: 14px; }
+  .pt-axis .l { position: absolute; left: 0; }
+  .pt-axis .rt { position: absolute; right: 0; }
+  .pt-wd-labels { display: flex; gap: 5px; font-size: 11px; color: #5a7f95; text-align: center; margin-top: 5px; }
+  .pt-wd-labels span { flex: 1; }
+  .pt-legend { font-size: 12px; color: #9db8c9; margin-top: 12px; display: flex; gap: 16px; }
+  .pt-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+
+  /* ── достижения (в стиле Duolingo) ── */
+  .ach-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .ach-card { background: rgba(255,255,255,.06); border-radius: 14px; padding: 14px 12px; text-align: center; }
+  .ach-emblem { width: 52px; height: 52px; border-radius: 50%; margin: 0 auto 8px; display: flex; align-items: center; justify-content: center; font-size: 24px; border: 2px solid; }
+  .ach-card.locked .ach-emblem { filter: grayscale(1); opacity: .45; }
+  .ach-name { font-size: 14px; font-weight: 700; }
+  .ach-desc { font-size: 11px; color: #9db8c9; margin: 2px 0 8px; line-height: 1.3; }
+  .ach-badge { font-size: 11px; font-weight: 700; letter-spacing: .02em; }
+  .pt-back { margin-top: 28px; }
 </style>
 </head>
 <body>
@@ -108,7 +109,6 @@
 
   <p class="hero-label">За сегодня</p>
   <p class="hero" id="today">—</p>
-  <p class="hero-sub" id="today-sub">&nbsp;</p>
 
   <div class="r"><span class="lbl">Неделя</span><span class="val" id="week">—</span></div>
   <div class="r"><span class="lbl">Месяц</span><span class="tag" id="month-tag"></span><span class="val" id="month">—</span></div>
@@ -124,52 +124,51 @@
 
   <p id="err"></p>
 
-  <p class="section" id="cal-title">Чай за смену</p>
-  <div id="cal-block">
-    <div class="chart-wrap" id="chart-wrap">
-      <div class="cal" id="cal"></div>
-    </div>
-    <div class="axis" id="axis"></div>
-  </div>
-
-  <div class="minis">
-    <div>
-      <p class="mini-title">Дни недели</p>
-      <div class="wd" id="wd"></div>
-      <p class="mini-sub" id="wd-sub">&nbsp;</p>
-    </div>
-    <div>
-      <p class="mini-title">Чай: нал / карта</p>
-      <div id="strip-wrap"><div class="strip" id="strip"></div></div>
-      <p class="mini-sub" id="strip-sub">&nbsp;</p>
-    </div>
-  </div>
-
-  <div class="r"><span class="lbl">Средний чай</span><span class="tag" id="pct-tag"></span><span class="val" id="avg-pct">—</span></div>
-  <div class="r"><span class="lbl">Траты смен</span><span class="tag mute" id="spend-tag"></span><span class="val" id="shift-spend">—</span></div>
-  <div class="r"><span class="lbl" id="ach-lbl">Кит ×0 · Щедрость ×0 · Серия</span><span class="val" id="ach-val">0</span></div>
-
-  <button class="btn" id="close-shift">Внести траты смены</button>
+  <button class="btn" id="open-spend">Внести траты смены</button>
   <button class="btn btn-ghost" id="open-poster">Итоги месяца</button>
 
+  <!-- Панель трат за смену -->
+  <div id="spend">
+    <div class="sheet">
+      <p class="sheet-title">Траты за смену</p>
+      <p class="sheet-sub" id="spend-sub">Жми категорию и введи сумму.</p>
+      <div class="chips" id="spend-chips"></div>
+      <div class="spend-inputs" id="spend-inputs">
+        <input type="text" id="spend-name" placeholder="Название" style="display:none">
+        <input type="number" inputmode="numeric" id="spend-amount" placeholder="Сумма ₽">
+        <button id="spend-submit">Внести</button>
+      </div>
+      <p class="spend-note" id="spend-note"></p>
+      <button class="btn btn-ghost" id="spend-close" style="margin-top:0">Готово</button>
+    </div>
+  </div>
+
+  <!-- Итоги месяца -->
   <div id="poster">
     <div class="poster-inner">
-      <p class="pt-head" id="pt-head">Чек · Июль 2026</p>
+      <p class="pt-head" id="pt-head">Июль 2026</p>
       <p class="pt-lbl">Чистыми за месяц</p>
       <p class="pt-hero" id="pt-hero">—</p>
 
       <div class="pt-r"><span class="l">Смен</span><span class="v" id="pt-shifts">—</span></div>
       <div class="pt-r"><span class="l">Средний чай</span><span class="v" id="pt-pct">—</span></div>
       <div class="pt-r"><span class="l" id="pt-rec-lbl">Рекорд смены</span><span class="v pink" id="pt-rec">—</span></div>
+      <div class="pt-r"><span class="l">Траты смен</span><span class="v" id="pt-spend">—</span></div>
 
+      <p class="pt-chart-title">Чай за смену</p>
       <div class="pt-cal" id="pt-cal"></div>
+      <div class="pt-axis" id="pt-axis"></div>
 
-      <p class="pt-title-lbl">Звание месяца</p>
-      <p class="pt-title" id="pt-title">—</p>
+      <p class="pt-chart-title">Дни недели</p>
+      <div class="pt-wd" id="pt-wd"></div>
+      <div class="pt-wd-labels" id="pt-wd-labels"></div>
 
-      <div class="pt-foot"><span id="pt-foot">Мой Бюджет</span></div>
-      <p class="pt-hint">Скриншоть и покажи коллегам 📸</p>
-      <button class="btn btn-ghost" id="close-poster" style="border-color:var(--steel); color:var(--steel); margin-top:18px;">← Назад к статистике</button>
+      <p class="pt-legend"><span><i style="background:var(--cash)"></i>наличка</span><span><i style="background:var(--card)"></i>карта</span></p>
+
+      <p class="pt-chart-title">Достижения</p>
+      <div class="ach-grid" id="ach-grid"></div>
+
+      <button class="btn btn-ghost pt-back" id="close-poster" style="border-color:var(--steel); color:var(--steel);">← Назад</button>
     </div>
   </div>
 
@@ -177,15 +176,13 @@
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 if (tg) { tg.ready(); tg.expand(); }
 
-let botUsername = null;
 let lastStats = null;
 
 const MONTHS_UP = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
-const WD_FULL = { "Пн": "Понедельник", "Вт": "Вторник", "Ср": "Среда", "Чт": "Четверг", "Пт": "Пятница", "Сб": "Суббота", "Вс": "Воскресенье" };
 const MONTHS_GEN = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"];
+const WD = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
 
 function rub(v) { return Math.round(v).toLocaleString("ru-RU"); }
-
 function shiftsWord(n) {
   const m10 = n % 10, m100 = n % 100;
   if (m10 === 1 && m100 !== 11) return n + " смена";
@@ -193,19 +190,30 @@ function shiftsWord(n) {
   return n + " смен";
 }
 
+// ── стек нал/карта: колонка высотой tips/max, внутри cash сверху, card снизу ──
+function stackCol(day, max, hostClass) {
+  const col = document.createElement("div");
+  col.className = "col";
+  if (day.tips > 0) {
+    col.style.height = Math.max(day.tips / max * 100, 4) + "%";
+    const total = (day.cash || 0) + (day.card || 0) || day.tips;
+    const cash = document.createElement("div");
+    cash.className = "seg-cash";
+    cash.style.height = ((day.cash || 0) / total * 100) + "%";
+    const card = document.createElement("div");
+    card.className = "seg-card";
+    card.style.height = ((day.card != null ? day.card : total) / total * 100) + "%";
+    col.appendChild(cash); col.appendChild(card);
+  }
+  return col;
+}
+
 function render(s) {
   lastStats = s;
-  botUsername = s.bot_username || botUsername;
   const now = new Date();
   document.getElementById("head").textContent =
     MONTHS_UP[now.getMonth()] + " · " + shiftsWord(s.shifts_count);
-
   document.getElementById("today").textContent = rub(s.today_net) + " ₽";
-  document.getElementById("today-sub").textContent =
-    s.today_income > 0 || s.today_spent > 0
-      ? "Заработал " + rub(s.today_income) + " − потратил " + rub(s.today_spent)
-      : "Сегодня записей пока нет";
-
   document.getElementById("week").textContent = rub(s.week_net);
   document.getElementById("month").textContent = rub(s.month_net);
   document.getElementById("total").textContent = rub(s.total_net);
@@ -221,150 +229,44 @@ function render(s) {
   } else {
     plan.style.display = "none";
   }
-
-  const cal = document.getElementById("cal");
-  const wrap = document.getElementById("chart-wrap");
-  cal.innerHTML = "";
-  wrap.querySelectorAll(".avg-line, .avg-lbl").forEach(function(el) { el.remove(); });
-  const vals = s.month_days.map(function(d) { return d.tips; });
-  const vmax = Math.max.apply(null, vals.concat([1]));
-  const LBL_SPACE = 18;
-  s.month_days.forEach(function(d) {
-    const el = document.createElement("div");
-    if (d.tips > 0) {
-      const h = Math.max(d.tips / vmax * (100 - LBL_SPACE / 84 * 100), 6);
-      el.style.height = h + "%";
-      const isRec = s.record && d.day === s.record.day && d.tips === s.record.tips;
-      if (isRec) {
-        el.className = "rec";
-        const lbl = document.createElement("span");
-        lbl.className = "rec-lbl";
-        lbl.textContent = rub(d.tips);
-        el.appendChild(lbl);
-      }
-    }
-    cal.appendChild(el);
-  });
-  if (s.avg_shift_tips && vmax > 0) {
-    const frac = s.avg_shift_tips / vmax * (1 - LBL_SPACE / 84);
-    const top = (1 - frac) * 100;
-    const line = document.createElement("div");
-    line.className = "avg-line";
-    line.style.top = top + "%";
-    const lbl = document.createElement("span");
-    lbl.className = "avg-lbl";
-    lbl.style.top = "calc(" + top + "% - 16px)";
-    lbl.textContent = "в среднем " + rub(s.avg_shift_tips);
-    wrap.appendChild(line);
-    wrap.appendChild(lbl);
-  }
-  const axis = document.getElementById("axis");
-  axis.innerHTML = '<span class="a-left">1 ' + MONTHS_GEN[now.getMonth()] + "</span>" +
-    '<span class="a-right">' + s.days_in_month + "</span>";
-  if (s.today_day > 3 && s.today_day < s.days_in_month - 2) {
-    const t = document.createElement("span");
-    t.className = "a-today";
-    t.style.left = ((s.today_day - 0.5) / s.days_in_month * 100) + "%";
-    t.textContent = "сегодня";
-    axis.appendChild(t);
-  }
-
-  const wd = document.getElementById("wd");
-  wd.innerHTML = "";
-  const wmax = Math.max.apply(null, s.weekday_avg_tips.concat([1]));
-  s.weekday_avg_tips.forEach(function(v) {
-    const el = document.createElement("div");
-    el.style.height = Math.max(Math.round(v / wmax * 100), v > 0 ? 8 : 3) + "%";
-    if (v === wmax && v > 0) el.className = "top";
-    wd.appendChild(el);
-  });
-  document.getElementById("wd-sub").textContent =
-    s.best_weekday ? WD_FULL[s.best_weekday] + " — топ" : "Пока мало данных";
-
-  const strip = document.getElementById("strip");
-  strip.innerHTML = "";
-  const ts = s.tips_split;
-  if (ts && ts.cash_pct != null) {
-    const c1 = document.createElement("div");
-    c1.className = "c1";
-    c1.style.width = Math.max(ts.cash_pct, 2) + "%";
-    const c2 = document.createElement("div");
-    c2.className = "c2";
-    c2.style.width = Math.max(100 - ts.cash_pct, 2) + "%";
-    strip.appendChild(c1); strip.appendChild(c2);
-    document.getElementById("strip-sub").textContent = ts.cash_pct + "% наличкой";
-  } else {
-    document.getElementById("strip-sub").textContent = "Пока нет чаевых";
-  }
-
-  document.getElementById("avg-pct").textContent =
-    s.avg_tip_pct != null ? String(s.avg_tip_pct).replace(".", ",") + "%" : "—";
-  document.getElementById("pct-tag").textContent =
-    s.avg_tip_pct_delta != null
-      ? ((s.avg_tip_pct_delta >= 0 ? "▲ " : "▼ ") + String(Math.abs(s.avg_tip_pct_delta)).replace(".", ","))
-      : "";
-  document.getElementById("shift-spend").textContent =
-    s.shift_spend_month > 0 ? "−" + rub(s.shift_spend_month) : "0";
-  document.getElementById("spend-tag").textContent =
-    s.shift_spend_pct != null && s.shift_spend_pct > 0 ? s.shift_spend_pct + "% чая" : "";
-
-  const a = s.achievements;
-  document.getElementById("ach-lbl").textContent =
-    "Кит ×" + a.whale + " · Щедрость ×" + a.generous + " · Серия";
-  document.getElementById("ach-val").textContent = a.streak;
 }
 
-function load() {
-  fetch("/api/stats?t=" + Date.now(), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    cache: "no-store",
-    body: JSON.stringify({ initData: tg ? tg.initData : "" }),
-  })
-    .then(function(r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-    .then(function(s) {
-      document.getElementById("err").style.display = "none";
-      render(s);
-    })
-    .catch(function(e) {
-      const el = document.getElementById("err");
-      el.style.display = "block";
-      el.textContent = "Не смог загрузить данные. Открой мини-ап из чата с ботом. (" + e.message + ")";
-      document.getElementById("head").textContent = "Мой Бюджет";
-      document.getElementById("today-sub").textContent = "";
-    });
-}
+// ── достижения (Duolingo-стиль: эмблема, за что, градация) ──
+const TIER_NAME = ["", "Бронза", "Серебро", "Золото"];
+const TIER_COLOR = ["#3a5a6e", "#cd7f32", "#cfd4d8", "#f0c14b"];
+const ACH_DEFS = [
+  { emoji: "🐋", name: "Кит", desc: "Чек стола 10 000+", tiers: [1, 3, 6], pre: "×", get: (a) => a.whale },
+  { emoji: "💎", name: "Щедрость", desc: "Чай 15%+ за стол", tiers: [1, 5, 12], pre: "×", get: (a) => a.generous },
+  { emoji: "🔥", name: "Серия", desc: "Смены в плюс подряд", tiers: [3, 5, 10], pre: "", get: (a) => a.streak },
+  { emoji: "🏃", name: "Марафонец", desc: "Смен за месяц", tiers: [5, 12, 20], pre: "×", get: (a, s) => s.shifts_count },
+];
+function tierOf(v, t) { return v >= t[2] ? 3 : v >= t[1] ? 2 : v >= t[0] ? 1 : 0; }
 
-document.getElementById("close-shift").onclick = function() {
-  if (tg && botUsername) {
-    tg.openTelegramLink("https://t.me/" + botUsername + "?start=close_shift");
-    tg.close();
-  } else if (tg && tg.sendData) {
-    tg.sendData("close_shift");
-  }
-};
-
-const TITLES = {
-  "Пн": "Гроза понедельников",
-  "Вт": "Мастер вторников",
-  "Ср": "Хозяин среды",
-  "Чт": "Гроза четвергов",
-  "Пт": "Гроза пятниц",
-  "Сб": "Царь субботы",
-  "Вс": "Король воскресений",
-};
-
-function titleFor(s) {
-  if (s.shifts_count <= 0) return "Месяц только начался";
-  if (s.best_weekday && s.shifts_count >= 3) return TITLES[s.best_weekday] || "Восходящая звезда";
-  return "Восходящая звезда";
+function renderAchievements(s) {
+  const grid = document.getElementById("ach-grid");
+  grid.innerHTML = "";
+  ACH_DEFS.forEach(function (d) {
+    const v = d.get(s.achievements, s);
+    const lvl = tierOf(v, d.tiers);
+    const card = document.createElement("div");
+    card.className = "ach-card" + (lvl === 0 ? " locked" : "");
+    const badge = lvl > 0
+      ? d.pre + v + " · " + TIER_NAME[lvl]
+      : v + " / " + d.tiers[0] + " до бронзы";
+    card.innerHTML =
+      '<div class="ach-emblem" style="border-color:' + TIER_COLOR[lvl] +
+      '; background:' + TIER_COLOR[lvl] + '22">' + d.emoji + '</div>' +
+      '<div class="ach-name">' + d.name + '</div>' +
+      '<div class="ach-desc">' + d.desc + '</div>' +
+      '<div class="ach-badge" style="color:' + (lvl > 0 ? TIER_COLOR[lvl] : "#9db8c9") + '">' + badge + '</div>';
+    grid.appendChild(card);
+  });
 }
 
 function renderPoster(s) {
   if (!s) return;
   const now = new Date();
-  document.getElementById("pt-head").textContent =
-    "Чек · " + MONTHS_UP[now.getMonth()] + " " + now.getFullYear();
+  document.getElementById("pt-head").textContent = MONTHS_UP[now.getMonth()] + " " + now.getFullYear();
   document.getElementById("pt-hero").textContent = rub(s.month_net) + " ₽";
   document.getElementById("pt-shifts").textContent = s.shifts_count;
   document.getElementById("pt-pct").textContent =
@@ -377,56 +279,142 @@ function renderPoster(s) {
     document.getElementById("pt-rec-lbl").textContent = "Рекорд смены";
     document.getElementById("pt-rec").textContent = "—";
   }
+  document.getElementById("pt-spend").textContent =
+    s.shift_spend_month > 0 ? "−" + rub(s.shift_spend_month) : "0";
 
+  // Календарь смен, стек нал/карта
   const cal = document.getElementById("pt-cal");
   cal.innerHTML = "";
-  const vals = s.month_days.map(function(d) { return d.tips; });
-  const vmax = Math.max.apply(null, vals.concat([1]));
-  const avg = s.avg_shift_tips || 0;
-  s.month_days.forEach(function(d) {
-    const el = document.createElement("div");
-    if (d.tips > 0) {
-      el.style.height = Math.max(Math.round(d.tips / vmax * 100), 8) + "%";
-      const isRec = s.record && d.day === s.record.day && d.tips === s.record.tips;
-      el.className = isRec ? "r" : (d.tips >= avg ? "m" : "b");
-    }
-    cal.appendChild(el);
-  });
+  const vmax = Math.max.apply(null, s.month_days.map(function (d) { return d.tips; }).concat([1]));
+  s.month_days.forEach(function (d) { cal.appendChild(stackCol(d, vmax)); });
+  document.getElementById("pt-axis").innerHTML =
+    '<span class="l">1 ' + MONTHS_GEN[now.getMonth()] + '</span><span class="rt">' + s.days_in_month + '</span>';
 
-  document.getElementById("pt-title").textContent = titleFor(s);
-  document.getElementById("pt-foot").textContent =
-    "Мой Бюджет · " + MONTHS_UP[now.getMonth()].toLowerCase() + " " + now.getFullYear();
+  // Дни недели, стек нал/карта
+  const wd = document.getElementById("pt-wd");
+  wd.innerHTML = "";
+  const split = s.weekday_split || [];
+  const wmax = Math.max.apply(null, split.map(function (x) { return (x.cash || 0) + (x.card || 0); }).concat([1]));
+  split.forEach(function (x) {
+    const total = (x.cash || 0) + (x.card || 0);
+    wd.appendChild(stackCol({ tips: total, cash: x.cash, card: x.card }, wmax));
+  });
+  document.getElementById("pt-wd-labels").innerHTML =
+    WD.map(function (d) { return "<span>" + d + "</span>"; }).join("");
+
+  renderAchievements(s);
 }
 
-document.getElementById("open-poster").onclick = function() {
+// ── загрузка статистики ──
+function applyStats(s) {
+  document.getElementById("err").style.display = "none";
+  render(s);
+  if (document.getElementById("poster").classList.contains("on")) renderPoster(s);
+}
+function load() {
+  fetch("/api/stats?t=" + Date.now(), {
+    method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+    body: JSON.stringify({ initData: tg ? tg.initData : "" }),
+  })
+    .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(applyStats)
+    .catch(function (e) {
+      const el = document.getElementById("err");
+      el.style.display = "block";
+      el.textContent = "Не смог загрузить данные. Открой мини-ап из чата с ботом. (" + e.message + ")";
+      document.getElementById("head").textContent = "Мой Бюджет";
+    });
+}
+
+// ── панель трат за смену ──
+const SPEND_CATS = ["Мойка", "Бар", "Еда", "Такси", "Своя"];
+let spendCat = null;
+
+function buildChips() {
+  const box = document.getElementById("spend-chips");
+  box.innerHTML = "";
+  SPEND_CATS.forEach(function (c) {
+    const b = document.createElement("button");
+    b.className = "chip";
+    b.textContent = c === "Своя" ? "+ Своя" : c;
+    b.onclick = function () {
+      spendCat = c;
+      [...box.children].forEach(function (x) { x.classList.remove("sel"); });
+      b.classList.add("sel");
+      document.getElementById("spend-inputs").classList.add("on");
+      const name = document.getElementById("spend-name");
+      name.style.display = c === "Своя" ? "block" : "none";
+      document.getElementById("spend-note").textContent = "";
+      (c === "Своя" ? name : document.getElementById("spend-amount")).focus();
+    };
+    box.appendChild(b);
+  });
+}
+function openSpend() {
+  spendCat = null;
+  buildChips();
+  document.getElementById("spend-inputs").classList.remove("on");
+  document.getElementById("spend-amount").value = "";
+  document.getElementById("spend-name").value = "";
+  document.getElementById("spend-note").textContent = "";
+  document.getElementById("spend").classList.add("on");
+}
+function submitSpend() {
+  const amount = parseFloat(document.getElementById("spend-amount").value);
+  if (!amount || amount <= 0) {
+    document.getElementById("spend-note").textContent = "Введи сумму.";
+    return;
+  }
+  let category = spendCat;
+  if (spendCat === "Своя") category = document.getElementById("spend-name").value.trim() || "Прочее";
+  document.getElementById("spend-note").textContent = "Записываю…";
+  fetch("/api/shift_spend", {
+    method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+    body: JSON.stringify({ initData: tg ? tg.initData : "", category: category, amount: amount }),
+  })
+    .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(function (s) {
+      applyStats(s);
+      document.getElementById("spend-note").textContent = "➖ " + category + " " + rub(amount) + " ₽ записал";
+      document.getElementById("spend-amount").value = "";
+      document.getElementById("spend-name").value = "";
+    })
+    .catch(function (e) { document.getElementById("spend-note").textContent = "Не вышло записать (" + e.message + ")"; });
+}
+
+document.getElementById("open-spend").onclick = openSpend;
+document.getElementById("spend-submit").onclick = submitSpend;
+document.getElementById("spend-amount").addEventListener("keydown", function (e) { if (e.key === "Enter") submitSpend(); });
+document.getElementById("spend-close").onclick = function () { document.getElementById("spend").classList.remove("on"); };
+document.getElementById("spend").addEventListener("click", function (e) {
+  if (e.target.id === "spend") this.classList.remove("on");
+});
+
+document.getElementById("open-poster").onclick = function () {
   renderPoster(lastStats);
   document.getElementById("poster").classList.add("on");
   window.scrollTo(0, 0);
 };
-document.getElementById("close-poster").onclick = function() {
+document.getElementById("close-poster").onclick = function () {
   document.getElementById("poster").classList.remove("on");
 };
 
-// ─── анимированный mesh-градиент «Bloom Field» (21st.dev) ───
-(function() {
+// ── анимированный mesh-градиент «Bloom Field» (21st.dev) ──
+(function () {
   const bgEl = document.getElementById("bg");
   if (!bgEl) return;
   const NOISE = "url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.305'/></svg>\")";
-
-  // Статичная пофаза каждого блоба — хэш сида, считается ОДИН раз (не в кадре).
   function phase(n) { const x = Math.sin(n) * 43758.5453; return (x - Math.floor(x)) * Math.PI * 2; }
   const SEED = 1;
-  // peak — пиковая непрозрачность блоба: держим фон очень бледным.
   const blobs = [
-    { rgb: "230,176,147", x: 68.1, y: 46.03, r: 41.1, peak: 0.30 },   // Apricot
-    { rgb: "163,206,255", x: 25.17, y: 75.99, r: 44.6, peak: 0.30 },  // Sky blue
-    { rgb: "250,249,239", x: 53.11, y: 12.71, r: 66.65, peak: 0.50 }, // Paper
-  ].map(function(b, i) {
+    { rgb: "230,176,147", x: 68.1, y: 46.03, r: 41.1, peak: 0.30 },
+    { rgb: "163,206,255", x: 25.17, y: 75.99, r: 44.6, peak: 0.30 },
+    { rgb: "250,249,239", x: 53.11, y: 12.71, r: 66.65, peak: 0.50 },
+  ].map(function (b, i) {
     b.p1 = phase(SEED * 12.9898 + i * 78.233);
     b.p2 = phase(SEED * 39.346 + i * 11.135);
     return b;
   });
-
   function rg(b, cx, cy) {
     const a = b.peak;
     return "radial-gradient(circle at " + cx + "% " + cy + "%, " +
@@ -436,32 +424,24 @@ document.getElementById("close-poster").onclick = function() {
       "rgba(" + b.rgb + "," + (a * 0.156) + ") " + (b.r * 0.75) + "%, " +
       "rgba(" + b.rgb + ",0) " + b.r + "%)";
   }
-
   function paint(ph) {
     const amt = 0.72;
-    const layers = blobs.map(function(b) {
+    const layers = blobs.map(function (b) {
       const cx = b.x + (Math.sin(ph * 0.55 + b.p1) - Math.sin(b.p1)) * 14 * amt;
       const cy = b.y + (Math.sin(ph * 0.43 + b.p2) - Math.sin(b.p2)) * 14 * amt;
       return rg(b, cx, cy);
     });
     bgEl.style.backgroundImage = NOISE + "," + layers.join(",");
   }
-
   const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (reduce) { paint(0); return; }
-
   const start = performance.now();
-  (function frame(now) {
-    paint((now - start) / 1000 * 0.86);
-    requestAnimationFrame(frame);
-  })(start);
+  (function frame(now) { paint((now - start) / 1000 * 0.86); requestAnimationFrame(frame); })(start);
 })();
 
 load();
 setInterval(load, 60000);
-document.addEventListener("visibilitychange", function() {
-  if (!document.hidden) load();
-});
+document.addEventListener("visibilitychange", function () { if (!document.hidden) load(); });
 </script>
 </body>
 </html>
