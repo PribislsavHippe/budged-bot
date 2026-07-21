@@ -7,7 +7,7 @@
 <title>Мой Бюджет</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&family=Inter:wght@400;500;600;800&display=swap">
 <style>
   :root {
     --ink: #111111;
@@ -16,9 +16,10 @@
     --track: #ececec;
     --deep: #003049;
     --steel: #669bbc;
-    --cash: #b9d2e4;   /* наличка — светлее */
+    --cash: #a7c6dc;   /* наличка — светлее */
     --card: #4f89ab;   /* карта — насыщеннее */
     --paper: #ffffff;
+    --font-accent: 'Dancing Script', 'Inter', cursive;  /* плейсхолдер Momo Signature */
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html { background: #ffffff; }
@@ -36,7 +37,7 @@
   }
   .head { font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 24px; }
   .hero-label { font-size: 13px; color: var(--ink-soft); }
-  .hero { font-size: 44px; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 20px; }
+  .hero { font-family: var(--font-accent); font-size: 60px; font-weight: 700; line-height: 1; margin-bottom: 20px; }
   @keyframes blurIn { from { filter: blur(12px); opacity: 0; } to { filter: blur(0); opacity: 1; } }
   .hero.blur-in { animation: blurIn 0.85s cubic-bezier(0.2, 0.6, 0.2, 1); }
   .r { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
@@ -94,40 +95,41 @@
   .hist-empty { font-size: 14px; color: var(--ink-soft); padding: 20px 2px; }
 
   /* ── «Итоги месяца» (тёмный экран) ── */
-  #poster { position: fixed; inset: 0; background: var(--deep); color: #fff; z-index: 100; display: none; overflow-y: auto; }
+  #poster { position: fixed; inset: 0; background: #fff; color: var(--ink); z-index: 100; display: none; overflow-y: auto; }
   #poster.on { display: block; }
-  .poster-inner { max-width: 480px; margin: 0 auto; padding: 30px 24px 34px; }
-  .pt-head { font-size: 12px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--steel); margin-bottom: 22px; }
-  .pt-lbl { font-size: 15px; color: #9db8c9; margin-bottom: 2px; }
-  .pt-hero { font-size: 50px; font-weight: 800; letter-spacing: -0.03em; line-height: 1; margin-bottom: 22px; }
-  .pt-r { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
-  .pt-r .l { font-size: 14px; color: #9db8c9; white-space: nowrap; }
-  .pt-r .v { font-size: 15px; font-weight: 600; white-space: nowrap; margin-left: auto; }
-  .pt-r .v.pink { color: #ffbac8; }
-  .pt-chart-title { font-size: 13px; font-weight: 600; margin: 26px 0 10px; }
-  .pt-cal { display: flex; align-items: flex-end; gap: 2px; height: 72px; }
+  #pt-bg { position: fixed; inset: 0; z-index: 0; background-color: #fff; background-blend-mode: overlay, normal, normal, normal; background-size: 120px 120px, auto, auto, auto; pointer-events: none; }
+  .poster-inner { position: relative; z-index: 1; max-width: 480px; margin: 0 auto; padding: 24px 22px 40px; }
+  .pt-back-top { display: inline-flex; align-items: center; gap: 6px; background: none; border: none; font-family: inherit; font-size: 15px; font-weight: 600; color: var(--ink); cursor: pointer; padding: 0; margin-bottom: 22px; }
+  .pt-head { font-size: 12px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 6px; }
+  .pt-lbl { font-size: 15px; color: var(--ink-soft); margin-bottom: 2px; }
+  .pt-hero { font-family: var(--font-accent); font-size: 64px; font-weight: 700; line-height: 1; margin-bottom: 6px; }
+  .pt-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 18px 0 8px; }
+  .pt-tile { background: rgba(255,255,255,0.38); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-radius: 16px; padding: 16px 18px; }
+  .pt-tile .t-lbl { font-size: 13px; color: var(--ink-soft); margin-bottom: 6px; }
+  .pt-tile .t-val { font-family: var(--font-accent); font-size: 34px; font-weight: 700; line-height: 1; }
+  .pt-chart-title { font-size: 14px; font-weight: 600; margin: 26px 0 12px; }
+  .pt-cal { display: flex; align-items: flex-end; gap: 2px; height: 80px; }
   .pt-cal .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; }
-  .pt-wd { display: flex; align-items: flex-end; gap: 5px; height: 56px; }
+  .pt-wd { display: flex; align-items: flex-end; gap: 5px; height: 60px; }
   .pt-wd .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; }
   .seg-cash { background: var(--cash); }
   .seg-card { background: var(--card); }
-  .pt-axis { position: relative; font-size: 11px; color: #5a7f95; margin-top: 5px; height: 14px; }
+  .pt-axis { position: relative; font-size: 11px; color: var(--ink-soft); margin-top: 5px; height: 14px; }
   .pt-axis .l { position: absolute; left: 0; }
   .pt-axis .rt { position: absolute; right: 0; }
-  .pt-wd-labels { display: flex; gap: 5px; font-size: 11px; color: #5a7f95; text-align: center; margin-top: 5px; }
+  .pt-wd-labels { display: flex; gap: 5px; font-size: 11px; color: var(--ink-soft); text-align: center; margin-top: 5px; }
   .pt-wd-labels span { flex: 1; }
-  .pt-legend { font-size: 12px; color: #9db8c9; margin-top: 12px; display: flex; gap: 16px; }
+  .pt-legend { font-size: 12px; color: var(--ink-soft); margin-top: 12px; display: flex; gap: 16px; }
   .pt-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
 
   /* ── достижения (в стиле Duolingo) ── */
   .ach-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  .ach-card { background: rgba(255,255,255,.06); border-radius: 14px; padding: 14px 12px; text-align: center; }
+  .ach-card { background: rgba(255,255,255,0.38); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-radius: 16px; padding: 16px 12px; text-align: center; }
   .ach-emblem { width: 52px; height: 52px; border-radius: 50%; margin: 0 auto 8px; display: flex; align-items: center; justify-content: center; font-size: 24px; border: 2px solid; }
   .ach-card.locked .ach-emblem { filter: grayscale(1); opacity: .45; }
-  .ach-name { font-size: 14px; font-weight: 700; }
-  .ach-desc { font-size: 11px; color: #9db8c9; margin: 2px 0 8px; line-height: 1.3; }
-  .ach-badge { font-size: 11px; font-weight: 700; letter-spacing: .02em; }
-  .pt-back { margin-top: 28px; }
+  .ach-name { font-size: 15px; font-weight: 700; }
+  .ach-desc { font-size: 11px; color: var(--ink-soft); margin: 2px 0 8px; line-height: 1.3; }
+  .ach-badge { font-size: 12px; font-weight: 700; letter-spacing: .02em; }
 </style>
 </head>
 <body>
@@ -184,15 +186,20 @@
 
   <!-- Итоги месяца -->
   <div id="poster">
+    <div id="pt-bg"></div>
     <div class="poster-inner">
+      <button class="pt-back-top" id="close-poster">← Назад</button>
+
       <p class="pt-head" id="pt-head">Июль 2026</p>
       <p class="pt-lbl">Чистыми за месяц</p>
       <p class="pt-hero" id="pt-hero">—</p>
 
-      <div class="pt-r"><span class="l">Смен</span><span class="v" id="pt-shifts">—</span></div>
-      <div class="pt-r"><span class="l">Средний чай</span><span class="v" id="pt-pct">—</span></div>
-      <div class="pt-r"><span class="l" id="pt-rec-lbl">Рекорд смены</span><span class="v pink" id="pt-rec">—</span></div>
-      <div class="pt-r"><span class="l">Траты смен</span><span class="v" id="pt-spend">—</span></div>
+      <div class="pt-stats">
+        <div class="pt-tile"><div class="t-lbl">Смен</div><div class="t-val" id="pt-shifts">—</div></div>
+        <div class="pt-tile"><div class="t-lbl">Средний чай</div><div class="t-val" id="pt-pct">—</div></div>
+        <div class="pt-tile"><div class="t-lbl" id="pt-rec-lbl">Рекорд смены</div><div class="t-val" id="pt-rec">—</div></div>
+        <div class="pt-tile"><div class="t-lbl">Траты смен</div><div class="t-val" id="pt-spend">—</div></div>
+      </div>
 
       <p class="pt-chart-title">Чай за смену</p>
       <div class="pt-cal" id="pt-cal"></div>
@@ -206,8 +213,6 @@
 
       <p class="pt-chart-title">Достижения</p>
       <div class="ach-grid" id="ach-grid"></div>
-
-      <button class="btn btn-ghost pt-back" id="close-poster" style="border-color:var(--steel); color:var(--steel);">← Назад</button>
     </div>
   </div>
 
@@ -281,7 +286,7 @@ function render(s) {
 
 // ── достижения (Duolingo-стиль: эмблема, за что, градация) ──
 const TIER_NAME = ["", "Бронза", "Серебро", "Золото"];
-const TIER_COLOR = ["#3a5a6e", "#cd7f32", "#cfd4d8", "#f0c14b"];
+const TIER_COLOR = ["#9a9a9a", "#b06a2a", "#8a9299", "#c99a1e"];
 const ACH_DEFS = [
   { emoji: "🐋", name: "Кит", desc: "Чек стола 10 000+", tiers: [1, 3, 6], pre: "×", get: (a) => a.whale },
   { emoji: "💎", name: "Щедрость", desc: "Чай 15%+ за стол", tiers: [1, 5, 12], pre: "×", get: (a) => a.generous },
@@ -306,7 +311,7 @@ function renderAchievements(s) {
       '; background:' + TIER_COLOR[lvl] + '22">' + d.emoji + '</div>' +
       '<div class="ach-name">' + d.name + '</div>' +
       '<div class="ach-desc">' + d.desc + '</div>' +
-      '<div class="ach-badge" style="color:' + (lvl > 0 ? TIER_COLOR[lvl] : "#9db8c9") + '">' + badge + '</div>';
+      '<div class="ach-badge" style="color:' + (lvl > 0 ? TIER_COLOR[lvl] : "#6b6b6b") + '">' + badge + '</div>';
     grid.appendChild(card);
   });
 }
@@ -321,7 +326,7 @@ function renderPoster(s) {
     s.avg_tip_pct != null ? String(s.avg_tip_pct).replace(".", ",") + "%" : "—";
   if (s.record) {
     document.getElementById("pt-rec-lbl").textContent =
-      "Рекорд смены · " + s.record.weekday.toLowerCase() + " " + s.record.day;
+      "Рекорд · " + s.record.weekday.toLowerCase() + " " + s.record.day;
     document.getElementById("pt-rec").textContent = rub(s.record.tips);
   } else {
     document.getElementById("pt-rec-lbl").textContent = "Рекорд смены";
@@ -561,14 +566,15 @@ document.getElementById("hist-close").onclick = function () {
 // ── анимированный mesh-градиент «Bloom Field» (21st.dev) ──
 (function () {
   const bgEl = document.getElementById("bg");
+  const ptBg = document.getElementById("pt-bg");
   if (!bgEl) return;
   const NOISE = "url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.305'/></svg>\")";
   function phase(n) { const x = Math.sin(n) * 43758.5453; return (x - Math.floor(x)) * Math.PI * 2; }
   const SEED = 1;
   const blobs = [
-    { rgb: "230,176,147", x: 68.1, y: 46.03, r: 41.1, peak: 0.30 },
-    { rgb: "163,206,255", x: 25.17, y: 75.99, r: 44.6, peak: 0.30 },
-    { rgb: "250,249,239", x: 53.11, y: 12.71, r: 66.65, peak: 0.50 },
+    { rgb: "230,176,147", x: 68.1, y: 46.03, r: 41.1, peak: 0.44 },
+    { rgb: "163,206,255", x: 25.17, y: 75.99, r: 44.6, peak: 0.44 },
+    { rgb: "250,249,239", x: 53.11, y: 12.71, r: 66.65, peak: 0.58 },
   ].map(function (b, i) {
     b.p1 = phase(SEED * 12.9898 + i * 78.233);
     b.p2 = phase(SEED * 39.346 + i * 11.135);
@@ -590,7 +596,9 @@ document.getElementById("hist-close").onclick = function () {
       const cy = b.y + (Math.sin(ph * 0.43 + b.p2) - Math.sin(b.p2)) * 14 * amt;
       return rg(b, cx, cy);
     });
-    bgEl.style.backgroundImage = NOISE + "," + layers.join(",");
+    const img = NOISE + "," + layers.join(",");
+    bgEl.style.backgroundImage = img;
+    if (ptBg) ptBg.style.backgroundImage = img;
   }
   const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (reduce) { paint(0); return; }
