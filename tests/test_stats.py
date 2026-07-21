@@ -145,6 +145,57 @@ def test_tip_pct_daily():
     ]
 
 
+def test_month_days_calendar():
+    entries = [
+        e(1, "income", 1000),
+        e(18, "income", 4120),
+        e(20, "income", 1660),
+    ]
+    s = compute_stats(entries, today=TODAY)
+    assert len(s["month_days"]) == 31
+    assert s["month_days"][0] == {"day": 1, "tips": 1000}
+    assert s["month_days"][1] == {"day": 2, "tips": 0}
+    assert s["month_days"][17] == {"day": 18, "tips": 4120}
+    assert s["today_day"] == 20
+    assert s["avg_shift_tips"] == round((1000 + 4120 + 1660) / 3)
+    assert s["record"] == {"day": 18, "tips": 4120, "weekday": "Сб"}
+
+
+def test_avg_pct_delta():
+    entries = [
+        e(18, "income", 500, pct=9.0),
+        {"kind": "income", "account": "card", "signed_amount": 400, "category": "Чаевые",
+         "order_amount": None, "tip_percent": 7.0, "created_at": "2026-06-15T18:00:00+03:00"},
+    ]
+    s = compute_stats(entries, today=TODAY)
+    assert s["avg_tip_pct"] == 9.0
+    assert s["avg_tip_pct_delta"] == 2.0
+
+
+def test_shift_spend():
+    entries = [
+        e(18, "income", 10000),
+        {"kind": "expense", "account": "cash", "signed_amount": -600, "category": "Бар",
+         "note": "трата смены", "created_at": "2026-07-18T23:00:00+03:00"},
+        {"kind": "expense", "account": "card", "signed_amount": -500, "category": "Еда",
+         "note": None, "created_at": "2026-07-18T23:00:00+03:00"},
+    ]
+    s = compute_stats(entries, today=TODAY)
+    assert s["shift_spend_month"] == 600
+    assert s["shift_spend_pct"] == 6
+    assert s["month_tips"] == 10000
+
+
+def test_best_weekday():
+    entries = [
+        e(17, "income", 5000),  # пт
+        e(13, "income", 1000),  # пн
+    ]
+    s = compute_stats(entries, today=TODAY)
+    assert s["best_weekday"] == "Пт"
+    assert compute_stats([], today=TODAY)["best_weekday"] is None
+
+
 def test_heatmap():
     entries = [e(20, "income", 1500)]
     s = compute_stats(entries, today=TODAY)

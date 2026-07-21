@@ -4,20 +4,22 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <meta http-equiv="Cache-Control" content="no-store">
-<title>Статистика</title>
+<title>Мой Бюджет</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;800&display=swap">
 <style>
   :root {
-    --molten-lava: #780000;
-    --brick-red: #c1121f;
+    --lava: #780000;
+    --brick: #c1121f;
     --paper: #fffdf8;
-    --deep-space-blue: #003049;
-    --steel-blue: #669bbc;
-    --line: #111111;
+    --deep: #003049;
+    --steel: #669bbc;
     --ink: #111111;
     --ink-soft: #6b6b6b;
+    --ink-faint: #b9b2a0;
+    --dots: #c9c2ae;
+    --sand: #d8d2c2;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -25,115 +27,104 @@
     background: var(--paper);
     color: var(--ink);
     font-variant-numeric: tabular-nums;
-    padding: 24px 20px 40px;
+    padding: 26px 22px 40px;
     max-width: 480px;
     margin: 0 auto;
   }
-  .date { font-size: 12px; font-weight: 600; color: var(--ink-soft); letter-spacing: .08em; text-transform: uppercase; margin-bottom: 24px; }
-  .label { font-size: 13px; font-weight: 500; }
-  .hero { font-size: 46px; font-weight: 800; letter-spacing: -0.02em; color: var(--brick-red); line-height: 1.1; }
-  .hero.minus { color: var(--molten-lava); }
-  .sub { font-size: 13px; color: var(--ink-soft); margin-bottom: 20px; }
-  .row { border-top: 1px solid var(--line); padding: 14px 0; display: flex; justify-content: space-between; align-items: baseline; }
-  .row:last-of-type { border-bottom: 1px solid var(--line); }
-  .row b { font-size: 20px; font-weight: 600; }
-  .plan { margin: 20px 0 24px; }
-  .plan-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
-  .plan-edit { font-size: 13px; font-weight: 600; color: var(--brick-red); border-bottom: 2px solid var(--brick-red); cursor: pointer; }
-  .bar { height: 6px; background: #efe8d8; border-radius: 3px; overflow: hidden; }
-  .bar div { height: 100%; background: var(--brick-red); width: 0; }
-  .plan-sub { font-size: 12px; color: var(--ink-soft); margin-top: 6px; }
-  .btn { display: block; width: 100%; text-align: center; padding: 14px; border-radius: 10px; font-size: 14px; font-weight: 600; border: none; cursor: pointer; font-family: inherit; }
-  .btn-red { background: var(--brick-red); color: var(--paper); margin-bottom: 10px; }
-  .btn-red:active { background: var(--molten-lava); }
-  .btn-outline { background: transparent; border: 1.5px solid var(--ink); color: var(--ink); }
-  h2 { font-size: 12px; font-weight: 600; color: var(--ink-soft); letter-spacing: .08em; text-transform: uppercase; margin: 36px 0 20px; }
-  .kpis { display: flex; gap: 24px; margin-bottom: 20px; }
-  .kpis p:first-child { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; }
-  .kpis .accent { color: var(--brick-red); }
-  .kpis p:last-child { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
-  .section-label { font-size: 13px; font-weight: 500; margin: 20px 0 8px; }
-  .bars { display: flex; align-items: flex-end; gap: 4px; height: 64px; }
-  .bars div { flex: 1; background: var(--steel-blue); }
-  .bars div.peak { background: var(--brick-red); }
-  .bar-labels { display: flex; gap: 4px; font-size: 11px; color: var(--ink-soft); text-align: center; margin: 4px 0 0; }
-  .bar-labels span { flex: 1; }
-  .split { display: flex; height: 14px; border-radius: 7px; overflow: hidden; margin-bottom: 6px; }
-  .split .cash { background: var(--steel-blue); }
-  .split .card { background: var(--deep-space-blue); }
-  .split-legend { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-soft); }
-  .split-legend b { color: var(--ink); font-weight: 600; }
-  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: 0; }
-  svg.chart { width: 100%; height: 96px; display: block; }
-  .chart-legend { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
-  .ach { border-top: 1px solid var(--line); padding: 10px 0; display: flex; justify-content: space-between; align-items: center; }
-  .ach:last-of-type { border-bottom: 1px solid var(--line); margin-bottom: 20px; }
-  .ach .name { font-size: 14px; font-weight: 600; }
-  .ach .desc { font-size: 12px; font-weight: 400; color: var(--ink-soft); }
-  .pill { font-size: 13px; font-weight: 600; background: var(--brick-red); color: var(--paper); padding: 2px 10px; border-radius: 20px; }
-  .pill.blue { background: var(--deep-space-blue); }
-  .pill.mute { background: none; color: var(--ink-soft); }
-  .heatmap { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-bottom: 6px; }
-  .heatmap div { aspect-ratio: 1; border-radius: 2px; background: #f3ead2; }
-  .hint { font-size: 11px; color: var(--ink-soft); }
-  .empty { font-size: 12px; color: var(--ink-soft); padding: 8px 0; }
-  #err { font-size: 13px; color: var(--molten-lava); padding: 20px 0; display: none; }
+  .head { font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 20px; }
+  .hero-label { font-size: 13px; color: var(--ink-soft); }
+  .hero { font-size: 40px; font-weight: 800; letter-spacing: -0.02em; color: var(--brick); margin-bottom: 2px; }
+  .hero.minus { color: var(--lava); }
+  .hero-sub { font-size: 12px; color: var(--ink-soft); margin-bottom: 14px; }
+  .r { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+  .r .lbl { font-size: 14px; white-space: nowrap; }
+  .r .tag { font-size: 11px; font-weight: 600; color: var(--brick); white-space: nowrap; }
+  .r .tag.mute { color: var(--ink-soft); font-weight: 400; }
+  .r .dots { flex: 1; border-bottom: 1.5px dotted var(--dots); transform: translateY(-4px); }
+  .r .val { font-size: 15px; font-weight: 600; white-space: nowrap; }
+  .section { font-size: 13px; font-weight: 600; margin: 24px 0 2px; }
+  .section-sub { font-size: 12px; color: var(--ink-soft); margin-bottom: 12px; }
+  .chart-wrap { position: relative; height: 84px; }
+  .avg-line { position: absolute; left: 0; right: 0; border-top: 1.5px dashed var(--ink-faint); z-index: 1; }
+  .avg-lbl { position: absolute; right: 0; font-size: 10px; color: var(--ink-soft); background: var(--paper); padding-left: 4px; z-index: 2; }
+  .cal { display: flex; align-items: flex-end; gap: 2px; height: 100%; position: relative; z-index: 1; }
+  .cal div { flex: 1; border-radius: 1px; }
+  .cal .bar { background: var(--steel); }
+  .cal .rec { background: var(--brick); position: relative; }
+  .rec-lbl { position: absolute; top: -15px; left: 50%; transform: translateX(-50%); font-size: 10px; font-weight: 600; color: var(--brick); white-space: nowrap; }
+  .axis { position: relative; font-size: 11px; color: var(--ink-faint); margin-top: 4px; height: 14px; }
+  .axis .a-left { position: absolute; left: 0; }
+  .axis .a-right { position: absolute; right: 0; }
+  .axis .a-today { position: absolute; transform: translateX(-50%); color: var(--brick); font-weight: 600; }
+  .minis { display: flex; gap: 20px; margin: 22px 0; }
+  .minis > div { flex: 1; min-width: 0; }
+  .mini-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+  .wd { display: flex; align-items: flex-end; gap: 3px; height: 40px; }
+  .wd div { flex: 1; border-radius: 1px; background: var(--sand); }
+  .wd .mid { background: var(--steel); }
+  .wd .top { background: var(--brick); }
+  .strip { display: flex; height: 14px; border-radius: 7px; overflow: hidden; margin-top: 13px; }
+  .strip .c1 { background: var(--steel); }
+  .strip .c2 { background: var(--deep); }
+  .mini-sub { font-size: 11px; color: var(--ink-soft); margin-top: 4px; }
+  .plan { margin: 16px 0 0; }
+  .plan .bar-track { height: 4px; background: #efe8d8; border-radius: 2px; overflow: hidden; margin-top: 6px; }
+  .plan .bar-fill { height: 100%; background: var(--brick); width: 0; }
+  .btn { display: block; width: 100%; text-align: center; padding: 14px; border-radius: 10px; font-size: 14px; font-weight: 600; border: none; cursor: pointer; font-family: inherit; background: var(--brick); color: var(--paper); margin-top: 20px; }
+  .btn:active { background: var(--lava); }
+  .empty-note { font-size: 12px; color: var(--ink-soft); }
+  #err { font-size: 13px; color: var(--lava); padding: 16px 0; display: none; }
 </style>
 </head>
 <body>
-  <p class="date" id="date">—</p>
+  <p class="head" id="head">Загружаю…</p>
 
-  <p class="label">За сегодня</p>
-  <p class="hero" id="today">— ₽</p>
-  <p class="sub" id="today-sub">Загружаю…</p>
+  <p class="hero-label">За сегодня</p>
+  <p class="hero" id="today">—</p>
+  <p class="hero-sub" id="today-sub">&nbsp;</p>
 
-  <div class="row"><span class="label">За неделю</span><b id="week">—</b></div>
-  <div class="row"><span class="label">За месяц</span><b id="month">—</b></div>
-  <div class="row"><span class="label">Всего</span><b id="total">—</b></div>
+  <div class="r"><span class="lbl">Неделя</span><span class="dots"></span><span class="val" id="week">—</span></div>
+  <div class="r"><span class="lbl">Месяц</span><span class="tag" id="month-tag"></span><span class="dots"></span><span class="val" id="month">—</span></div>
+  <div class="r"><span class="lbl">Всего</span><span class="dots"></span><span class="val" id="total">—</span></div>
 
-  <div class="plan" id="plan-block" style="display:none">
-    <div class="plan-head">
-      <span class="label" id="plan-label">План смены</span>
-      <span class="plan-edit" id="plan-edit">Изменить</span>
+  <div class="plan" id="plan" style="display:none">
+    <div class="r" style="margin:0">
+      <span class="lbl" style="font-size:13px; color:var(--ink-soft)" id="plan-lbl">План смены</span>
+      <span class="dots"></span>
+      <span class="val" style="font-size:13px" id="plan-val"></span>
     </div>
-    <div class="bar"><div id="plan-bar"></div></div>
-    <p class="plan-sub" id="plan-sub"></p>
+    <div class="bar-track"><div class="bar-fill" id="plan-fill"></div></div>
   </div>
-
-  <button class="btn btn-red" id="close-shift" style="margin-top:20px">Внести траты смены</button>
-  <button class="btn btn-outline" id="to-stats">Статистика</button>
 
   <p id="err"></p>
 
-  <div id="stats">
-    <h2 id="stats-title">Статистика</h2>
-
-    <div class="kpis">
-      <div><p id="avg-pct">—</p><p>Средний чай</p></div>
-      <div><p id="shifts">—</p><p>Смен</p></div>
-      <div><p class="accent" id="vs-prev">—</p><p>К прошлому месяцу</p></div>
+  <p class="section" id="cal-title">Смены</p>
+  <p class="section-sub">Чай за смену по дням месяца</p>
+  <div id="cal-block">
+    <div class="chart-wrap" id="chart-wrap">
+      <div class="cal" id="cal"></div>
     </div>
-
-    <p class="section-label">Наличка и электронные чаевые</p>
-    <div id="split-wrap">
-      <div class="split" id="split"></div>
-      <div class="split-legend" id="split-legend"></div>
-    </div>
-
-    <p class="section-label">Процент от чека по дням</p>
-    <div id="pct-chart-wrap"></div>
-
-    <p class="section-label">Чай по дням недели</p>
-    <div class="bars" id="weekday-bars"></div>
-    <div class="bar-labels" id="weekday-labels"></div>
-
-    <p class="section-label">Достижения</p>
-    <div id="achievements"></div>
-
-    <p class="section-label">Рабочие дни, 4 недели</p>
-    <div class="heatmap" id="heatmap"></div>
-    <p class="hint">Темнее — больше чай за смену</p>
+    <div class="axis" id="axis"></div>
   </div>
+
+  <div class="minis">
+    <div>
+      <p class="mini-title">Дни недели</p>
+      <div class="wd" id="wd"></div>
+      <p class="mini-sub" id="wd-sub">&nbsp;</p>
+    </div>
+    <div>
+      <p class="mini-title">Чай: нал / карта</p>
+      <div id="strip-wrap"><div class="strip" id="strip"></div></div>
+      <p class="mini-sub" id="strip-sub">&nbsp;</p>
+    </div>
+  </div>
+
+  <div class="r"><span class="lbl">Средний чай</span><span class="tag" id="pct-tag"></span><span class="dots"></span><span class="val" id="avg-pct">—</span></div>
+  <div class="r"><span class="lbl">Траты смен</span><span class="tag mute" id="spend-tag"></span><span class="dots"></span><span class="val" id="shift-spend">—</span></div>
+  <div class="r"><span class="lbl" id="ach-lbl">Кит ×0 · Щедрость ×0 · Серия</span><span class="dots"></span><span class="val" id="ach-val">0</span></div>
+
+  <button class="btn" id="close-shift">Внести траты смены</button>
 
 <script>
 const tg = window.Telegram ? window.Telegram.WebApp : null;
@@ -141,146 +132,142 @@ if (tg) { tg.ready(); tg.expand(); }
 
 let botUsername = null;
 
-const MONTHS = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"];
-const DAYS = ["Вс","Пн","Вт","Ср","Чт","Пт","Сб"];
+const MONTHS_UP = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
+const MONTHS_GEN = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"];
 const WD = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
+const WD_FULL = { "Пн": "Понедельник", "Вт": "Вторник", "Ср": "Среда", "Чт": "Четверг", "Пт": "Пятница", "Сб": "Суббота", "Вс": "Воскресенье" };
 
-const now = new Date();
-document.getElementById("date").textContent =
-  DAYS[now.getDay()] + ", " + now.getDate() + " " + MONTHS[now.getMonth()];
+function rub(v) { return Math.round(v).toLocaleString("ru-RU"); }
 
-function rub(v) {
-  return Math.round(v).toLocaleString("ru-RU") + " ₽";
-}
-function ddmm(iso) {
-  return iso.slice(8, 10) + "." + iso.slice(5, 7);
+function shiftsWord(n) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return n + " смена";
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return n + " смены";
+  return n + " смен";
 }
 
 function render(s) {
   botUsername = s.bot_username || botUsername;
+  const now = new Date();
+  document.getElementById("head").textContent =
+    MONTHS_UP[now.getMonth()] + " · " + shiftsWord(s.shifts_count);
 
-  const today = document.getElementById("today");
-  today.textContent = rub(s.today_net);
-  today.classList.toggle("minus", s.today_net < 0);
+  const hero = document.getElementById("today");
+  hero.textContent = rub(s.today_net) + " ₽";
+  hero.classList.toggle("minus", s.today_net < 0);
   document.getElementById("today-sub").textContent =
-    "Заработал " + rub(s.today_income) + " − потратил " + rub(s.today_spent);
+    s.today_income > 0 || s.today_spent > 0
+      ? "Заработал " + rub(s.today_income) + " − потратил " + rub(s.today_spent)
+      : "Сегодня записей пока нет";
+
   document.getElementById("week").textContent = rub(s.week_net);
   document.getElementById("month").textContent = rub(s.month_net);
   document.getElementById("total").textContent = rub(s.total_net);
+  document.getElementById("month-tag").textContent =
+    s.vs_prev_month_pct != null ? ((s.vs_prev_month_pct >= 0 ? "▲ " : "▼ ") + Math.abs(s.vs_prev_month_pct) + "%") : "";
 
-  const planBlock = document.getElementById("plan-block");
+  const plan = document.getElementById("plan");
   if (s.shift_goal) {
-    planBlock.style.display = "block";
-    document.getElementById("plan-label").textContent = "План смены — " + rub(s.shift_goal);
-    document.getElementById("plan-bar").style.width = s.goal_pct + "%";
-    document.getElementById("plan-sub").textContent =
-      rub(s.today_income) + " из " + rub(s.shift_goal) + " · " + s.goal_pct + "%";
+    plan.style.display = "block";
+    document.getElementById("plan-lbl").textContent = "План смены — " + rub(s.shift_goal);
+    document.getElementById("plan-val").textContent = s.goal_pct + "%";
+    document.getElementById("plan-fill").style.width = s.goal_pct + "%";
   } else {
-    planBlock.style.display = "none";
+    plan.style.display = "none";
   }
 
-  document.getElementById("avg-pct").textContent = s.avg_tip_pct != null ? (s.avg_tip_pct + "%") : "—";
-  document.getElementById("shifts").textContent = s.shifts_count;
-  document.getElementById("vs-prev").textContent =
-    s.vs_prev_month_pct != null ? ((s.vs_prev_month_pct >= 0 ? "+" : "") + s.vs_prev_month_pct + "%") : "—";
+  document.getElementById("cal-title").textContent = "Смены — " + MONTHS_UP[now.getMonth()].toLowerCase();
+  const cal = document.getElementById("cal");
+  const wrap = document.getElementById("chart-wrap");
+  cal.innerHTML = "";
+  wrap.querySelectorAll(".avg-line, .avg-lbl").forEach(function(el) { el.remove(); });
+  const vals = s.month_days.map(function(d) { return d.tips; });
+  const vmax = Math.max.apply(null, vals.concat([1]));
+  const LBL_SPACE = 18;
+  s.month_days.forEach(function(d) {
+    const el = document.createElement("div");
+    if (d.tips > 0) {
+      const h = Math.max(d.tips / vmax * (100 - LBL_SPACE / 84 * 100), 6);
+      el.style.height = h + "%";
+      const isRec = s.record && d.day === s.record.day && d.tips === s.record.tips;
+      el.className = isRec ? "rec" : "bar";
+      if (isRec) {
+        const lbl = document.createElement("span");
+        lbl.className = "rec-lbl";
+        lbl.textContent = rub(d.tips);
+        el.appendChild(lbl);
+      }
+    }
+    cal.appendChild(el);
+  });
+  if (s.avg_shift_tips && vmax > 0) {
+    const frac = s.avg_shift_tips / vmax * (1 - LBL_SPACE / 84);
+    const top = (1 - frac) * 100;
+    const line = document.createElement("div");
+    line.className = "avg-line";
+    line.style.top = top + "%";
+    const lbl = document.createElement("span");
+    lbl.className = "avg-lbl";
+    lbl.style.top = "calc(" + top + "% - 16px)";
+    lbl.textContent = "в среднем " + rub(s.avg_shift_tips);
+    wrap.appendChild(line);
+    wrap.appendChild(lbl);
+  }
+  const axis = document.getElementById("axis");
+  axis.innerHTML = '<span class="a-left">1 ' + MONTHS_GEN[now.getMonth()] + "</span>" +
+    '<span class="a-right">' + s.days_in_month + "</span>";
+  if (s.today_day > 3 && s.today_day < s.days_in_month - 2) {
+    const t = document.createElement("span");
+    t.className = "a-today";
+    t.style.left = ((s.today_day - 0.5) / s.days_in_month * 100) + "%";
+    t.textContent = "сегодня";
+    axis.appendChild(t);
+  }
 
-  const split = document.getElementById("split");
-  const legend = document.getElementById("split-legend");
-  split.innerHTML = ""; legend.innerHTML = "";
+  const wd = document.getElementById("wd");
+  wd.innerHTML = "";
+  const wmax = Math.max.apply(null, s.weekday_avg_tips.concat([1]));
+  s.weekday_avg_tips.forEach(function(v) {
+    const el = document.createElement("div");
+    el.style.height = Math.max(Math.round(v / wmax * 100), v > 0 ? 8 : 3) + "%";
+    if (v === wmax && v > 0) el.className = "top";
+    else if (v >= wmax * 0.7 && v > 0) el.className = "mid";
+    wd.appendChild(el);
+  });
+  document.getElementById("wd-sub").textContent =
+    s.best_weekday ? WD_FULL[s.best_weekday] + " — топ" : "Пока мало данных";
+
+  const strip = document.getElementById("strip");
+  strip.innerHTML = "";
   const ts = s.tips_split;
   if (ts && ts.cash_pct != null) {
-    const cash = document.createElement("div");
-    cash.className = "cash";
-    cash.style.width = Math.max(ts.cash_pct, 2) + "%";
-    const card = document.createElement("div");
-    card.className = "card";
-    card.style.width = Math.max(100 - ts.cash_pct, 2) + "%";
-    split.appendChild(cash); split.appendChild(card);
-    legend.innerHTML =
-      '<span><span class="dot" style="background:var(--steel-blue)"></span>Наличкой <b>' +
-      ts.cash_pct + "%</b> · " + rub(ts.cash) + "</span>" +
-      '<span><span class="dot" style="background:var(--deep-space-blue)"></span>На карту <b>' +
-      (100 - ts.cash_pct) + "%</b> · " + rub(ts.card) + "</span>";
+    const c1 = document.createElement("div");
+    c1.className = "c1";
+    c1.style.width = Math.max(ts.cash_pct, 2) + "%";
+    const c2 = document.createElement("div");
+    c2.className = "c2";
+    c2.style.width = Math.max(100 - ts.cash_pct, 2) + "%";
+    strip.appendChild(c1); strip.appendChild(c2);
+    document.getElementById("strip-sub").textContent = ts.cash_pct + "% наличкой";
   } else {
-    legend.innerHTML = '<span class="empty">В этом месяце чаевых пока нет</span>';
+    document.getElementById("strip-sub").textContent = "Пока нет чаевых";
   }
 
-  const pctWrap = document.getElementById("pct-chart-wrap");
-  pctWrap.innerHTML = "";
-  const pts = s.tip_pct_daily || [];
-  if (pts.length >= 2) {
-    const W = 440, H = 96, PAD = 8;
-    const vals = pts.map(function(p) { return p.pct; });
-    const vmin = Math.min.apply(null, vals), vmax = Math.max.apply(null, vals);
-    const span = (vmax - vmin) || 1;
-    const x = function(i) { return PAD + i / (pts.length - 1) * (W - 2 * PAD); };
-    const y = function(v) { return H - PAD - (v - vmin) / span * (H - 2 * PAD - 14); };
-    let path = "";
-    pts.forEach(function(p, i) { path += (i ? " L" : "M") + x(i).toFixed(1) + " " + y(p.pct).toFixed(1); });
-    let dots = "";
-    pts.forEach(function(p, i) {
-      const peak = p.pct === vmax;
-      dots += '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(p.pct).toFixed(1) +
-        '" r="' + (peak ? 4 : 2.5) + '" fill="' + (peak ? "#c1121f" : "#669bbc") + '"/>';
-      if (peak) {
-        dots += '<text x="' + x(i).toFixed(1) + '" y="' + (y(p.pct) - 8).toFixed(1) +
-          '" text-anchor="middle" font-size="11" font-weight="600" fill="#c1121f">' + p.pct + "%</text>";
-      }
-    });
-    pctWrap.innerHTML =
-      '<svg class="chart" viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="none">' +
-      '<path d="' + path + '" fill="none" stroke="#669bbc" stroke-width="2"/>' + dots + "</svg>" +
-      '<div class="chart-legend"><span>' + ddmm(pts[0].date) + "</span><span>" +
-      ddmm(pts[pts.length - 1].date) + "</span></div>";
-  } else {
-    pctWrap.innerHTML = '<p class="empty">Пересылай уведомления банка — здесь появится динамика процента</p>';
-  }
-
-  const max = Math.max.apply(null, s.weekday_avg_tips.concat([1]));
-  const bars = document.getElementById("weekday-bars");
-  const labels = document.getElementById("weekday-labels");
-  bars.innerHTML = ""; labels.innerHTML = "";
-  s.weekday_avg_tips.forEach(function(v, i) {
-    const d = document.createElement("div");
-    d.style.height = Math.max(Math.round(v / max * 100), v > 0 ? 8 : 3) + "%";
-    if (v === max && v > 0) d.className = "peak";
-    bars.appendChild(d);
-    const l = document.createElement("span");
-    l.textContent = WD[i];
-    labels.appendChild(l);
-  });
+  document.getElementById("avg-pct").textContent =
+    s.avg_tip_pct != null ? String(s.avg_tip_pct).replace(".", ",") + "%" : "—";
+  document.getElementById("pct-tag").textContent =
+    s.avg_tip_pct_delta != null
+      ? ((s.avg_tip_pct_delta >= 0 ? "▲ " : "▼ ") + String(Math.abs(s.avg_tip_pct_delta)).replace(".", ","))
+      : "";
+  document.getElementById("shift-spend").textContent =
+    s.shift_spend_month > 0 ? "−" + rub(s.shift_spend_month) : "0";
+  document.getElementById("spend-tag").textContent =
+    s.shift_spend_pct != null && s.shift_spend_pct > 0 ? s.shift_spend_pct + "% чая" : "";
 
   const a = s.achievements;
-  const defs = [
-    ["Кит", "— чек от 10 000", "×" + a.whale, ""],
-    ["Щедрость", "— чай от 15%", "×" + a.generous, ""],
-    ["Серия", "— смены в плюс подряд", a.streak, "blue"],
-    ["Дно", "— чай меньше 500", "×" + a.bottom, "mute"],
-  ];
-  const wrap = document.getElementById("achievements");
-  wrap.innerHTML = "";
-  defs.forEach(function(d) {
-    const row = document.createElement("div");
-    row.className = "ach";
-    row.innerHTML = '<span class="name">' + d[0] +
-      ' <span class="desc">' + d[1] + '</span></span>' +
-      '<span class="pill ' + d[3] + '">' + d[2] + "</span>";
-    wrap.appendChild(row);
-  });
-
-  const hm = document.getElementById("heatmap");
-  hm.innerHTML = "";
-  const tipsVals = s.heatmap.map(function(d) { return d.tips; }).filter(function(v) { return v > 0; });
-  const hmax = Math.max.apply(null, tipsVals.concat([1]));
-  s.heatmap.forEach(function(d) {
-    const cell = document.createElement("div");
-    if (d.tips > 0) {
-      const r = d.tips / hmax;
-      cell.style.background = r > 0.66 ? "#003049" : (r > 0.33 ? "#669bbc" : "#a8c5d8");
-    }
-    cell.title = ddmm(d.date) + ": " + rub(d.tips);
-    hm.appendChild(cell);
-  });
+  document.getElementById("ach-lbl").textContent =
+    "Кит ×" + a.whale + " · Щедрость ×" + a.generous + " · Серия";
+  document.getElementById("ach-val").textContent = a.streak;
 }
 
 function load() {
@@ -299,13 +286,11 @@ function load() {
       const el = document.getElementById("err");
       el.style.display = "block";
       el.textContent = "Не смог загрузить данные. Открой мини-ап из чата с ботом. (" + e.message + ")";
+      document.getElementById("head").textContent = "Мой Бюджет";
       document.getElementById("today-sub").textContent = "";
     });
 }
 
-document.getElementById("to-stats").onclick = function() {
-  document.getElementById("stats-title").scrollIntoView({ behavior: "smooth" });
-};
 document.getElementById("close-shift").onclick = function() {
   if (tg && botUsername) {
     tg.openTelegramLink("https://t.me/" + botUsername + "?start=close_shift");
@@ -313,9 +298,6 @@ document.getElementById("close-shift").onclick = function() {
   } else if (tg && tg.sendData) {
     tg.sendData("close_shift");
   }
-};
-document.getElementById("plan-edit").onclick = function() {
-  if (tg) tg.showAlert("Напиши боту в чат: план 2500 (любая сумма)");
 };
 
 load();

@@ -3,6 +3,7 @@
 Все деньги — «чистыми»: доходы минус расходы за период. День считается
 «сменой», если в нём есть хотя бы один доход-чай.
 """
+from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
 
 MSK = timezone(timedelta(hours=3))
@@ -124,7 +125,49 @@ def compute_stats(entries: list[dict], today: date | None = None, shift_goal: fl
         "bottom": sum(1 for tips in shifts.values() if tips < ACH_BOTTOM_TIPS),
     }
 
-    # Наличка vs электронные чаевые (месяц)
+    # Календарный ряд месяца: чай по дням, пустые дни = отдых (тоже информация)
+    month_shifts = _shift_days(month_entries)
+    days_in_month = monthrange(today.year, today.month)[1]
+    summary["month_days"] = [
+        {"day": day, "tips": round(month_shifts.get(today.replace(day=day), 0))}
+        for day in range(1, days_in_month + 1)
+    ]
+    summary["today_day"] = today.day
+    summary["days_in_month"] = days_in_month
+
+    shift_vals = list(month_shifts.values())
+    summary["avg_shift_tips"] = round(sum(shift_vals) / len(shift_vals)) if shift_vals else None
+    if shift_vals:
+        best_day = max(month_shifts, key=month_shifts.get)
+        summary["record"] = {
+            "day": best_day.day,
+            "tips": round(month_shifts[best_day]),
+            "weekday": WEEKDAYS[best_day.weekday()],
+        }
+    else:
+        summary["record"] = None
+
+    # Дельта среднего процента к прошлому месяцу
+    prev_pcts = [float(e["tip_percent"]) for e in prev_month_entries if e.get("tip_percent")]
+    if pcts and prev_pcts:
+        summary["avg_tip_pct_delta"] = round(
+            summary["avg_tip_pct"] - sum(prev_pcts) / len(prev_pcts), 1
+        )
+    else:
+        summary["avg_tip_pct_delta"] = None
+
+    # Траты смен за месяц и их доля от чая
+    shift_spend = -sum(
+        float(e["signed_amount"]) for e in month_entries
+        if e["kind"] == "expense" and e.get("note") == "трата смены"
+    )
+    summary["shift_spend_month"] = round(shift_spend)
+    summary["month_tips"] = round(month_tips)
+    summary["shift_spend_pct"] = round(shift_spend / month_tips * 100) if month_tips > 0 else None
+
+    # Лучший день недели (по среднему чаю за смену, весь журнал)
+    wa = summary["weekday_avg_tips"]
+    summary["best_weekday"] = WEEKDAYS[wa.index(max(wa))] if max(wa) > 0 else None
     cash_tips = sum(
         float(e["signed_amount"]) for e in month_entries
         if e["kind"] == "income" and e["category"] == "Чаевые" and e["account"] == "cash"
