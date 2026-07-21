@@ -53,8 +53,13 @@ Telegram-бот, который считает чаевые. Не бюджет �
 
 ## Тесты
 
+Офлайн, без Supabase/Telegram (внешние зависимости замоканы):
+
 ```bash
-python tests/test_parser.py        # или: python -m pytest tests/ -q
+python tests/test_parser.py    # разбор ввода и банковских уведомлений
+python tests/test_stats.py     # расчёт статистики (нал/карта, достижения)
+python tests/test_api.py       # подпись initData + приём трат /api/shift_spend
+# всё сразу: python -m pytest tests/ -q
 ```
 
 ## Структура
