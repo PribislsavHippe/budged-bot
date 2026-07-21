@@ -74,6 +74,30 @@
   .btn:active { background: var(--lava); }
   .empty-note { font-size: 12px; color: var(--ink-soft); }
   #err { font-size: 13px; color: var(--lava); padding: 16px 0; display: none; }
+  .btn-ghost { background: transparent; color: var(--deep); border: 1.5px solid var(--deep); margin-top: 10px; }
+  .btn-ghost:active { background: rgba(0,48,73,0.06); }
+
+  #poster { position: fixed; inset: 0; background: var(--deep); color: var(--paper); z-index: 100; display: none; overflow-y: auto; }
+  #poster.on { display: block; }
+  .poster-inner { max-width: 480px; margin: 0 auto; padding: 30px 26px 26px; min-height: 100%; display: flex; flex-direction: column; }
+  .pt-head { font-size: 12px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--steel); margin-bottom: 26px; }
+  .pt-lbl { font-size: 15px; color: #9db8c9; margin-bottom: 2px; }
+  .pt-hero { font-size: 52px; font-weight: 800; letter-spacing: -0.03em; line-height: 1; margin-bottom: 24px; }
+  .pt-r { display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px; }
+  .pt-r .l { font-size: 14px; color: #9db8c9; white-space: nowrap; }
+  .pt-r .d { flex: 1; border-bottom: 1.5px dotted #1a4a66; transform: translateY(-4px); }
+  .pt-r .v { font-size: 15px; font-weight: 600; white-space: nowrap; }
+  .pt-r .v.pink { color: #ffbac8; }
+  .pt-cal { display: flex; align-items: flex-end; gap: 2px; height: 34px; margin: 22px 0; }
+  .pt-cal div { flex: 1; border-radius: 1px; }
+  .pt-cal .b { background: #1a4a66; }
+  .pt-cal .m { background: var(--steel); }
+  .pt-cal .r { background: var(--brick); }
+  .pt-title-lbl { font-size: 12px; color: #9db8c9; margin-bottom: 3px; }
+  .pt-title { font-size: 22px; font-weight: 800; }
+  .pt-foot { border-top: 1px solid #1a4a66; margin-top: auto; padding-top: 14px; display: flex; justify-content: space-between; align-items: center; }
+  .pt-foot span { font-size: 11px; color: var(--steel); letter-spacing: .04em; }
+  .pt-hint { font-size: 12px; color: #9db8c9; margin-top: 16px; text-align: center; }
 </style>
 </head>
 <body>
@@ -125,12 +149,38 @@
   <div class="r"><span class="lbl" id="ach-lbl">Кит ×0 · Щедрость ×0 · Серия</span><span class="dots"></span><span class="val" id="ach-val">0</span></div>
 
   <button class="btn" id="close-shift">Внести траты смены</button>
+  <button class="btn btn-ghost" id="open-poster">Итоги месяца</button>
+
+  <div id="poster">
+    <div class="poster-inner">
+      <p class="pt-head" id="pt-head">Чек · Июль 2026</p>
+      <p class="pt-lbl">Чистыми за месяц</p>
+      <p class="pt-hero" id="pt-hero">—</p>
+
+      <div class="pt-r"><span class="l">Смен</span><span class="d"></span><span class="v" id="pt-shifts">—</span></div>
+      <div class="pt-r"><span class="l">Средний чай</span><span class="d"></span><span class="v" id="pt-pct">—</span></div>
+      <div class="pt-r"><span class="l" id="pt-rec-lbl">Рекорд смены</span><span class="d"></span><span class="v pink" id="pt-rec">—</span></div>
+
+      <div class="pt-cal" id="pt-cal"></div>
+
+      <p class="pt-title-lbl">Звание месяца</p>
+      <p class="pt-title" id="pt-title">—</p>
+
+      <div class="pt-foot">
+        <span id="pt-foot">Мой Бюджет</span>
+        <span></span>
+      </div>
+      <p class="pt-hint">Скриншоть и покажи коллегам 📸</p>
+      <button class="btn btn-ghost" id="close-poster" style="border-color:var(--steel); color:var(--steel); margin-top:18px;">← Назад к статистике</button>
+    </div>
+  </div>
 
 <script>
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 if (tg) { tg.ready(); tg.expand(); }
 
 let botUsername = null;
+let lastStats = null;
 
 const MONTHS_UP = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
 const MONTHS_GEN = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"];
@@ -147,6 +197,7 @@ function shiftsWord(n) {
 }
 
 function render(s) {
+  lastStats = s;
   botUsername = s.bot_username || botUsername;
   const now = new Date();
   document.getElementById("head").textContent =
@@ -298,6 +349,69 @@ document.getElementById("close-shift").onclick = function() {
   } else if (tg && tg.sendData) {
     tg.sendData("close_shift");
   }
+};
+
+const TITLES = {
+  "Пн": "Гроза понедельников",
+  "Вт": "Мастер вторников",
+  "Ср": "Хозяин среды",
+  "Чт": "Гроза четвергов",
+  "Пт": "Гроза пятниц",
+  "Сб": "Царь субботы",
+  "Вс": "Король воскресений",
+};
+
+function titleFor(s) {
+  if (s.shifts_count <= 0) return "Месяц только начался";
+  if (s.best_weekday && s.shifts_count >= 3) return TITLES[s.best_weekday] || "Восходящая звезда";
+  return "Восходящая звезда";
+}
+
+function renderPoster(s) {
+  if (!s) return;
+  const now = new Date();
+  document.getElementById("pt-head").textContent =
+    "Чек · " + MONTHS_UP[now.getMonth()] + " " + now.getFullYear();
+  document.getElementById("pt-hero").textContent = rub(s.month_net) + " ₽";
+  document.getElementById("pt-shifts").textContent = s.shifts_count;
+  document.getElementById("pt-pct").textContent =
+    s.avg_tip_pct != null ? String(s.avg_tip_pct).replace(".", ",") + "%" : "—";
+  if (s.record) {
+    document.getElementById("pt-rec-lbl").textContent =
+      "Рекорд смены · " + s.record.weekday.toLowerCase() + " " + s.record.day;
+    document.getElementById("pt-rec").textContent = rub(s.record.tips);
+  } else {
+    document.getElementById("pt-rec-lbl").textContent = "Рекорд смены";
+    document.getElementById("pt-rec").textContent = "—";
+  }
+
+  const cal = document.getElementById("pt-cal");
+  cal.innerHTML = "";
+  const vals = s.month_days.map(function(d) { return d.tips; });
+  const vmax = Math.max.apply(null, vals.concat([1]));
+  const avg = s.avg_shift_tips || 0;
+  s.month_days.forEach(function(d) {
+    const el = document.createElement("div");
+    if (d.tips > 0) {
+      el.style.height = Math.max(Math.round(d.tips / vmax * 100), 8) + "%";
+      const isRec = s.record && d.day === s.record.day && d.tips === s.record.tips;
+      el.className = isRec ? "r" : (d.tips >= avg ? "m" : "b");
+    }
+    cal.appendChild(el);
+  });
+
+  document.getElementById("pt-title").textContent = titleFor(s);
+  document.getElementById("pt-foot").textContent =
+    "Мой Бюджет · " + MONTHS_UP[now.getMonth()].toLowerCase() + " " + now.getFullYear();
+}
+
+document.getElementById("open-poster").onclick = function() {
+  renderPoster(lastStats);
+  document.getElementById("poster").classList.add("on");
+  window.scrollTo(0, 0);
+};
+document.getElementById("close-poster").onclick = function() {
+  document.getElementById("poster").classList.remove("on");
 };
 
 load();
