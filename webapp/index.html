@@ -240,6 +240,11 @@ const MONTHS_GEN = ["января","февраля","марта","апреля",
 const WD = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
 
 function rub(v) { return Math.round(v).toLocaleString("ru-RU"); }
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+  });
+}
 
 function setHero(text) {
   const el = document.getElementById("hero-num");
@@ -548,7 +553,7 @@ function renderHistory() {
     item.className = "hist-item";
     item.innerHTML =
       '<div class="hist-row">' +
-        '<div><div class="hist-cat">' + e.category + '</div>' +
+        '<div><div class="hist-cat">' + esc(e.category) + '</div>' +
         '<div class="hist-meta">' + fmtDT(e.created_at) + ' · ' + accLabel(e.account) + '</div></div>' +
         '<div class="hist-amt">' + (income ? "+" : "−") + rub(amt) + ' ₽</div>' +
       '</div>' +

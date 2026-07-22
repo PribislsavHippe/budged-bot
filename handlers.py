@@ -3,6 +3,7 @@
 
 Принцип: записываем сразу, отмена — одной кнопкой. Многошаговых диалогов нет.
 """
+import html
 import os
 import re
 
@@ -84,8 +85,8 @@ def entry_line(e: dict) -> str:
     emoji = KIND_EMOJI.get(e["kind"], "•")
     acc = db.ACCOUNT_LABELS[e["account"]]
     sign = "+" if amount > 0 else "−"
-    note = f" ({e['note']})" if e.get("note") else ""
-    return f"{emoji} {sign}{fmt(abs(amount))} ₽ · {e['category']} · {acc}{note}"
+    note = f" ({html.escape(str(e['note']))})" if e.get("note") else ""
+    return f"{emoji} {sign}{fmt(abs(amount))} ₽ · {html.escape(str(e['category']))} · {acc}{note}"
 
 
 def undo_kb(entry_ids: list[int], toggle_entry: dict | None = None) -> InlineKeyboardMarkup:
