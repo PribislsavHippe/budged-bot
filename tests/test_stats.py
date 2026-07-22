@@ -27,7 +27,6 @@ def test_empty():
     assert s["today_net"] == 0
     assert s["total_net"] == 0
     assert s["shifts_count"] == 0
-    assert s["achievements"]["streak"] == 0
     assert len(s["heatmap"]) == 28
 
 
@@ -74,7 +73,7 @@ def test_goal():
     assert s2["goal_pct"] == 100
 
 
-def test_avg_tip_pct_and_achievements():
+def test_avg_tip_pct():
     entries = [
         e(18, "income", 500, order=7690, pct=7.0),
         e(18, "income", 800, order=12000, pct=16.0),
@@ -83,23 +82,6 @@ def test_avg_tip_pct_and_achievements():
     ]
     s = compute_stats(entries, today=TODAY)
     assert s["avg_tip_pct"] == 14.3
-    assert s["achievements"]["whale"] == 1
-    assert s["achievements"]["generous"] == 2
-    # 18-го чай 1300 (плюс), 19-го чай 400 < 500 → «дно», но день в плюсе
-    assert s["achievements"]["bottom"] == 1
-    assert s["achievements"]["streak"] == 2
-
-
-def test_streak_breaks_on_minus_day():
-    entries = [
-        e(17, "income", 1000),
-        e(18, "income", 500),
-        e(18, "expense", -900, category="Бар"),  # день в минусе
-        e(19, "income", 1000),
-        e(20, "income", 1000),
-    ]
-    s = compute_stats(entries, today=TODAY)
-    assert s["achievements"]["streak"] == 2
 
 
 def test_weekday_avg():

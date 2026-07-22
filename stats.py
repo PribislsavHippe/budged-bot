@@ -10,10 +10,6 @@ MSK = timezone(timedelta(hours=3))
 
 WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 
-ACH_WHALE_ORDER = 10_000   # «Кит»: чек заказа от
-ACH_GENEROUS_PCT = 15      # «Щедрость»: чай от %
-ACH_BOTTOM_TIPS = 500      # «Дно»: чай за смену меньше
-
 
 def _entry_date(e: dict) -> date:
     dt = datetime.fromisoformat(e["created_at"].replace("Z", "+00:00"))
@@ -61,16 +57,6 @@ def _shift_days_split(entries: list[dict]) -> dict[date, dict]:
             d = _entry_date(e)
             rec = days.setdefault(d, {"cash": 0.0, "card": 0.0})
             rec[e["account"]] = rec.get(e["account"], 0.0) + float(e["signed_amount"])
-    return days
-
-
-def _day_net(entries: list[dict]) -> dict[date, float]:
-    days: dict[date, float] = {}
-    for e in entries:
-        if e["kind"] == "adjustment":
-            continue
-        d = _entry_date(e)
-        days[d] = days.get(d, 0) + float(e["signed_amount"])
     return days
 
 
@@ -136,19 +122,6 @@ def compute_stats(entries: list[dict], today: date | None = None, shift_goal: fl
         for c, k in zip(wd_cash, wd_card)
     ]
 
-    # Достижения (за месяц; серия — на текущий момент)
-    summary["achievements"] = {
-        "whale": sum(
-            1 for e in month_entries
-            if e.get("order_amount") and float(e["order_amount"]) >= ACH_WHALE_ORDER
-        ),
-        "generous": sum(
-            1 for e in month_entries
-            if e.get("tip_percent") and float(e["tip_percent"]) >= ACH_GENEROUS_PCT
-        ),
-        "streak": _current_streak(entries, today),
-        "bottom": sum(1 for tips in shifts.values() if tips < ACH_BOTTOM_TIPS),
-    }
 
     # Календарный ряд месяца: чай по дням с разбивкой нал/карта.
     # Пустые дни = отдых (тоже информация).
@@ -234,18 +207,3 @@ def compute_stats(entries: list[dict], today: date | None = None, shift_goal: fl
     summary["heatmap"] = heatmap
 
     return summary
-
-
-def _current_streak(entries: list[dict], today: date) -> int:
-    """Сколько последних смен подряд закрыты в плюс (чистыми > 0)."""
-    day_net = _day_net(entries)
-    shift_days = sorted(_shift_days(entries).keys(), reverse=True)
-    streak = 0
-    for d in shift_days:
-        if d > today:
-            continue
-        if day_net.get(d, 0) > 0:
-            streak += 1
-        else:
-            break
-    return streak

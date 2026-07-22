@@ -42,7 +42,8 @@
       "Bash(grep -E \"\\\\.env$\")",
       "Bash(git rm *)",
       "Bash(python3 -m py_compile handlers.py)",
-      "Bash(python3 -c \"import html; print\\(html.escape\\('кофе <b>200</b> & \\\\\"x\\\\\"'\\)\\)\")"
+      "Bash(python3 -c \"import html; print\\(html.escape\\('кофе <b>200</b> & \\\\\"x\\\\\"'\\)\\)\")",
+      "Bash(python3 -m py_compile stats.py)"
     ]
   }
 }
