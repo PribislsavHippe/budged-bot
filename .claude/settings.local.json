@@ -14,7 +14,29 @@
       "Bash(python3 -c \"from datetime import date; print\\(date\\(2026,7,20\\).weekday\\(\\)\\)\")",
       "Bash(python3 tests/test_stats.py)",
       "Bash(python3 -m py_compile main.py handlers.py db.py parser.py stats.py jobs.py webapp_api.py)",
-      "Bash(git commit --quiet -m 'Смены и мини-ап: план, вечерние траты, статистика, /app *)"
+      "Bash(git commit --quiet -m 'Смены и мини-ап: план, вечерние траты, статистика, /app *)",
+      "WebFetch(domain:bureau.ru)",
+      "WebFetch(domain:infographer.ru)",
+      "Bash(python3 -c \"import PIL; print\\('Pillow', PIL.__version__\\)\")",
+      "Read(//System/Library/Fonts/Supplemental/**)",
+      "Bash(python3 -c 'import html.parser, sys *)",
+      "Bash(git commit --quiet -m 'Плакат «Итоги месяца» в мини-апе *)",
+      "Bash(python3 -c 'import html.parser *)",
+      "Bash(git commit --quiet -m 'Анимированный mesh-градиент «Bloom Field» на фоне мини-апа *)",
+      "Bash(git commit --quiet -m 'Бледный фон + согласование цветов графиков по Иттену *)",
+      "Bash(git commit --quiet -m 'Белая подложка под mesh-градиентом *)",
+      "WebFetch(domain:jtr13.github.io)",
+      "Bash(git commit --quiet -m 'Чистка от шума по Тафти и Бирману: рабочий экран в монохром *)",
+      "Bash(git commit --quiet -m 'Убрать баланс/остаток: бот стал трекером чаевых *)",
+      "Bash(python3 -m py_compile webapp_api.py stats.py)",
+      "Bash(git commit --quiet -m 'Мини-ап: траты внутри приложения, нал/карта на всех графиках, месяц и достижения в «Итоги» *)",
+      "Bash(python3 tests/test_api.py)",
+      "Bash(python3 -m py_compile webapp_api.py db.py)",
+      "mcp__visualize__read_me",
+      "Bash(git commit --quiet -m 'Мини-ап: главная цифра — за неделю, с blur-in анимацией *)",
+      "Bash(curl -s -A \"Mozilla/5.0\" \"https://fonts.googleapis.com/css2?family=Momo+Signature&display=swap\")",
+      "Bash(python3 -m py_compile parser.py db.py)",
+      "Bash(python3 -m py_compile handlers.py jobs.py webapp_api.py db.py parser.py stats.py)"
     ]
   }
 }

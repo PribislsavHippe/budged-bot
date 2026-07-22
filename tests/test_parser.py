@@ -171,6 +171,39 @@ def test_looks_like_bank_tips():
     assert not looks_like_bank_tips("кофе 200")
 
 
+def test_parse_shift_days():
+    from datetime import date
+    from parser import parse_shift_days
+    today = date(2026, 7, 20)
+    assert parse_shift_days("работаю 22 24 26", today) == [
+        date(2026, 7, 22), date(2026, 7, 24), date(2026, 7, 26)]
+    assert parse_shift_days("смены 5, 7, 9", today) == [
+        date(2026, 8, 5), date(2026, 8, 7), date(2026, 8, 9)]  # прошли в июле → август
+    assert parse_shift_days("график 20 21", today) == [
+        date(2026, 7, 20), date(2026, 7, 21)]  # 20 = сегодня, включаем
+
+
+def test_parse_shift_days_not_income():
+    # «смена 2500» — это доход, НЕ расписание
+    from datetime import date
+    from parser import parse_shift_days
+    assert parse_shift_days("смена 2500", date(2026, 7, 20)) is None
+    assert parse_shift_days("чай 500", date(2026, 7, 20)) is None
+    # доход по-прежнему парсится как доход
+    (tx,) = parse_transactions("смена 2500")
+    assert tx["kind"] == "income" and tx["amount"] == 2500
+
+
+def test_parse_shift_days_dedup_and_invalid():
+    from datetime import date
+    from parser import parse_shift_days
+    today = date(2026, 7, 20)
+    # дубли убираются, 31 сентября невалиден
+    assert parse_shift_days("работаю 22 22 24", today) == [date(2026, 7, 22), date(2026, 7, 24)]
+    # 40 вне диапазона игнорируется
+    assert parse_shift_days("работаю 40", today) is None
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

@@ -132,3 +132,42 @@ async def set_shift_goal(user_id: int, goal: float | None) -> None:
 async def get_onboarded_user_ids() -> list[int]:
     res = supabase.table("users").select("id").eq("onboarded", True).execute()
     return [row["id"] for row in res.data]
+
+
+# ─── расписание смен ─────────────────────────────────────────────────────────
+
+async def add_shifts(user_id: int, dates: list[str]) -> None:
+    """Ставит смены на даты (ISO YYYY-MM-DD). Дубли игнорируются."""
+    if not dates:
+        return
+    rows = [{"user_id": user_id, "shift_date": d} for d in dates]
+    supabase.table("shifts").upsert(
+        rows, on_conflict="user_id,shift_date", ignore_duplicates=True
+    ).execute()
+
+
+async def get_shift_dates(user_id: int, since: str | None = None, until: str | None = None) -> list[str]:
+    q = supabase.table("shifts").select("shift_date").eq("user_id", user_id)
+    if since:
+        q = q.gte("shift_date", since)
+    if until:
+        q = q.lte("shift_date", until)
+    res = q.order("shift_date").execute()
+    return [row["shift_date"] for row in res.data]
+
+
+async def has_shift_on(user_id: int, date_iso: str) -> bool:
+    res = supabase.table("shifts").select("id") \
+        .eq("user_id", user_id).eq("shift_date", date_iso).limit(1).execute()
+    return bool(res.data)
+
+
+async def delete_shift(user_id: int, date_iso: str) -> bool:
+    res = supabase.table("shifts").delete() \
+        .eq("user_id", user_id).eq("shift_date", date_iso).execute()
+    return bool(res.data)
+
+
+async def get_user_ids_with_shift_on(date_iso: str) -> list[int]:
+    res = supabase.table("shifts").select("user_id").eq("shift_date", date_iso).execute()
+    return [row["user_id"] for row in res.data]

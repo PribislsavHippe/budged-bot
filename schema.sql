@@ -12,6 +12,8 @@ CREATE TABLE users (
     first_name TEXT,
     onboarded BOOLEAN DEFAULT FALSE,    -- прошёл ли стартовую сверку балансов
     shift_goal NUMERIC(12, 2),          -- план смены (цель по чаю)
+    yandex_email TEXT,                  -- для синхронизации с Яндекс-Календарём
+    yandex_app_password TEXT,           -- пароль приложения (CalDAV)
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -34,8 +36,19 @@ CREATE TABLE entries (
 CREATE INDEX idx_entries_user ON entries(user_id, created_at DESC);
 CREATE INDEX idx_entries_user_account ON entries(user_id, account);
 
+-- Запланированные смены (по этим дням бот вечером спрашивает про чай).
+CREATE TABLE shifts (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+    shift_date DATE NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, shift_date)
+);
+CREATE INDEX idx_shifts_user ON shifts(user_id, shift_date);
+
 -- Supabase в новых проектах включает Row Level Security по умолчанию,
 -- и анонимный ключ не может писать в таблицы. Ключ хранится только на
 -- сервере бота, наружу не отдаётся — поэтому RLS выключаем.
 ALTER TABLE users DISABLE ROW LEVEL SECURITY;
 ALTER TABLE entries DISABLE ROW LEVEL SECURITY;
+ALTER TABLE shifts DISABLE ROW LEVEL SECURITY;

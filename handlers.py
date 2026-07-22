@@ -144,7 +144,8 @@ async def cmd_help(message: Message):
         "🧾 Закрыть смену — внести траты за смену (мойка, бар, еда…), "
         "покажу чистыми за смену\n"
         "📋 История — последние записи\n"
-        "📊 Статистика — графики за месяц\n\n"
+        "📊 Статистика — графики и календарь\n\n"
+        "<i>работаю 22 24 26</i> — поставить смены на эти дни; вечером спрошу про чай\n"
         "<i>план 2500</i> — цель по чаю на смену\n"
         "/undo — отменить последнюю запись\n"
         "/reset — начать заново"
@@ -431,7 +432,21 @@ async def handle_text(message: Message, state: FSMContext):
             await _save_bank_tips(message, notif)
             return
 
-    # 3. Обычные записи: «чай 500», «кофе 200, такси 350»
+    # 3. Расписание смен: «работаю 22 24 26» → ставим смены
+    from datetime import datetime, timedelta, timezone
+    msk_today = datetime.now(timezone(timedelta(hours=3))).date()
+    shift_dates = p.parse_shift_days(text, msk_today)
+    if shift_dates is not None:
+        await db.add_shifts(message.from_user.id, [d.isoformat() for d in shift_dates])
+        human = ", ".join(d.strftime("%d.%m") for d in shift_dates)
+        word = "смену" if len(shift_dates) == 1 else "смены"
+        await message.answer(
+            f"📅 Поставил {word}: <b>{human}</b>.\n"
+            "Вечером в эти дни спрошу, сколько подняла смена."
+        )
+        return
+
+    # 4. Обычные записи: «чай 500», «кофе 200, такси 350»
     items = p.parse_transactions(text)
     if not items:
         await message.answer(

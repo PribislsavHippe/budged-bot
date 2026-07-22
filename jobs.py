@@ -28,13 +28,17 @@ async def self_ping():
 
 
 async def evening_shift_prompt(bot):
+    """Вечером спрашиваем про чай — в дни запланированных смен (или если был доход)."""
     from handlers import shift_spend_kb
-    day_start = datetime.now(MSK).replace(hour=0, minute=0, second=0, microsecond=0)
+    now_msk = datetime.now(MSK)
+    day_start = now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
     since = day_start.astimezone(timezone.utc).isoformat()
+    today_iso = now_msk.date().isoformat()
     try:
         user_ids = await db.get_onboarded_user_ids()
+        shift_users = set(await db.get_user_ids_with_shift_on(today_iso))
     except Exception as e:
-        logging.error(f"evening prompt: users fetch failed: {e}")
+        logging.error(f"evening prompt: fetch failed: {e}")
         return
     for user_id in user_ids:
         try:
@@ -46,14 +50,16 @@ async def evening_shift_prompt(bot):
                 e["kind"] == "expense" and e.get("note") == "трата смены"
                 for e in entries
             )
-            if income <= 0 or spent_today:
+            is_shift = user_id in shift_users
+            if spent_today or (not is_shift and income <= 0):
                 continue
-            await bot.send_message(
-                user_id,
-                f"Смена закончилась? За сегодня уже {income:,.0f} ₽.".replace(",", " ")
-                + "\nЗакроем день — что потратил?",
-                reply_markup=shift_spend_kb(),
-            )
+            if is_shift and income <= 0:
+                text = ("Сегодня у тебя смена. Сколько подняла?\n"
+                        "Запиши чай (или перешли уведомление банка), потом закрой смену.")
+            else:
+                text = (f"Смена закончилась? За сегодня уже {income:,.0f} ₽.".replace(",", " ")
+                        + "\nЗакроем день — что потратил?")
+            await bot.send_message(user_id, text, reply_markup=shift_spend_kb())
         except Exception as e:
             logging.warning(f"evening prompt failed for {user_id}: {e}")
 

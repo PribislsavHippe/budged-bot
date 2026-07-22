@@ -182,6 +182,44 @@ def looks_like_bank_tips(text: str) -> bool:
     return bool(_BANK_SIGNATURE.search(text))
 
 
+# ─── расписание смен: «работаю 22 24 26», «смены 5, 7, 9» ────────────────────
+# Триггер — только множественное «смены»/«работаю»/«график», чтобы не путать
+# с доходом «смена 2500» (единственное число + сумма).
+_SHIFT_SCHED_RE = re.compile(r"\b(смены|работа[ю]|график)\b", re.IGNORECASE)
+
+
+def parse_shift_days(text: str, today) -> list | None:
+    """«работаю 22 24 26» → [date(...), ...]. Число < сегодня → следующий месяц.
+
+    Возвращает None, если это не команда расписания. `today` — datetime.date.
+    """
+    from datetime import date
+    if not _SHIFT_SCHED_RE.search(text):
+        return None
+    days = [int(m) for m in re.findall(r"\d{1,2}", text)]
+    days = sorted(set(d for d in days if 1 <= d <= 31))
+    if not days:
+        return None
+
+    def make(year, month, day):
+        try:
+            return date(year, month, day)
+        except ValueError:
+            return None
+
+    result = []
+    for d in days:
+        if d >= today.day:
+            dt = make(today.year, today.month, d)
+        else:  # день уже прошёл в этом месяце → следующий месяц
+            ny = today.year + (1 if today.month == 12 else 0)
+            nm = 1 if today.month == 12 else today.month + 1
+            dt = make(ny, nm, d)
+        if dt:
+            result.append(dt)
+    return result or None
+
+
 _BANK_ORDER = re.compile(
     r"сумма\s+заказа\s*[:\-—]?\s*(\d[\d ]*(?:[.,]\d{1,2})?)",
     re.IGNORECASE,

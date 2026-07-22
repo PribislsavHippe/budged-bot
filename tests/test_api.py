@@ -124,6 +124,10 @@ async def _get_shift_goal(uid):
     return None
 
 
+async def _get_shift_dates(uid, since=None, until=None):
+    return []
+
+
 _db.add_entry = _add_entry
 _db.get_all_entries = _get_all_entries
 _db.get_recent_entries = _get_recent_entries
@@ -132,6 +136,7 @@ _db.delete_entry = _delete_entry
 _db.update_entry_account = _update_entry_account
 _db.update_entry_amount = _update_entry_amount
 _db.get_shift_goal = _get_shift_goal
+_db.get_shift_dates = _get_shift_dates
 sys.modules["db"] = _db
 
 import webapp_api  # noqa: E402
