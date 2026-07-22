@@ -12,8 +12,11 @@ CREATE TABLE users (
     first_name TEXT,
     onboarded BOOLEAN DEFAULT FALSE,    -- прошёл ли стартовую сверку балансов
     shift_goal NUMERIC(12, 2),          -- план смены (цель по чаю)
-    yandex_email TEXT,                  -- для синхронизации с Яндекс-Календарём
-    yandex_app_password TEXT,           -- пароль приложения (CalDAV)
+    yandex_email TEXT,                  -- (зарезервировано)
+    yandex_app_password TEXT,           -- (зарезервировано)
+    google_access_token TEXT,           -- Google Календарь (OAuth)
+    google_refresh_token TEXT,
+    google_token_expiry TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

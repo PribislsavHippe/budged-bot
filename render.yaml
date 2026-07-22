@@ -17,6 +17,13 @@ services:
         sync: false
       - key: WEBHOOK_HOST
         sync: false
+      # Google Календарь (OAuth). GOOGLE_REDIRECT_URI = WEBHOOK_HOST + /google/callback
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
       - key: WEBHOOK_PATH
         value: /webhook
       - key: WEBAPP_HOST

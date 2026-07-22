@@ -437,11 +437,21 @@ async def handle_text(message: Message, state: FSMContext):
     msk_today = datetime.now(timezone(timedelta(hours=3))).date()
     shift_dates = p.parse_shift_days(text, msk_today)
     if shift_dates is not None:
-        await db.add_shifts(message.from_user.id, [d.isoformat() for d in shift_dates])
+        iso = [d.isoformat() for d in shift_dates]
+        await db.add_shifts(message.from_user.id, iso)
         human = ", ".join(d.strftime("%d.%m") for d in shift_dates)
         word = "смену" if len(shift_dates) == 1 else "смены"
+        extra = ""
+        try:
+            import google_calendar as gcal
+            if await gcal.is_connected(message.from_user.id):
+                n = await gcal.create_shift_events(message.from_user.id, iso)
+                if n:
+                    extra = f"\n📆 Добавил в Google Календарь ({n})."
+        except Exception:
+            pass
         await message.answer(
-            f"📅 Поставил {word}: <b>{human}</b>.\n"
+            f"📅 Поставил {word}: <b>{human}</b>.{extra}\n"
             "Вечером в эти дни спрошу, сколько подняла смена."
         )
         return

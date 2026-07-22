@@ -36,7 +36,9 @@
       "Bash(git commit --quiet -m 'Мини-ап: главная цифра — за неделю, с blur-in анимацией *)",
       "Bash(curl -s -A \"Mozilla/5.0\" \"https://fonts.googleapis.com/css2?family=Momo+Signature&display=swap\")",
       "Bash(python3 -m py_compile parser.py db.py)",
-      "Bash(python3 -m py_compile handlers.py jobs.py webapp_api.py db.py parser.py stats.py)"
+      "Bash(python3 -m py_compile handlers.py jobs.py webapp_api.py db.py parser.py stats.py)",
+      "Bash(python3 -m py_compile google_calendar.py webapp_api.py db.py handlers.py)",
+      "Bash(git commit --quiet -m 'Google Календарь: подключение через OAuth из мини-апа, смены → события *)"
     ]
   }
 }

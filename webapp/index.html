@@ -212,6 +212,7 @@
       <div class="cal-wd" id="cal-wd"></div>
       <div class="cal-grid" id="cal-grid"></div>
       <p class="pt-legend" style="margin-top:8px"><span><i style="border:1.5px solid var(--card); background:transparent"></i>смена</span><span>ярче — больше чай</span></p>
+      <button class="btn btn-ghost" id="gcal-btn" style="display:none; margin-top:14px">Подключить Google Календарь</button>
 
       <p class="pt-chart-title">Чай за смену</p>
       <div class="pt-cal" id="pt-cal"></div>
@@ -488,8 +489,37 @@ document.getElementById("spend").addEventListener("click", function (e) {
   if (e.target.id === "spend") this.classList.remove("on");
 });
 
+let gcalAuthUrl = null;
+function gcalRefresh() {
+  const btn = document.getElementById("gcal-btn");
+  fetch("/api/gcal", {
+    method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+    body: JSON.stringify({ initData: tg ? tg.initData : "" }),
+  })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (s) {
+      if (!s || !s.configured) { btn.style.display = "none"; return; }
+      btn.style.display = "block";
+      gcalAuthUrl = s.auth_url;
+      if (s.connected) {
+        btn.textContent = "✓ Google Календарь подключён";
+        btn.style.color = "var(--card)";
+        btn.style.borderColor = "var(--card)";
+      } else {
+        btn.textContent = "Подключить Google Календарь";
+        btn.style.color = "";
+        btn.style.borderColor = "";
+      }
+    })
+    .catch(function () {});
+}
+document.getElementById("gcal-btn").onclick = function () {
+  if (gcalAuthUrl && tg) tg.openLink(gcalAuthUrl);  // внешний браузер: Google блокирует OAuth в вебвью
+};
+
 document.getElementById("open-poster").onclick = function () {
   renderPoster(lastStats);
+  gcalRefresh();
   document.getElementById("poster").classList.add("on");
   window.scrollTo(0, 0);
 };
@@ -653,7 +683,11 @@ document.getElementById("hist-close").onclick = function () {
 
 load();
 setInterval(load, 60000);
-document.addEventListener("visibilitychange", function () { if (!document.hidden) load(); });
+document.addEventListener("visibilitychange", function () {
+  if (document.hidden) return;
+  load();
+  if (document.getElementById("poster").classList.contains("on")) gcalRefresh();
+});
 </script>
 </body>
 </html>

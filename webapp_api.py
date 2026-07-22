@@ -12,6 +12,7 @@ from urllib.parse import parse_qsl
 from aiohttp import web
 
 import db
+import google_calendar as gcal
 from stats import compute_stats
 
 WEBAPP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webapp")
@@ -149,6 +150,44 @@ async def api_entry_edit(request: web.Request) -> web.Response:
     return web.json_response({"stats": stats, "entries": entries}, headers=NO_CACHE)
 
 
+async def api_gcal(request: web.Request) -> web.Response:
+    """Статус Google Календаря + ссылка для подключения (внешний браузер)."""
+    user_id, body = await _auth(request)
+    if user_id is None:
+        return body
+    if not gcal.is_configured():
+        return web.json_response({"configured": False, "connected": False}, headers=NO_CACHE)
+    connected = await gcal.is_connected(user_id)
+    return web.json_response({
+        "configured": True,
+        "connected": connected,
+        "auth_url": None if connected else gcal.auth_url(user_id),
+    }, headers=NO_CACHE)
+
+
+async def google_callback(request: web.Request) -> web.Response:
+    """Редирект от Google после согласия. Меняем код на токен, сохраняем."""
+    code = request.query.get("code")
+    state = request.query.get("state", "")
+    user_id = gcal.verify_state(state)
+    page = ("<!doctype html><meta charset=utf-8><meta name=viewport "
+            "content='width=device-width,initial-scale=1'>"
+            "<body style='font-family:-apple-system,sans-serif;text-align:center;padding:60px 24px'>")
+    if not code or user_id is None:
+        return web.Response(text=page + "<h2>Не получилось</h2><p>Ссылка недействительна.</p>",
+                            content_type="text/html", status=400)
+    try:
+        await gcal.exchange_code(user_id, code)
+    except Exception as e:
+        logging.error(f"google callback error: {e}")
+        return web.Response(text=page + "<h2>Ошибка</h2><p>Не удалось подключить календарь.</p>",
+                            content_type="text/html", status=500)
+    return web.Response(
+        text=page + "<h2>Готово ✓</h2><p>Google Календарь подключён.<br>Возвращайся в Telegram.</p>",
+        content_type="text/html",
+    )
+
+
 def register_webapp_routes(app: web.Application, bot_token: str, bot_username: str | None = None):
     app["bot_token"] = bot_token
     app["bot_username"] = bot_username
@@ -157,3 +196,5 @@ def register_webapp_routes(app: web.Application, bot_token: str, bot_username: s
     app.router.add_post("/api/shift_spend", api_shift_spend)
     app.router.add_post("/api/entries", api_entries)
     app.router.add_post("/api/entry_edit", api_entry_edit)
+    app.router.add_post("/api/gcal", api_gcal)
+    app.router.add_get("/google/callback", google_callback)

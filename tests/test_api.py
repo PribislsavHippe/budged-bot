@@ -50,6 +50,28 @@ _aiohttp.web = _web
 sys.modules["aiohttp"] = _aiohttp
 sys.modules["aiohttp.web"] = _web
 
+# ─── заглушка httpx (google_calendar импортирует его, сеть в тестах не нужна) ─
+
+_httpx = types.ModuleType("httpx")
+
+
+class _AsyncClient:
+    def __init__(self, *a, **k):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def post(self, *a, **k):
+        raise RuntimeError("no network in tests")
+
+
+_httpx.AsyncClient = _AsyncClient
+sys.modules["httpx"] = _httpx
+
 # ─── заглушка db (без реального Supabase) ────────────────────────────────────
 
 _db = types.ModuleType("db")
@@ -128,6 +150,10 @@ async def _get_shift_dates(uid, since=None, until=None):
     return []
 
 
+async def _get_google_token(uid):
+    return None
+
+
 _db.add_entry = _add_entry
 _db.get_all_entries = _get_all_entries
 _db.get_recent_entries = _get_recent_entries
@@ -137,6 +163,7 @@ _db.update_entry_account = _update_entry_account
 _db.update_entry_amount = _update_entry_amount
 _db.get_shift_goal = _get_shift_goal
 _db.get_shift_dates = _get_shift_dates
+_db.get_google_token = _get_google_token
 sys.modules["db"] = _db
 
 import webapp_api  # noqa: E402
@@ -340,6 +367,31 @@ def test_entry_bad_action():
 
 def test_entry_edit_unauthorized():
     r = run(webapp_api.api_entry_edit(Req({"initData": "", "entry_id": 1, "action": "delete"})))
+    assert r.status == 401
+
+
+# ─── Google Календарь: подпись state и статус ────────────────────────────────
+
+def test_gcal_state_roundtrip():
+    import google_calendar as gc
+    assert gc.verify_state(gc._sign(844587778)) == 844587778
+
+
+def test_gcal_state_tamper():
+    import google_calendar as gc
+    bad = gc._sign(844587778).replace("844587778", "1")
+    assert gc.verify_state(bad) is None
+    assert gc.verify_state("garbage") is None
+
+
+def test_api_gcal_not_configured():
+    # без GOOGLE_* переменных — configured False, без обращения к сети/бд
+    r = run(webapp_api.api_gcal(Req({"initData": init_data(TOKEN, 42)})))
+    assert r.status == 200 and r.data["configured"] is False
+
+
+def test_api_gcal_unauthorized():
+    r = run(webapp_api.api_gcal(Req({"initData": ""})))
     assert r.status == 401
 
 

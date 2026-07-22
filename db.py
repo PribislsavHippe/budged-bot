@@ -171,3 +171,26 @@ async def delete_shift(user_id: int, date_iso: str) -> bool:
 async def get_user_ids_with_shift_on(date_iso: str) -> list[int]:
     res = supabase.table("shifts").select("user_id").eq("shift_date", date_iso).execute()
     return [row["user_id"] for row in res.data]
+
+
+# ─── Google Календарь (OAuth-токены) ─────────────────────────────────────────
+
+async def save_google_token(user_id: int, access_token: str,
+                            refresh_token: str | None, expiry_iso: str | None) -> None:
+    data = {"google_access_token": access_token, "google_token_expiry": expiry_iso}
+    if refresh_token:  # при refresh Google не возвращает refresh_token заново
+        data["google_refresh_token"] = refresh_token
+    supabase.table("users").update(data).eq("id", user_id).execute()
+
+
+async def get_google_token(user_id: int) -> dict | None:
+    res = supabase.table("users").select(
+        "google_access_token, google_refresh_token, google_token_expiry"
+    ).eq("id", user_id).execute()
+    return res.data[0] if res.data else None
+
+
+async def clear_google_token(user_id: int) -> None:
+    supabase.table("users").update({
+        "google_access_token": None, "google_refresh_token": None, "google_token_expiry": None,
+    }).eq("id", user_id).execute()
