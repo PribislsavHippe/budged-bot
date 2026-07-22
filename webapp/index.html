@@ -160,6 +160,12 @@
 
   <p id="err"></p>
 
+  <p class="pt-chart-title" style="margin-top:22px">Календарь</p>
+  <div class="cal-wd" id="cal-wd"></div>
+  <div class="cal-grid" id="cal-grid"></div>
+  <p class="pt-legend" style="margin-top:8px"><span><i style="border:1.5px solid var(--card); background:transparent"></i>смена</span><span>ярче — больше чай</span></p>
+  <button class="btn btn-ghost" id="gcal-btn" style="display:none; margin-top:14px">Подключить Google Календарь</button>
+
   <button class="btn" id="open-spend">Внести траты смены</button>
   <button class="btn btn-ghost" id="open-poster">Итоги месяца</button>
   <button class="btn btn-ghost" id="open-history">История и правки</button>
@@ -207,12 +213,6 @@
         <div class="pt-tile"><div class="t-lbl" id="pt-rec-lbl">Рекорд смены</div><div class="t-val" id="pt-rec">—</div></div>
         <div class="pt-tile"><div class="t-lbl">Траты смен</div><div class="t-val" id="pt-spend">—</div></div>
       </div>
-
-      <p class="pt-chart-title">Календарь</p>
-      <div class="cal-wd" id="cal-wd"></div>
-      <div class="cal-grid" id="cal-grid"></div>
-      <p class="pt-legend" style="margin-top:8px"><span><i style="border:1.5px solid var(--card); background:transparent"></i>смена</span><span>ярче — больше чай</span></p>
-      <button class="btn btn-ghost" id="gcal-btn" style="display:none; margin-top:14px">Подключить Google Календарь</button>
 
       <p class="pt-chart-title">Чай за смену</p>
       <div class="pt-cal" id="pt-cal"></div>
@@ -295,6 +295,8 @@ function render(s) {
   } else {
     plan.style.display = "none";
   }
+
+  renderCalendar(s);
 }
 
 // ── достижения (Duolingo-стиль: эмблема, за что, градация) ──
@@ -400,7 +402,6 @@ function renderPoster(s) {
   document.getElementById("pt-wd-labels").innerHTML =
     WD.map(function (d) { return "<span>" + d + "</span>"; }).join("");
 
-  renderCalendar(s);
   renderAchievements(s);
 }
 
@@ -519,7 +520,6 @@ document.getElementById("gcal-btn").onclick = function () {
 
 document.getElementById("open-poster").onclick = function () {
   renderPoster(lastStats);
-  gcalRefresh();
   document.getElementById("poster").classList.add("on");
   window.scrollTo(0, 0);
 };
@@ -682,11 +682,12 @@ document.getElementById("hist-close").onclick = function () {
 })();
 
 load();
+gcalRefresh();
 setInterval(load, 60000);
 document.addEventListener("visibilitychange", function () {
   if (document.hidden) return;
   load();
-  if (document.getElementById("poster").classList.contains("on")) gcalRefresh();
+  gcalRefresh();
 });
 </script>
 </body>
