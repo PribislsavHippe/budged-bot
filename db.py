@@ -24,18 +24,33 @@ ACCOUNT_LABELS = {CASH: "Наличные", CARD: "Карта"}
 
 # ─── users ───────────────────────────────────────────────────────────────────
 
-async def get_or_create_user(user_id: int, username: str | None, first_name: str | None) -> dict:
+async def get_or_create_user(user_id: int) -> dict:
+    """Профиль по Telegram id. Имя и @username не храним — см. schema.sql."""
     res = supabase.table("users").select("*").eq("id", user_id).execute()
     if res.data:
         return res.data[0]
-    res = supabase.table("users").insert(
-        {"id": user_id, "username": username, "first_name": first_name}
-    ).execute()
+    res = supabase.table("users").insert({"id": user_id}).execute()
     return res.data[0]
 
 
 async def set_onboarded(user_id: int) -> None:
     supabase.table("users").update({"onboarded": True}).eq("id", user_id).execute()
+
+
+async def clear_entries(user_id: int) -> None:
+    """Очистить журнал, оставив профиль (/reset)."""
+    supabase.table("entries").delete().eq("user_id", user_id).execute()
+
+
+async def delete_user(user_id: int) -> None:
+    """Стереть человека целиком: журнал, смены, профиль с токенами (/delete).
+
+    Удаляем явно, а не полагаясь на ON DELETE CASCADE, чтобы результат не
+    зависел от того, как заведены внешние ключи в конкретной базе.
+    """
+    supabase.table("entries").delete().eq("user_id", user_id).execute()
+    supabase.table("shifts").delete().eq("user_id", user_id).execute()
+    supabase.table("users").delete().eq("id", user_id).execute()
 
 
 # ─── entries ─────────────────────────────────────────────────────────────────

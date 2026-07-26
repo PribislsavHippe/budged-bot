@@ -3,7 +3,9 @@
 
 Принцип: записываем сразу, отмена — одной кнопкой. Многошаговых диалогов нет.
 """
+import csv
 import html
+import io
 import os
 import re
 
@@ -12,6 +14,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
+    BufferedInputFile,
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -23,6 +26,7 @@ from aiogram.types import (
 
 import db
 import parser as p
+from workday import MSK, entry_op_date, op_day_start_utc_iso, op_today
 
 router = Router()
 
@@ -56,10 +60,8 @@ def today_line(income: float, spent: float) -> str:
 
 
 async def today_totals(user_id: int):
-    from datetime import datetime, timedelta, timezone
-    msk = timezone(timedelta(hours=3))
-    day_start = datetime.now(msk).replace(hour=0, minute=0, second=0, microsecond=0)
-    entries = await db.get_entries_since(user_id, day_start.astimezone(timezone.utc).isoformat())
+    """Итоги текущей смены. Сутки операционные: ночь принадлежит вчерашнему дню."""
+    entries = await db.get_entries_since(user_id, op_day_start_utc_iso(op_today()))
     income = sum(float(e["signed_amount"]) for e in entries if e["kind"] == "income")
     spent = -sum(float(e["signed_amount"]) for e in entries if e["kind"] == "expense")
     return income, spent
@@ -115,6 +117,11 @@ def _welcome_text(name: str) -> str:
     )
 
 
+def _name(message: Message) -> str:
+    """Имя для приветствия — из самого сообщения Telegram, в базе мы его не держим."""
+    return message.from_user.first_name or "друг"
+
+
 async def _greet(message: Message, name: str):
     await db.set_onboarded(message.from_user.id)
     await message.answer(_welcome_text(name), reply_markup=main_menu())
@@ -123,9 +130,7 @@ async def _greet(message: Message, name: str):
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
-    user = await db.get_or_create_user(
-        message.from_user.id, message.from_user.username, message.from_user.first_name
-    )
+    user = await db.get_or_create_user(message.from_user.id)
     # Deep-link из мини-апа: кнопка «Внести траты смены»
     if user.get("onboarded") and (message.text or "").strip().endswith("close_shift"):
         await send_shift_close_prompt(message)
@@ -133,7 +138,7 @@ async def cmd_start(message: Message, state: FSMContext):
     if user.get("onboarded"):
         await message.answer(await today_block(message.from_user.id), reply_markup=main_menu())
         return
-    await _greet(message, user.get("first_name") or "друг")
+    await _greet(message, _name(message))
 
 
 @router.message(Command("help"))
@@ -149,7 +154,10 @@ async def cmd_help(message: Message):
         "<i>работаю 22 24 26</i> — поставить смены на эти дни; вечером спрошу про чай\n"
         "<i>план 2500</i> — цель по чаю на смену\n"
         "/undo — отменить последнюю запись\n"
-        "/reset — начать заново"
+        "/reset — очистить журнал\n\n"
+        "🔒 /privacy — что я о тебе храню (спойлер: почти ничего)\n"
+        "/export — забрать свои записи файлом\n"
+        "/delete — стереть себя без следа"
     )
 
 
@@ -161,11 +169,11 @@ async def show_history(message: Message):
     if not entries:
         await message.answer("Пока пусто. Напиши первую: <i>чай 500</i>")
         return
-    from datetime import datetime, timedelta, timezone
-    msk = timezone(timedelta(hours=3))
+    from datetime import datetime
     lines = []
     for e in entries:
-        dt = datetime.fromisoformat(e["created_at"].replace("Z", "+00:00")).astimezone(msk)
+        # В истории показываем настоящее время записи, а не операционное.
+        dt = datetime.fromisoformat(e["created_at"].replace("Z", "+00:00")).astimezone(MSK)
         lines.append(f"<i>{dt.strftime('%d.%m %H:%M')}</i>  {entry_line(e)}")
     await message.answer(
         "<b>Последние записи</b>\n\n" + "\n".join(lines) + "\n\n/undo — отменить последнюю"
@@ -190,7 +198,8 @@ async def cmd_undo(message: Message):
 @router.message(Command("reset"))
 async def cmd_reset(message: Message):
     await message.answer(
-        "Удалить <b>весь</b> журнал и начать заново?",
+        "Удалить <b>весь</b> журнал и начать заново?\n"
+        "<i>Профиль останется. Чтобы стереть вообще всё — /delete</i>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="Да, удалить всё", callback_data="reset:yes"),
             InlineKeyboardButton(text="Отмена", callback_data="reset:no"),
@@ -200,7 +209,7 @@ async def cmd_reset(message: Message):
 
 @router.callback_query(F.data == "reset:yes")
 async def reset_yes(callback: CallbackQuery, state: FSMContext):
-    db.supabase.table("entries").delete().eq("user_id", callback.from_user.id).execute()
+    await db.clear_entries(callback.from_user.id)
     await state.clear()
     await callback.message.edit_text("Журнал очищен.")
     await callback.message.answer("Погнали заново. Запиши: <i>чай 500</i>", reply_markup=main_menu())
@@ -210,6 +219,120 @@ async def reset_yes(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "reset:no")
 async def reset_no(callback: CallbackQuery):
     await callback.message.edit_text("Отмена — ничего не удалял.")
+    await callback.answer()
+
+
+# ─── приватность: что хранится, забрать своё, стереть себя ───────────────────
+
+SOURCE_URL = os.getenv("SOURCE_URL")
+
+
+@router.message(Command("privacy"))
+async def cmd_privacy(message: Message):
+    """Короткий и скучный список того, что лежит в базе. Скучность — это и есть аргумент."""
+    entries = await db.get_recent_entries(message.from_user.id, limit=1)
+    shifts = await db.get_shift_dates(message.from_user.id)
+    lines = [
+        "<b>🔒 Что я о тебе знаю</b>",
+        "",
+        "В базе лежит ровно это:",
+        f"• твой номер в Telegram — <code>{message.from_user.id}</code>",
+        "• записи: сумма, категория, нал/карта, время",
+        "• текст, которым ты записал (он же заметка к записи)",
+        f"• даты смен, которые ты поставил — сейчас {len(shifts)}",
+        "• план смены, если задавал",
+        "",
+        "Чего в базе <b>нет</b>: ни имени, ни @username, ни телефона, "
+        "ни номера карты. Имя я беру из твоего сообщения, когда здороваюсь, "
+        "и не сохраняю.",
+        "",
+        "Я не считаю твой баланс и не знаю, сколько у тебя денег — "
+        "только чай за смену.",
+        "",
+        "<b>Никто не видит чужого.</b> В боте нет ни рейтинга, ни сравнения "
+        "с коллегами, ни экрана, где видно чужие суммы.",
+        "",
+        "/export — забрать все свои записи файлом",
+        "/delete — стереть себя без следа",
+    ]
+    if not entries:
+        lines.insert(2, "<i>Пока ты ничего не записал — и хранить нечего.</i>\n")
+    if SOURCE_URL:
+        lines.append(f"\nКод открыт, можно проверить: {SOURCE_URL}")
+    await message.answer("\n".join(lines))
+
+
+@router.message(Command("export"))
+async def cmd_export(message: Message):
+    """Отдать человеку его собственные данные — сигнал «это твоё, а не моё»."""
+    entries = await db.get_all_entries(message.from_user.id)
+    shifts = await db.get_shift_dates(message.from_user.id)
+    if not entries and not shifts:
+        await message.answer("Выгружать пока нечего — записей нет.")
+        return
+
+    from datetime import datetime
+
+    buf = io.StringIO()
+    writer = csv.writer(buf, delimiter=";")
+    writer.writerow([
+        "дата и время (МСК)", "смена от", "тип", "счёт",
+        "категория", "сумма", "заметка", "чек заказа", "% чая",
+    ])
+    for e in entries:
+        dt = datetime.fromisoformat(e["created_at"].replace("Z", "+00:00")).astimezone(MSK)
+        writer.writerow([
+            dt.strftime("%d.%m.%Y %H:%M"),
+            entry_op_date(e["created_at"]).strftime("%d.%m.%Y"),
+            "доход" if e["kind"] == "income" else "расход",
+            db.ACCOUNT_LABELS.get(e["account"], e["account"]),
+            e["category"],
+            f'{float(e["signed_amount"]):.2f}'.replace(".", ","),
+            e.get("note") or "",
+            e.get("order_amount") or "",
+            e.get("tip_percent") or "",
+        ])
+
+    # utf-8-sig — чтобы Excel не показал кракозябры вместо русских букв
+    doc = BufferedInputFile(
+        buf.getvalue().encode("utf-8-sig"),
+        filename=f"chaevye-{op_today().isoformat()}.csv",
+    )
+    caption = f"Твои записи целиком — {len(entries)} шт."
+    if shifts:
+        caption += f"\nЗапланированные смены: {', '.join(shifts[-10:])}"
+        if len(shifts) > 10:
+            caption += f" (и ещё {len(shifts) - 10})"
+    await message.answer_document(doc, caption=caption)
+
+
+@router.message(Command("delete"))
+async def cmd_delete(message: Message):
+    await message.answer(
+        "Стереть <b>всё</b>: записи, смены, профиль и привязку Google Календаря?\n\n"
+        "<i>Это навсегда. Восстановить не смогу — у меня не остаётся копии.\n"
+        "Хочешь сначала забрать данные — /export</i>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="Да, стереть меня", callback_data="del:yes"),
+            InlineKeyboardButton(text="Отмена", callback_data="del:no"),
+        ]]),
+    )
+
+
+@router.callback_query(F.data == "del:yes")
+async def delete_yes(callback: CallbackQuery, state: FSMContext):
+    await db.delete_user(callback.from_user.id)
+    await state.clear()
+    await callback.message.edit_text(
+        "Стёр. В базе тебя больше нет.\n\n"
+        "Если вернёшься — начнём с чистого листа, /start."
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "del:no")
+async def delete_no(callback: CallbackQuery):
+    await callback.message.edit_text("Отмена — всё на месте.")
     await callback.answer()
 
 
@@ -365,11 +488,9 @@ async def legacy_history(message: Message):
 
 @router.message(F.text.in_(LEGACY_BUTTONS))
 async def legacy_button(message: Message):
-    user = await db.get_or_create_user(
-        message.from_user.id, message.from_user.username, message.from_user.first_name
-    )
+    user = await db.get_or_create_user(message.from_user.id)
     if not user.get("onboarded"):
-        await _greet(message, user.get("first_name") or "друг")
+        await _greet(message, _name(message))
         return
     await message.answer(
         "Я теперь считаю только чаевые.\n"
@@ -404,14 +525,12 @@ async def _save_bank_tips(message: Message, notif: dict):
 
 @router.message(F.text)
 async def handle_text(message: Message, state: FSMContext):
-    user = await db.get_or_create_user(
-        message.from_user.id, message.from_user.username, message.from_user.first_name
-    )
+    user = await db.get_or_create_user(message.from_user.id)
     text = message.text or ""
 
     # Новый пользователь (или без /start): знакомство
     if not user.get("onboarded"):
-        await _greet(message, user.get("first_name") or "друг")
+        await _greet(message, _name(message))
         return
 
     # 1. Пересланное сообщение банка о чаевых → на карту
@@ -434,9 +553,7 @@ async def handle_text(message: Message, state: FSMContext):
             return
 
     # 3. Расписание смен: «работаю 22 24 26» → ставим смены
-    from datetime import datetime, timedelta, timezone
-    msk_today = datetime.now(timezone(timedelta(hours=3))).date()
-    shift_dates = p.parse_shift_days(text, msk_today)
+    shift_dates = p.parse_shift_days(text, op_today())
     if shift_dates is not None:
         iso = [d.isoformat() for d in shift_dates]
         await db.add_shifts(message.from_user.id, iso)

@@ -14,6 +14,7 @@ from aiohttp import web
 import db
 import google_calendar as gcal
 from stats import compute_stats
+from workday import op_today
 
 WEBAPP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webapp")
 
@@ -46,14 +47,12 @@ async def serve_app(request: web.Request) -> web.Response:
 
 
 async def _stats_payload(app: web.Application, user_id: int) -> dict:
-    from datetime import datetime
-    from stats import MSK
     entries = await db.get_all_entries(user_id)
     goal = await db.get_shift_goal(user_id)
     payload = compute_stats(entries, shift_goal=goal)
     payload["bot_username"] = app.get("bot_username")
     # Запланированные смены текущего месяца — для календаря в мини-апе.
-    today = datetime.now(MSK).date()
+    today = op_today()
     m_start = today.replace(day=1).isoformat()
     m_end = today.replace(day=payload["days_in_month"]).isoformat()
     payload["scheduled_shifts"] = await db.get_shift_dates(user_id, m_start, m_end)

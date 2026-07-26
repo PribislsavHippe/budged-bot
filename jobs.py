@@ -4,14 +4,12 @@
 """
 import logging
 import os
-from datetime import datetime, timedelta, timezone
 
 import aiohttp
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import db
-
-MSK = timezone(timedelta(hours=3))
+from workday import op_day_start_utc_iso, op_today
 
 
 async def self_ping():
@@ -30,10 +28,9 @@ async def self_ping():
 async def evening_shift_prompt(bot):
     """Вечером спрашиваем про чай — в дни запланированных смен (или если был доход)."""
     from handlers import shift_spend_kb
-    now_msk = datetime.now(MSK)
-    day_start = now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
-    since = day_start.astimezone(timezone.utc).isoformat()
-    today_iso = now_msk.date().isoformat()
+    today = op_today()
+    since = op_day_start_utc_iso(today)
+    today_iso = today.isoformat()
     try:
         user_ids = await db.get_onboarded_user_ids()
         shift_users = set(await db.get_user_ids_with_shift_on(today_iso))

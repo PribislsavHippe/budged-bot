@@ -2,18 +2,20 @@
 
 Все деньги — «чистыми»: доходы минус расходы за период. День считается
 «сменой», если в нём есть хотя бы один доход-чай.
+
+Дни режем по операционным суткам (см. workday.py), а не по полуночи — иначе
+ночная смена считается за две.
 """
 from calendar import monthrange
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 
-MSK = timezone(timedelta(hours=3))
+from workday import MSK, entry_op_date, op_today  # noqa: F401  (MSK — часть публичного API модуля)
 
 WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 
 
 def _entry_date(e: dict) -> date:
-    dt = datetime.fromisoformat(e["created_at"].replace("Z", "+00:00"))
-    return dt.astimezone(MSK).date()
+    return entry_op_date(e["created_at"])
 
 
 def _net(entries: list[dict]) -> float:
@@ -61,7 +63,7 @@ def _shift_days_split(entries: list[dict]) -> dict[date, dict]:
 
 
 def compute_stats(entries: list[dict], today: date | None = None, shift_goal: float | None = None) -> dict:
-    today = today or datetime.now(MSK).date()
+    today = today or op_today()
     week_start = today - timedelta(days=today.weekday())
     month_start = today.replace(day=1)
     prev_month_end = month_start - timedelta(days=1)

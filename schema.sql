@@ -6,14 +6,13 @@
 --     google_tokens, planned_income, goals, users CASCADE;
 -- =============================================
 
+-- Профиль. Намеренно без имени и @username: бот берёт их из самого сообщения
+-- Telegram, когда нужно поздороваться, и не хранит. В базе человек — только
+-- числовой id, чтобы её нельзя было читать как ведомость с фамилиями.
 CREATE TABLE users (
     id BIGINT PRIMARY KEY,              -- Telegram user_id
-    username TEXT,
-    first_name TEXT,
-    onboarded BOOLEAN DEFAULT FALSE,    -- прошёл ли стартовую сверку балансов
+    onboarded BOOLEAN DEFAULT FALSE,    -- прошёл ли знакомство
     shift_goal NUMERIC(12, 2),          -- план смены (цель по чаю)
-    yandex_email TEXT,                  -- (зарезервировано)
-    yandex_app_password TEXT,           -- (зарезервировано)
     google_access_token TEXT,           -- Google Календарь (OAuth)
     google_refresh_token TEXT,
     google_token_expiry TIMESTAMPTZ,
