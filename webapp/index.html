@@ -150,6 +150,8 @@
   .cal-nav:disabled { color: var(--faint); cursor: default; }
   .cal-nav:active:not(:disabled) { background: rgba(0,0,0,.06); }
   .cal-sum { font-size: 13px; color: var(--ink-soft); margin-top: 10px; min-height: 18px; }
+  .gcal-hint { font-size: 12px; line-height: 1.45; color: var(--ink-soft); margin-top: 8px; display: none; }
+  .gcal-hint.on { display: block; }
   .cal-grid.loading { opacity: .45; }
   .cal-wd { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-bottom: 5px; }
   .cal-wd span { font-size: 10px; color: var(--ink-soft); text-align: center; }
@@ -194,6 +196,7 @@
   <p class="cal-sum" id="cal-sum"></p>
   <p class="pt-legend" style="margin-top:8px"><span><i style="border:1.5px solid var(--card); background:transparent"></i>смена</span></p>
   <button class="btn btn-ghost" id="gcal-btn" style="display:none; margin-top:14px">Подключить Google Календарь</button>
+  <p class="gcal-hint" id="gcal-hint"></p>
 
   <button class="btn" id="open-spend">Внести траты смены</button>
   <button class="btn btn-ghost" id="open-poster">Итоги месяца</button>
@@ -203,7 +206,7 @@
   <div id="spend">
     <div class="sheet">
       <p class="sheet-title">Траты за смену</p>
-      <p class="sheet-sub" id="spend-sub">Жми категорию и введи сумму.</p>
+      <p class="sheet-sub" id="spend-sub">Выбери категорию и укажи сумму.</p>
       <div class="chips" id="spend-chips"></div>
       <div class="spend-inputs" id="spend-inputs">
         <input type="text" id="spend-name" placeholder="Название" style="display:none">
@@ -638,17 +641,30 @@ function gcalRefresh() {
   })
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (s) {
-      if (!s || !s.configured) { btn.style.display = "none"; return; }
+      const hint = document.getElementById("gcal-hint");
+      if (!s || !s.configured) { btn.style.display = "none"; hint.classList.remove("on"); return; }
       btn.style.display = "block";
       gcalAuthUrl = s.auth_url;
       if (s.connected) {
         btn.textContent = "✓ Google Календарь подключён";
         btn.style.color = "var(--card)";
         btn.style.borderColor = "var(--card)";
+        hint.classList.remove("on");
       } else {
         btn.textContent = "Подключить Google Календарь";
         btn.style.color = "";
         btn.style.borderColor = "";
+        // Пока Google не проверил приложение, доступ выдаётся вручную.
+        // Честнее сказать это здесь, чем показать ошибку Google после клика.
+        if (s.invite_only) {
+          hint.textContent = "Google ещё не проверил приложение, поэтому " +
+            "подключение открывается вручную. Напиши" +
+            (s.support ? " " + s.support : " автору бота") +
+            " — добавлю тебя, и кнопка заработает.";
+          hint.classList.add("on");
+        } else {
+          hint.classList.remove("on");
+        }
       }
     })
     .catch(function () {});

@@ -111,8 +111,8 @@ def _welcome_text(name: str) -> str:
         f"Привет, {name}! Я считаю твои чаевые.\n\n"
         "— пишешь <i>«чай 500»</i> — записываю сразу\n"
         "— пересылаешь сообщение банка о чаевых — записываю сам\n"
-        "— в конце смены жмёшь «🧾 Закрыть смену» и вносишь траты — "
-        "покажу, сколько подняла смена чистыми\n\n"
+        "— в конце смены нажимаешь «🧾 Закрыть смену» и вносишь траты — "
+        "покажу, сколько осталось чистыми\n\n"
         "Запиши первую: <i>чай 500</i>"
     )
 
@@ -212,7 +212,7 @@ async def reset_yes(callback: CallbackQuery, state: FSMContext):
     await db.clear_entries(callback.from_user.id)
     await state.clear()
     await callback.message.edit_text("Журнал очищен.")
-    await callback.message.answer("Погнали заново. Запиши: <i>чай 500</i>", reply_markup=main_menu())
+    await callback.message.answer("Начинаем заново. Запиши: <i>чай 500</i>", reply_markup=main_menu())
     await callback.answer()
 
 
@@ -238,7 +238,7 @@ async def cmd_privacy(message: Message):
         "В базе лежит ровно это:",
         f"• твой номер в Telegram — <code>{message.from_user.id}</code>",
         "• записи: сумма, категория, нал/карта, время",
-        "• текст, которым ты записал (он же заметка к записи)",
+        "• текст самой записи — он сохраняется как заметка",
         f"• даты смен, которые ты поставил — сейчас {len(shifts)}",
         "• план смены, если задавал",
         "",
@@ -256,7 +256,7 @@ async def cmd_privacy(message: Message):
         "/delete — стереть себя без следа",
     ]
     if not entries:
-        lines.insert(2, "<i>Пока ты ничего не записал — и хранить нечего.</i>\n")
+        lines.insert(2, "<i>Записей пока нет — и хранить нечего.</i>\n")
     if SOURCE_URL:
         lines.append(f"\nКод открыт, можно проверить: {SOURCE_URL}")
     await message.answer("\n".join(lines))
@@ -411,8 +411,8 @@ def shift_spend_kb() -> InlineKeyboardMarkup:
 
 async def send_shift_close_prompt(message: Message):
     await message.answer(
-        "Закрываем смену. Что потратил за день?\n"
-        "Жми категорию и пиши сумму — или сразу «Готово».",
+        "Закрываем смену. Какие траты за день?\n"
+        "Выбери категорию и укажи сумму — или сразу «Готово».",
         reply_markup=shift_spend_kb(),
     )
 
@@ -471,7 +471,7 @@ async def _send_day_summary(message: Message, user_id: int):
         pct = round(min(income / goal, 1.0) * 100)
         lines.append("✅ План сделан!" if income >= goal else f"План {fmt(goal)}: {pct}%")
     if income > 0 and net <= 0:
-        lines.append("Смена ушла в минус — загляни в статистику, куда утекло.")
+        lines.append("Смена в минусе — посмотри в статистике, на что ушли деньги.")
     await message.answer("\n".join(lines))
 
 
@@ -570,7 +570,7 @@ async def handle_text(message: Message, state: FSMContext):
             pass
         await message.answer(
             f"📅 Поставил {word}: <b>{human}</b>.{extra}\n"
-            "Вечером в эти дни спрошу, сколько подняла смена."
+            "Вечером в эти дни спрошу, сколько вышло чая."
         )
         return
 
@@ -599,8 +599,8 @@ async def handle_text(message: Message, state: FSMContext):
     body = "\n".join(entry_line(e) for e in saved)
     if is_first_tx:
         body += (
-            "\n\n👌 Записал. Ошибся счётом — кнопка «Перенести», "
-            "передумал — «Отменить»."
+            "\n\n👌 Записал. Не тот счёт — кнопка «Перенести», "
+            "нужно убрать — «Отменить»."
         )
     toggle = saved[0] if len(saved) == 1 else None
     await message.answer(

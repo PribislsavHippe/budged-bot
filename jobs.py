@@ -51,11 +51,11 @@ async def evening_shift_prompt(bot):
             if spent_today or (not is_shift and income <= 0):
                 continue
             if is_shift and income <= 0:
-                text = ("Сегодня у тебя смена. Сколько подняла?\n"
-                        "Запиши чай (или перешли уведомление банка), потом закрой смену.")
+                text = ("Сегодня у тебя смена. Сколько вышло чая?\n"
+                        "Запиши сумму или перешли уведомление банка, потом закрой смену.")
             else:
                 text = (f"Смена закончилась? За сегодня уже {income:,.0f} ₽.".replace(",", " ")
-                        + "\nЗакроем день — что потратил?")
+                        + "\nЗакроем день — какие были траты?")
             await bot.send_message(user_id, text, reply_markup=shift_spend_kb())
         except Exception as e:
             logging.warning(f"evening prompt failed for {user_id}: {e}")

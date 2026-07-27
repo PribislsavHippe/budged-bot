@@ -28,6 +28,13 @@ _EVENTS = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 _SECRET = (os.getenv("BOT_TOKEN") or "dev").encode()
 
 
+# Пока приложение не прошло проверку Google, оно живёт в режиме «Testing»:
+# подключиться могут только аккаунты, вручную добавленные в тестовые
+# пользователи. Остальные упираются в экран «Доступ заблокирован». Честнее
+# предупредить до нажатия кнопки, чем показать ошибку Google после.
+INVITE_ONLY = (os.getenv("GOOGLE_INVITE_ONLY", "1") != "0")
+
+
 def is_configured() -> bool:
     return bool(CLIENT_ID and CLIENT_SECRET and REDIRECT_URI)
 

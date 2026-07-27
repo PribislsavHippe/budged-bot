@@ -183,6 +183,10 @@ async def api_gcal(request: web.Request) -> web.Response:
         "configured": True,
         "connected": connected,
         "auth_url": None if connected else gcal.auth_url(user_id),
+        # Приложение не прошло проверку Google, доступ выдаётся вручную —
+        # мини-ап предупреждает об этом до нажатия кнопки.
+        "invite_only": gcal.INVITE_ONLY,
+        "support": os.getenv("SUPPORT_CONTACT") or None,
     }, headers=NO_CACHE)
 
 
