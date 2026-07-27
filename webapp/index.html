@@ -77,6 +77,18 @@
   #spend-submit { flex: 0 0 auto; padding: 11px 16px; border-radius: 10px; border: none; background: var(--ink); color: #fff; font-weight: 600; font-family: inherit; font-size: 15px; cursor: pointer; }
   .spend-note { font-size: 13px; color: var(--ink-soft); min-height: 18px; margin-bottom: 12px; }
 
+  /* ── разбор дня из календаря ── */
+  #day { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 92; display: none; }
+  #day.on { display: flex; align-items: flex-end; }
+  .day-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f2f2f2; }
+  .day-row:last-child { border-bottom: none; }
+  .day-row .k { font-size: 14px; color: var(--ink-soft); }
+  .day-row .v { font-family: var(--font-mono); font-size: 15px; font-weight: 500; white-space: nowrap; word-spacing: -0.3em; }
+  .day-row.total { border-top: 1px solid var(--ink); border-bottom: none; margin-top: 4px; padding-top: 12px; }
+  .day-row.total .k { color: var(--ink); font-weight: 600; font-size: 15px; }
+  .day-row.total .v { font-size: 19px; font-weight: 600; }
+  .day-note { font-size: 14px; color: var(--ink-soft); padding: 10px 0 2px; }
+
   /* ── история и правки ── */
   #history { position: fixed; inset: 0; background: #fff; z-index: 95; display: none; overflow-y: auto; }
   #history.on { display: block; }
@@ -200,6 +212,15 @@
       </div>
       <p class="spend-note" id="spend-note"></p>
       <button class="btn btn-ghost" id="spend-close" style="margin-top:0">Готово</button>
+    </div>
+  </div>
+
+  <!-- Разбор дня из календаря -->
+  <div id="day">
+    <div class="sheet">
+      <p class="sheet-title" id="day-title">—</p>
+      <div id="day-body"></div>
+      <button class="btn btn-ghost" id="day-close">Закрыть</button>
     </div>
   </div>
 
@@ -385,6 +406,13 @@ function paintCalendar(view) {
     }
     if (shiftDays.has(d.day)) cell.classList.add("shift");
     if (d.day === view.today_day) cell.classList.add("today");   // null в чужих месяцах
+
+    // Кликабельны дни, где есть что показать: был чай, были траты
+    // или смена стоит в графике.
+    if (d.tips > 0 || (d.spent || 0) > 0 || shiftDays.has(d.day)) {
+      cell.style.cursor = "pointer";
+      cell.onclick = function () { openDay(view, d); };
+    }
     grid.appendChild(cell);
   });
 
@@ -400,6 +428,53 @@ function paintCalendar(view) {
     sum.textContent = "Смен не было";
   }
 }
+
+// ── разбор одного дня ──
+const WD_FULL = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"];
+
+function dayRow(k, v, total) {
+  return '<div class="day-row' + (total ? " total" : "") + '">' +
+    '<span class="k">' + k + '</span><span class="v">' + v + "</span></div>";
+}
+
+function openDay(view, d) {
+  const dt = new Date(view.year, view.month - 1, d.day);
+  const wd = WD_FULL[(dt.getDay() + 6) % 7];
+  document.getElementById("day-title").textContent =
+    wd.charAt(0).toUpperCase() + wd.slice(1) + ", " + d.day + " " + MONTHS_GEN[view.month - 1];
+
+  const spent = d.spent || 0;
+  const rows = [];
+  if (d.tips > 0) {
+    rows.push(dayRow("Чай", rub(d.tips) + " ₽"));
+    if (d.cash > 0 && d.card > 0) {
+      rows.push(dayRow("наличными", rub(d.cash) + " ₽"));
+      rows.push(dayRow("картой", rub(d.card) + " ₽"));
+    } else if (d.cash > 0) {
+      rows.push(dayRow("всё наличными", rub(d.cash) + " ₽"));
+    } else if (d.card > 0) {
+      rows.push(dayRow("всё картой", rub(d.card) + " ₽"));
+    }
+  }
+  // Итог показываем, только если есть что вычитать: без трат он дословно
+  // повторял бы строку «Чай».
+  if (spent > 0) {
+    rows.push(dayRow("Траты смены", "−" + rub(spent) + " ₽"));
+    rows.push(dayRow("Чистыми за смену", rub(d.tips - spent) + " ₽", true));
+  }
+
+  document.getElementById("day-body").innerHTML = rows.length
+    ? rows.join("")
+    : '<p class="day-note">Смена в графике, записей пока нет.</p>';
+  document.getElementById("day").classList.add("on");
+}
+
+document.getElementById("day-close").onclick = function () {
+  document.getElementById("day").classList.remove("on");
+};
+document.getElementById("day").addEventListener("click", function (e) {
+  if (e.target.id === "day") this.classList.remove("on");
+});
 
 function loadMonth(year, month) {
   const grid = document.getElementById("cal-grid");
@@ -715,12 +790,14 @@ document.getElementById("hist-close").onclick = function () {
   // Крутится одним числом: остальные значения ниже подобраны под форму пятен,
   // а не под яркость, и трогать их не надо.
   const GLOW = 1.5;
+  // Радиусы крупные намеренно: пятна должны смыкаться и закрывать экран
+  // целиком, иначе середина и низ остаются голой бумагой. Четвёртое пятно
+  // держит правый нижний угол, куда не дотягивались первые три.
   const blobs = [
-    // Тёплое пятно тянет на себя яркость. Синее держим тише: календарь
-    // кодирует чай синим, и фон не должен спорить с данными.
-    { rgb: "232,166,128", x: 68.1, y: 46.03, r: 41.1, peak: 0.46 },
-    { rgb: "156,199,250", x: 25.17, y: 75.99, r: 44.6, peak: 0.30 },
-    { rgb: "250,249,239", x: 53.11, y: 12.71, r: 66.65, peak: 0.56 },
+    { rgb: "232,166,128", x: 66.0, y: 40.0, r: 72, peak: 0.46 },
+    { rgb: "156,199,250", x: 18.0, y: 74.0, r: 76, peak: 0.30 },
+    { rgb: "250,249,239", x: 50.0, y: 10.0, r: 88, peak: 0.56 },
+    { rgb: "226,178,143", x: 88.0, y: 96.0, r: 66, peak: 0.34 },
   ].map(function (b, i) {
     b.peak = Math.min(b.peak * GLOW, 1);
     b.p1 = phase(SEED * 12.9898 + i * 78.233);

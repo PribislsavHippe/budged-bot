@@ -51,6 +51,16 @@ def _shift_days(entries: list[dict]) -> dict[date, float]:
     return days
 
 
+def _spent_days(entries: list[dict]) -> dict[date, float]:
+    """Расходы по дням — чтобы у дня смены был честный итог «чистыми»."""
+    days: dict[date, float] = {}
+    for e in entries:
+        if e["kind"] == "expense":
+            d = _entry_date(e)
+            days[d] = days.get(d, 0) - float(e["signed_amount"])
+    return days
+
+
 def _shift_days_split(entries: list[dict]) -> dict[date, dict]:
     """Дни с чаем → {'cash': сумма, 'card': сумма} за день."""
     days: dict[date, dict] = {}
@@ -75,18 +85,27 @@ def _months_with_data(entries: list[dict], shift_dates: list[str], today: date) 
 
 def month_bounds(entries: list[dict], shift_dates: list[str],
                  year: int, month: int, today: date | None = None) -> dict:
-    """Есть ли что показывать до и после этого месяца — для стрелок навигации.
+    """Куда можно листать.
 
-    Вперёд листаем не только до текущего месяца: смены можно поставить
-    и на следующий, их тоже надо уметь посмотреть.
+    Назад — свободно, с запасом в два года от самого раннего месяца с
+    данными. Раньше листалось только по месяцам, где что-то есть, и у
+    новичка со всеми записями в одном месяце обе стрелки гасли: выглядит
+    как сломанный календарь. Пустой месяц показать не вредно.
+
+    Вперёд — минимум до следующего месяца: на него ставят график. Дальше —
+    если смены уже расписаны ещё позже.
     """
     today = today or op_today()
     months = _months_with_data(entries, shift_dates, today)
     shown = (year, month)
-    return {
-        "has_prev": any(m < shown for m in months),
-        "has_next": any(m > shown for m in months),
-    }
+
+    earliest = min(months)
+    floor = (earliest[0] - 2, earliest[1])
+
+    next_month = (today.year + 1, 1) if today.month == 12 else (today.year, today.month + 1)
+    ceiling = max(months | {next_month})
+
+    return {"has_prev": shown > floor, "has_next": shown < ceiling}
 
 
 def compute_month(entries: list[dict], shift_dates: list[str],
@@ -100,6 +119,7 @@ def compute_month(entries: list[dict], shift_dates: list[str],
     month_entries = _in_period(entries, start, end)
     tips_by_day = _shift_days(month_entries)
     split_by_day = _shift_days_split(month_entries)
+    spent_by_day = _spent_days(month_entries)
 
     days = []
     for d in range(1, days_in_month + 1):
@@ -110,6 +130,7 @@ def compute_month(entries: list[dict], shift_dates: list[str],
             "tips": round(tips_by_day.get(day, 0)),
             "cash": round(rec.get("cash", 0)),
             "card": round(rec.get("card", 0)),
+            "spent": round(spent_by_day.get(day, 0)),
         })
 
     prefix = f"{year:04d}-{month:02d}"
@@ -199,6 +220,7 @@ def compute_stats(entries: list[dict], today: date | None = None, shift_goal: fl
     # Пустые дни = отдых (тоже информация).
     month_shifts = _shift_days(month_entries)
     month_split = _shift_days_split(month_entries)
+    month_spent = _spent_days(month_entries)
     days_in_month = monthrange(today.year, today.month)[1]
     summary["month_days"] = [
         {
@@ -206,6 +228,7 @@ def compute_stats(entries: list[dict], today: date | None = None, shift_goal: fl
             "tips": round(month_shifts.get(today.replace(day=day), 0)),
             "cash": round(month_split.get(today.replace(day=day), {}).get("cash", 0)),
             "card": round(month_split.get(today.replace(day=day), {}).get("card", 0)),
+            "spent": round(month_spent.get(today.replace(day=day), 0)),
         }
         for day in range(1, days_in_month + 1)
     ]

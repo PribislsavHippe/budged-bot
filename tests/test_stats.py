@@ -135,8 +135,8 @@ def test_month_days_calendar():
     ]
     s = compute_stats(entries, today=TODAY)
     assert len(s["month_days"]) == 31
-    assert s["month_days"][0] == {"day": 1, "tips": 1000, "cash": 0, "card": 1000}
-    assert s["month_days"][1] == {"day": 2, "tips": 0, "cash": 0, "card": 0}
+    assert s["month_days"][0] == {"day": 1, "tips": 1000, "cash": 0, "card": 1000, "spent": 0}
+    assert s["month_days"][1] == {"day": 2, "tips": 0, "cash": 0, "card": 0, "spent": 0}
     assert s["month_days"][17]["tips"] == 4120
     assert s["today_day"] == 20
     assert s["avg_shift_tips"] == round((1000 + 4120 + 1660) / 3)
@@ -152,7 +152,7 @@ def test_month_days_cash_card_split():
          "order_amount": None, "tip_percent": None, "created_at": "2026-07-01T19:00:00+03:00"},
     ]
     s = compute_stats(entries, today=TODAY)
-    assert s["month_days"][0] == {"day": 1, "tips": 1000, "cash": 300, "card": 700}
+    assert s["month_days"][0] == {"day": 1, "tips": 1000, "cash": 300, "card": 700, "spent": 0}
 
 
 def test_weekday_split():
@@ -221,7 +221,7 @@ def test_month_past_has_no_today_marker():
     s = compute_month([_june(3, 1000), _june(4, 2000)], [], 2026, 6, today=TODAY)
     assert s["today_day"] is None
     assert s["days_in_month"] == 30
-    assert s["days"][2] == {"day": 3, "tips": 1000, "cash": 0, "card": 1000}
+    assert s["days"][2] == {"day": 3, "tips": 1000, "cash": 0, "card": 1000, "spent": 0}
     assert s["shifts_count"] == 2
     assert s["tips_total"] == 3000
     assert s["avg_shift_tips"] == 1500
@@ -249,31 +249,55 @@ def test_month_scheduled_shifts_filtered():
 def test_month_cash_card_split():
     entries = [_june(10, 400, "cash"), _june(10, 600, "card")]
     s = compute_month(entries, [], 2026, 6, today=TODAY)
-    assert s["days"][9] == {"day": 10, "tips": 1000, "cash": 400, "card": 600}
+    assert s["days"][9] == {"day": 10, "tips": 1000, "cash": 400, "card": 600, "spent": 0}
 
 
-def test_bounds_prev_when_older_entries_exist():
-    b = month_bounds([_june(3, 1000)], [], 2026, 7, today=TODAY)
-    assert b["has_prev"] is True
-    assert b["has_next"] is False
-
-
-def test_bounds_no_prev_at_the_very_beginning():
+def test_bounds_back_is_free_even_without_data():
+    """Пустой месяц показать не вредно, а глухая стрелка выглядит поломкой."""
     b = month_bounds([_june(3, 1000)], [], 2026, 6, today=TODAY)
-    assert b["has_prev"] is False
-    assert b["has_next"] is True      # впереди текущий месяц
+    assert b["has_prev"] is True
 
 
-def test_bounds_next_for_shifts_planned_ahead():
-    """Смены можно поставить на следующий месяц — туда надо уметь листать."""
-    b = month_bounds([], ["2026-08-04"], 2026, 7, today=TODAY)
+def test_bounds_new_user_can_still_navigate():
+    """Всё в одном месяце — обе стрелки обязаны работать."""
+    b = month_bounds([e(20, "income", 1000)], [], 2026, 7, today=TODAY)
+    assert b["has_prev"] is True
     assert b["has_next"] is True
+
+
+def test_bounds_next_month_always_reachable():
+    """На следующий месяц ставят график, туда надо попадать всегда."""
+    b = month_bounds([], [], 2026, 7, today=TODAY)
+    assert b["has_next"] is True
+    b_next = month_bounds([], [], 2026, 8, today=TODAY)
+    assert b_next["has_next"] is False     # дальше уже пусто
+
+
+def test_bounds_next_for_shifts_planned_further():
+    """Смены расписаны на сентябрь — листаем до них."""
+    b = month_bounds([], ["2026-09-04"], 2026, 8, today=TODAY)
+    assert b["has_next"] is True
+
+
+def test_bounds_floor_stops_endless_scrolling():
+    b = month_bounds([_june(3, 1000)], [], 2024, 6, today=TODAY)
+    assert b["has_prev"] is False          # два года от самых ранних данных
 
 
 def test_bounds_year_rollover():
     b = month_bounds([], ["2025-12-30"], 2026, 1, today=date(2026, 1, 15))
     assert b["has_prev"] is True
-    assert b["has_next"] is False
+    assert b["has_next"] is True           # февраль — следующий месяц
+
+
+def test_spent_lands_on_the_day():
+    entries = [
+        _june(12, 4000),
+        {"kind": "expense", "account": "cash", "signed_amount": -650, "category": "Такси",
+         "note": "трата смены", "created_at": "2026-06-12T23:30:00+03:00"},
+    ]
+    s = compute_month(entries, [], 2026, 6, today=TODAY)
+    assert s["days"][11] == {"day": 12, "tips": 4000, "cash": 0, "card": 4000, "spent": 650}
 
 
 if __name__ == "__main__":
