@@ -14,8 +14,7 @@
     --ink-soft: #6b6b6b;
     --faint: #cfcfcf;
     --track: #ececec;
-    --deep: #003049;
-    --steel: #669bbc;
+    /* Синий занят одним смыслом — счёт. Количество кодируется темнотой. */
     --cash: #a7c6dc;   /* наличка — светлее */
     --card: #4f89ab;   /* карта — насыщеннее */
     --paper: #ffffff;
@@ -145,8 +144,11 @@
   .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
   .cal-cell { aspect-ratio: 1; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); background: rgba(255,255,255,0.35); }
   .cal-cell.empty { background: transparent; }
+  /* Кольца поверх тёмной заливки нужно осветлять, иначе их не видно */
   .cal-cell.shift { box-shadow: inset 0 0 0 1.5px var(--card); }
+  .cal-cell.shift.dark { box-shadow: inset 0 0 0 1.5px #9ecbe8; }
   .cal-cell.today { box-shadow: inset 0 0 0 2px var(--ink); color: var(--ink); font-weight: 700; }
+  .cal-cell.today.dark { box-shadow: inset 0 0 0 2px #fff; color: #fff; }
 </style>
 </head>
 <body>
@@ -178,7 +180,7 @@
   <div class="cal-wd" id="cal-wd"></div>
   <div class="cal-grid" id="cal-grid"></div>
   <p class="cal-sum" id="cal-sum"></p>
-  <p class="pt-legend" style="margin-top:8px"><span><i style="border:1.5px solid var(--card); background:transparent"></i>смена</span><span>ярче — больше чай</span></p>
+  <p class="pt-legend" style="margin-top:8px"><span><i style="border:1.5px solid var(--card); background:transparent"></i>смена</span></p>
   <button class="btn btn-ghost" id="gcal-btn" style="display:none; margin-top:14px">Подключить Google Календарь</button>
 
   <button class="btn" id="open-spend">Внести траты смены</button>
@@ -370,9 +372,14 @@ function paintCalendar(view) {
     cell.className = "cal-cell";
     cell.textContent = d.day;
     if (d.tips > 0) {
-      const alpha = 0.18 + 0.82 * (d.tips / vmax);
-      cell.style.background = "rgba(79,137,171," + alpha.toFixed(2) + ")";
-      cell.style.color = alpha > 0.55 ? "#fff" : "var(--ink)";
+      // Количество кодируем темнотой, а не цветом: цвет в этом приложении
+      // занят счётом (нал/карта), и синяя шкала спорила и с рамкой смены,
+      // и с фоном. Нейтральный графит не конфликтует ни с чем.
+      const alpha = 0.12 + 0.76 * (d.tips / vmax);
+      cell.style.background = "rgba(17,17,17," + alpha.toFixed(2) + ")";
+      const dark = alpha > 0.55;
+      cell.style.color = dark ? "#fff" : "var(--ink)";
+      if (dark) cell.classList.add("dark");   // кольца поверх тёмной заливки
       cell.style.fontWeight = "600";
       cell.title = d.day + ": " + rub(d.tips) + " ₽";
     }
@@ -704,11 +711,18 @@ document.getElementById("hist-close").onclick = function () {
   const NOISE = "url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.305'/></svg>\")";
   function phase(n) { const x = Math.sin(n) * 43758.5453; return (x - Math.floor(x)) * Math.PI * 2; }
   const SEED = 1;
+  // Насыщенность фона. 1 — исходный бледный вариант, больше — ярче.
+  // Крутится одним числом: остальные значения ниже подобраны под форму пятен,
+  // а не под яркость, и трогать их не надо.
+  const GLOW = 1.5;
   const blobs = [
-    { rgb: "230,176,147", x: 68.1, y: 46.03, r: 41.1, peak: 0.44 },
-    { rgb: "163,206,255", x: 25.17, y: 75.99, r: 44.6, peak: 0.44 },
-    { rgb: "250,249,239", x: 53.11, y: 12.71, r: 66.65, peak: 0.58 },
+    // Тёплое пятно тянет на себя яркость. Синее держим тише: календарь
+    // кодирует чай синим, и фон не должен спорить с данными.
+    { rgb: "232,166,128", x: 68.1, y: 46.03, r: 41.1, peak: 0.46 },
+    { rgb: "156,199,250", x: 25.17, y: 75.99, r: 44.6, peak: 0.30 },
+    { rgb: "250,249,239", x: 53.11, y: 12.71, r: 66.65, peak: 0.56 },
   ].map(function (b, i) {
+    b.peak = Math.min(b.peak * GLOW, 1);
     b.p1 = phase(SEED * 12.9898 + i * 78.233);
     b.p2 = phase(SEED * 39.346 + i * 11.135);
     return b;
