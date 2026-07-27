@@ -132,6 +132,14 @@
   .pt-wd-labels span { flex: 1; }
   .pt-legend { font-size: 12px; color: var(--ink-soft); margin-top: 12px; display: flex; gap: 16px; }
   .pt-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  /* ── шапка календаря с листанием месяцев ── */
+  .cal-head { display: flex; align-items: center; justify-content: space-between; margin: 22px 0 12px; }
+  .cal-title { font-size: 14px; font-weight: 600; }
+  .cal-nav { background: none; border: none; font-family: inherit; font-size: 24px; line-height: 1; color: var(--ink); cursor: pointer; padding: 2px 14px; border-radius: 8px; }
+  .cal-nav:disabled { color: var(--faint); cursor: default; }
+  .cal-nav:active:not(:disabled) { background: rgba(0,0,0,.06); }
+  .cal-sum { font-size: 13px; color: var(--ink-soft); margin-top: 10px; min-height: 18px; }
+  .cal-grid.loading { opacity: .45; }
   .cal-wd { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-bottom: 5px; }
   .cal-wd span { font-size: 10px; color: var(--ink-soft); text-align: center; }
   .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
@@ -162,9 +170,14 @@
 
   <p id="err"></p>
 
-  <p class="pt-chart-title" style="margin-top:22px">Календарь</p>
+  <div class="cal-head">
+    <button class="cal-nav" id="cal-prev" aria-label="Предыдущий месяц">‹</button>
+    <span class="cal-title" id="cal-title">Календарь</span>
+    <button class="cal-nav" id="cal-next" aria-label="Следующий месяц">›</button>
+  </div>
   <div class="cal-wd" id="cal-wd"></div>
   <div class="cal-grid" id="cal-grid"></div>
+  <p class="cal-sum" id="cal-sum"></p>
   <p class="pt-legend" style="margin-top:8px"><span><i style="border:1.5px solid var(--card); background:transparent"></i>смена</span><span>ярче — больше чай</span></p>
   <button class="btn btn-ghost" id="gcal-btn" style="display:none; margin-top:14px">Подключить Google Календарь</button>
 
@@ -305,16 +318,44 @@ function render(s) {
     plan.style.display = "none";
   }
 
-  renderCalendar(s);
+  // Пока человек листает прошлые месяцы, автообновление не должно
+  // выдёргивать его обратно в текущий.
+  const onCurrentMonth = calYear === null ||
+    (calYear === now.getFullYear() && calMonth === now.getMonth() + 1);
+  if (onCurrentMonth) paintCalendar(calViewFromStats(s));
 }
 
 
-function renderCalendar(s) {
+// ── календарь: любой месяц, листается стрелками ──
+let calYear = null, calMonth = null;   // что сейчас на экране, month = 1..12
+
+function calViewFromStats(s) {
+  // Текущий месяц уже пришёл в /api/stats — лишний запрос не нужен.
   const now = new Date();
-  const firstDow = (new Date(now.getFullYear(), now.getMonth(), 1).getDay() + 6) % 7; // Пн=0
-  const today = now.getDate();
-  const shiftDays = new Set((s.scheduled_shifts || []).map(function (d) { return parseInt(d.slice(8, 10), 10); }));
-  const vmax = Math.max.apply(null, s.month_days.map(function (d) { return d.tips; }).concat([1]));
+  return {
+    year: now.getFullYear(), month: now.getMonth() + 1,
+    days: s.month_days, days_in_month: s.days_in_month,
+    scheduled_shifts: s.scheduled_shifts, today_day: s.today_day,
+    shifts_count: s.shifts_count, tips_total: s.month_tips,
+    has_prev: s.has_prev, has_next: s.has_next,
+  };
+}
+
+function paintCalendar(view) {
+  calYear = view.year;
+  calMonth = view.month;
+
+  document.getElementById("cal-title").textContent =
+    MONTHS_UP[view.month - 1] + " " + view.year;
+  document.getElementById("cal-prev").disabled = !view.has_prev;
+  document.getElementById("cal-next").disabled = !view.has_next;
+
+  const firstDow = (new Date(view.year, view.month - 1, 1).getDay() + 6) % 7; // Пн=0
+  const shiftDays = new Set((view.scheduled_shifts || []).map(function (d) {
+    return parseInt(d.slice(8, 10), 10);
+  }));
+  const vmax = Math.max.apply(null, view.days.map(function (d) { return d.tips; }).concat([1]));
+
   document.getElementById("cal-wd").innerHTML =
     WD.map(function (x) { return "<span>" + x + "</span>"; }).join("");
   const grid = document.getElementById("cal-grid");
@@ -324,7 +365,7 @@ function renderCalendar(s) {
     b.className = "cal-cell empty";
     grid.appendChild(b);
   }
-  s.month_days.forEach(function (d) {
+  view.days.forEach(function (d) {
     const cell = document.createElement("div");
     cell.className = "cal-cell";
     cell.textContent = d.day;
@@ -336,10 +377,48 @@ function renderCalendar(s) {
       cell.title = d.day + ": " + rub(d.tips) + " ₽";
     }
     if (shiftDays.has(d.day)) cell.classList.add("shift");
-    if (d.day === today) cell.classList.add("today");
+    if (d.day === view.today_day) cell.classList.add("today");   // null в чужих месяцах
     grid.appendChild(cell);
   });
+
+  const sum = document.getElementById("cal-sum");
+  const planned = (view.scheduled_shifts || []).length;
+  if (view.shifts_count) {
+    sum.innerHTML = shiftsWord(view.shifts_count) +
+      ' · <span class="num">' + rub(view.tips_total) + "</span> ₽ чая";
+  } else if (planned) {
+    // Месяц вперёд: чая ещё нет, но смены уже поставлены
+    sum.innerHTML = "Запланировано " + shiftsWord(planned);
+  } else {
+    sum.textContent = "Смен не было";
+  }
 }
+
+function loadMonth(year, month) {
+  const grid = document.getElementById("cal-grid");
+  grid.classList.add("loading");
+  fetch("/api/month", {
+    method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+    body: JSON.stringify({ initData: tg ? tg.initData : "", year: year, month: month }),
+  })
+    .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(paintCalendar)
+    .catch(function (e) {
+      document.getElementById("cal-sum").textContent = "Не смог загрузить месяц (" + e.message + ")";
+    })
+    .then(function () { grid.classList.remove("loading"); });
+}
+
+function calStep(delta) {
+  if (calYear === null) return;
+  let y = calYear, m = calMonth + delta;
+  if (m < 1) { m = 12; y -= 1; }
+  if (m > 12) { m = 1; y += 1; }
+  loadMonth(y, m);
+}
+
+document.getElementById("cal-prev").onclick = function () { calStep(-1); };
+document.getElementById("cal-next").onclick = function () { calStep(1); };
 
 function renderPoster(s) {
   if (!s) return;

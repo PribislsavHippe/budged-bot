@@ -62,6 +62,76 @@ def _shift_days_split(entries: list[dict]) -> dict[date, dict]:
     return days
 
 
+# ─── произвольный месяц (листание календаря) ─────────────────────────────────
+
+def _months_with_data(entries: list[dict], shift_dates: list[str], today: date) -> set[tuple]:
+    """Месяцы, в которых есть хоть что-то, плюс текущий — по ним листаем."""
+    months = {(d.year, d.month) for d in map(_entry_date, entries)}
+    for iso in shift_dates:
+        months.add((int(iso[:4]), int(iso[5:7])))
+    months.add((today.year, today.month))
+    return months
+
+
+def month_bounds(entries: list[dict], shift_dates: list[str],
+                 year: int, month: int, today: date | None = None) -> dict:
+    """Есть ли что показывать до и после этого месяца — для стрелок навигации.
+
+    Вперёд листаем не только до текущего месяца: смены можно поставить
+    и на следующий, их тоже надо уметь посмотреть.
+    """
+    today = today or op_today()
+    months = _months_with_data(entries, shift_dates, today)
+    shown = (year, month)
+    return {
+        "has_prev": any(m < shown for m in months),
+        "has_next": any(m > shown for m in months),
+    }
+
+
+def compute_month(entries: list[dict], shift_dates: list[str],
+                  year: int, month: int, today: date | None = None) -> dict:
+    """Календарь произвольного месяца: чай по дням с разбивкой нал/карта."""
+    today = today or op_today()
+    days_in_month = monthrange(year, month)[1]
+    start = date(year, month, 1)
+    end = date(year, month, days_in_month)
+
+    month_entries = _in_period(entries, start, end)
+    tips_by_day = _shift_days(month_entries)
+    split_by_day = _shift_days_split(month_entries)
+
+    days = []
+    for d in range(1, days_in_month + 1):
+        day = date(year, month, d)
+        rec = split_by_day.get(day, {})
+        days.append({
+            "day": d,
+            "tips": round(tips_by_day.get(day, 0)),
+            "cash": round(rec.get("cash", 0)),
+            "card": round(rec.get("card", 0)),
+        })
+
+    prefix = f"{year:04d}-{month:02d}"
+    shift_vals = list(tips_by_day.values())
+
+    payload = {
+        "year": year,
+        "month": month,
+        "days": days,
+        "days_in_month": days_in_month,
+        "scheduled_shifts": [s for s in shift_dates if s.startswith(prefix)],
+        "tips_total": round(sum(shift_vals)),
+        "net": _net(month_entries),
+        "shifts_count": len(shift_vals),
+        "avg_shift_tips": round(sum(shift_vals) / len(shift_vals)) if shift_vals else None,
+        # Кружок «сегодня» рисуем только когда смотрим текущий месяц
+        "today_day": today.day if (today.year, today.month) == (year, month) else None,
+    }
+    payload.update(month_bounds(entries, shift_dates, year, month, today))
+    return payload
+
+
 def compute_stats(entries: list[dict], today: date | None = None, shift_goal: float | None = None) -> dict:
     today = today or op_today()
     week_start = today - timedelta(days=today.weekday())

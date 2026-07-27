@@ -5,7 +5,7 @@ from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from stats import compute_stats
+from stats import compute_month, compute_stats, month_bounds
 
 TODAY = date(2026, 7, 20)
 
@@ -207,6 +207,73 @@ def test_heatmap():
     s = compute_stats(entries, today=TODAY)
     assert s["heatmap"][-1] == {"date": "2026-07-20", "tips": 1500}
     assert s["heatmap"][0]["date"] == "2026-06-23"
+
+
+# ─── листание календаря по месяцам ───────────────────────────────────────────
+
+def _june(day, amount, account="card"):
+    return {"kind": "income", "account": account, "signed_amount": amount,
+            "category": "Чаевые", "order_amount": None, "tip_percent": None,
+            "created_at": f"2026-06-{day:02d}T18:00:00+03:00"}
+
+
+def test_month_past_has_no_today_marker():
+    s = compute_month([_june(3, 1000), _june(4, 2000)], [], 2026, 6, today=TODAY)
+    assert s["today_day"] is None
+    assert s["days_in_month"] == 30
+    assert s["days"][2] == {"day": 3, "tips": 1000, "cash": 0, "card": 1000}
+    assert s["shifts_count"] == 2
+    assert s["tips_total"] == 3000
+    assert s["avg_shift_tips"] == 1500
+
+
+def test_month_current_marks_today():
+    s = compute_month([e(20, "income", 1500)], [], 2026, 7, today=TODAY)
+    assert s["today_day"] == 20
+
+
+def test_month_empty():
+    s = compute_month([], [], 2026, 5, today=TODAY)
+    assert s["shifts_count"] == 0
+    assert s["tips_total"] == 0
+    assert s["avg_shift_tips"] is None
+    assert all(d["tips"] == 0 for d in s["days"])
+
+
+def test_month_scheduled_shifts_filtered():
+    shifts = ["2026-06-05", "2026-07-02", "2026-07-09"]
+    s = compute_month([], shifts, 2026, 7, today=TODAY)
+    assert s["scheduled_shifts"] == ["2026-07-02", "2026-07-09"]
+
+
+def test_month_cash_card_split():
+    entries = [_june(10, 400, "cash"), _june(10, 600, "card")]
+    s = compute_month(entries, [], 2026, 6, today=TODAY)
+    assert s["days"][9] == {"day": 10, "tips": 1000, "cash": 400, "card": 600}
+
+
+def test_bounds_prev_when_older_entries_exist():
+    b = month_bounds([_june(3, 1000)], [], 2026, 7, today=TODAY)
+    assert b["has_prev"] is True
+    assert b["has_next"] is False
+
+
+def test_bounds_no_prev_at_the_very_beginning():
+    b = month_bounds([_june(3, 1000)], [], 2026, 6, today=TODAY)
+    assert b["has_prev"] is False
+    assert b["has_next"] is True      # впереди текущий месяц
+
+
+def test_bounds_next_for_shifts_planned_ahead():
+    """Смены можно поставить на следующий месяц — туда надо уметь листать."""
+    b = month_bounds([], ["2026-08-04"], 2026, 7, today=TODAY)
+    assert b["has_next"] is True
+
+
+def test_bounds_year_rollover():
+    b = month_bounds([], ["2025-12-30"], 2026, 1, today=date(2026, 1, 15))
+    assert b["has_prev"] is True
+    assert b["has_next"] is False
 
 
 if __name__ == "__main__":

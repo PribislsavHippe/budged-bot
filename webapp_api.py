@@ -13,7 +13,7 @@ from aiohttp import web
 
 import db
 import google_calendar as gcal
-from stats import compute_stats
+from stats import compute_month, compute_stats, month_bounds
 from workday import op_today
 
 WEBAPP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webapp")
@@ -51,11 +51,13 @@ async def _stats_payload(app: web.Application, user_id: int) -> dict:
     goal = await db.get_shift_goal(user_id)
     payload = compute_stats(entries, shift_goal=goal)
     payload["bot_username"] = app.get("bot_username")
-    # Запланированные смены текущего месяца — для календаря в мини-апе.
+    # Смены берём все разом: из них и календарь текущего месяца, и понимание,
+    # есть ли соседние месяцы, куда листать.
     today = op_today()
-    m_start = today.replace(day=1).isoformat()
-    m_end = today.replace(day=payload["days_in_month"]).isoformat()
-    payload["scheduled_shifts"] = await db.get_shift_dates(user_id, m_start, m_end)
+    shifts = await db.get_shift_dates(user_id)
+    prefix = today.strftime("%Y-%m")
+    payload["scheduled_shifts"] = [s for s in shifts if s.startswith(prefix)]
+    payload.update(month_bounds(entries, shifts, today.year, today.month, today))
     return payload
 
 
@@ -95,6 +97,26 @@ async def api_shift_spend(request: web.Request) -> web.Response:
         category=category, note="трата смены",
     )
     return web.json_response(await _stats_payload(request.app, user_id), headers=NO_CACHE)
+
+
+async def api_month(request: web.Request) -> web.Response:
+    """Календарь произвольного месяца — для листания стрелками."""
+    user_id, body = await _auth(request)
+    if user_id is None:
+        return body
+    try:
+        year = int(body.get("year"))
+        month = int(body.get("month"))
+    except (TypeError, ValueError):
+        return web.json_response({"error": "bad month"}, status=400)
+    if not 1 <= month <= 12 or not 2000 <= year <= 2100:
+        return web.json_response({"error": "bad month"}, status=400)
+
+    entries = await db.get_all_entries(user_id)
+    shifts = await db.get_shift_dates(user_id)
+    return web.json_response(
+        compute_month(entries, shifts, year, month), headers=NO_CACHE
+    )
 
 
 async def api_entries(request: web.Request) -> web.Response:
@@ -193,6 +215,7 @@ def register_webapp_routes(app: web.Application, bot_token: str, bot_username: s
     app.router.add_get("/app", serve_app)
     app.router.add_post("/api/stats", api_stats)
     app.router.add_post("/api/shift_spend", api_shift_spend)
+    app.router.add_post("/api/month", api_month)
     app.router.add_post("/api/entries", api_entries)
     app.router.add_post("/api/entry_edit", api_entry_edit)
     app.router.add_post("/api/gcal", api_gcal)
