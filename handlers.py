@@ -4,8 +4,10 @@
 Принцип: записываем сразу, отмена — одной кнопкой. Многошаговых диалогов нет.
 """
 import csv
+import glob
 import html
 import io
+import logging
 import os
 import re
 
@@ -16,8 +18,10 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     BufferedInputFile,
     CallbackQuery,
+    FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InputMediaPhoto,
     KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
@@ -122,8 +126,41 @@ def _name(message: Message) -> str:
     return message.from_user.first_name or "друг"
 
 
+ONBOARDING_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "webapp", "onboarding"
+)
+# file_id, выданные Телеграмом при первой отправке: заливать полтора мегабайта
+# заново каждому новому человеку незачем.
+_slide_file_ids: list[str] = []
+
+
+async def send_onboarding_slides(message: Message) -> None:
+    """Шесть картинок с объяснением бота — альбомом, перед приветствием.
+
+    Если картинок нет или Телеграм отказал, знакомство продолжается текстом:
+    из-за оформления человек не должен остаться без ответа.
+    """
+    global _slide_file_ids
+    paths = sorted(glob.glob(os.path.join(ONBOARDING_DIR, "slide-*.jpg")))
+    if not paths:
+        return
+    try:
+        if _slide_file_ids:
+            media = [InputMediaPhoto(media=fid) for fid in _slide_file_ids]
+        else:
+            media = [InputMediaPhoto(media=FSInputFile(p)) for p in paths]
+        sent = await message.answer_media_group(media)
+        if not _slide_file_ids:
+            _slide_file_ids = [m.photo[-1].file_id for m in sent if m.photo]
+    except Exception as e:
+        logging.warning(f"onboarding slides failed: {e}")
+
+
 async def _greet(message: Message, name: str):
     await db.set_onboarded(message.from_user.id)
+    # Сначала картинки — они объясняют бота быстрее текста, — потом
+    # приветствие с клавиатурой: у альбома своих кнопок быть не может.
+    await send_onboarding_slides(message)
     await message.answer(_welcome_text(name), reply_markup=main_menu())
 
 
