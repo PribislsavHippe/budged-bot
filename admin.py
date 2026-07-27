@@ -104,7 +104,42 @@ async def cmd_admin(message: Message):
         f"За 7 дней: {entries_week}\n\n"
         f"<b>Смены</b>\n"
         f"Запланировано на сегодня: {shifts_today}\n\n"
-        f"<i>Рассылка: /broadcast текст сообщения</i>"
+        f"<i>/onboarding — посмотреть знакомство\n"
+        f"/broadcast текст — рассылка всем</i>"
+    )
+
+
+# ─── просмотр знакомства ─────────────────────────────────────────────────────
+
+@router.message(Command("onboarding"))
+async def cmd_onboarding_preview(message: Message):
+    """Показывает знакомство целиком, не трогая свою запись в базе.
+
+    Иначе проверять его можно было только через /delete или второй аккаунт.
+    """
+    if not is_admin(message.from_user.id):
+        return
+
+    # Локальный импорт, как в jobs.py: handlers тянет за собой роутер,
+    # и на уровне модуля это закольцевало бы загрузку.
+    from handlers import main_menu, onboarding_slide_paths, send_onboarding_slides, _welcome_text
+
+    paths = onboarding_slide_paths()
+    if not paths:
+        await message.answer(
+            "Картинок знакомства нет на диске — проверь <code>webapp/onboarding/</code>."
+        )
+        return
+
+    await message.answer(
+        f"<i>Так знакомство выглядит для нового человека. "
+        f"Слайдов: {len(paths)}, последний «Как начать» показывается "
+        f"только вне бота.</i>"
+    )
+    await send_onboarding_slides(message)
+    await message.answer(
+        _welcome_text(message.from_user.first_name or "друг"),
+        reply_markup=main_menu(),
     )
 
 

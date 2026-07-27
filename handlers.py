@@ -129,19 +129,31 @@ def _name(message: Message) -> str:
 ONBOARDING_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "webapp", "onboarding"
 )
+# Слайд «Как начать» со ссылкой на бота нужен только тем, кто смотрит
+# презентацию со стороны. Человеку, который уже открыл чат, идти по ссылке
+# некуда — в знакомство этот слайд не попадает.
+SHARE_ONLY_SLIDES = {"slide-6.jpg"}
+
 # file_id, выданные Телеграмом при первой отправке: заливать полтора мегабайта
 # заново каждому новому человеку незачем.
 _slide_file_ids: list[str] = []
 
 
+def onboarding_slide_paths() -> list[str]:
+    return [
+        p for p in sorted(glob.glob(os.path.join(ONBOARDING_DIR, "slide-*.jpg")))
+        if os.path.basename(p) not in SHARE_ONLY_SLIDES
+    ]
+
+
 async def send_onboarding_slides(message: Message) -> None:
-    """Шесть картинок с объяснением бота — альбомом, перед приветствием.
+    """Картинки с объяснением бота — альбомом, перед приветствием.
 
     Если картинок нет или Телеграм отказал, знакомство продолжается текстом:
     из-за оформления человек не должен остаться без ответа.
     """
     global _slide_file_ids
-    paths = sorted(glob.glob(os.path.join(ONBOARDING_DIR, "slide-*.jpg")))
+    paths = onboarding_slide_paths()
     if not paths:
         return
     try:
