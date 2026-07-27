@@ -11,6 +11,7 @@ from aiohttp import web
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from dotenv import load_dotenv
 
+import admin
 import handlers
 from jobs import setup_scheduler
 from webapp_api import register_webapp_routes
@@ -27,6 +28,9 @@ WEBAPP_PORT = int(os.getenv("PORT", os.getenv("WEBAPP_PORT", "8080")))
 
 def build_dispatcher() -> Dispatcher:
     dp = Dispatcher()
+    # Админский роутер первым: иначе /admin и /broadcast перехватит
+    # общий обработчик текста в handlers и попробует найти в них сумму.
+    dp.include_router(admin.router)
     dp.include_router(handlers.router)
     return dp
 

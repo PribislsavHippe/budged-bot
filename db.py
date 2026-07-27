@@ -149,6 +149,45 @@ async def get_onboarded_user_ids() -> list[int]:
     return [row["id"] for row in res.data]
 
 
+# ─── агрегаты для админки ────────────────────────────────────────────────────
+# Только счётчики и идентификаторы. Сумм конкретного человека эти запросы не
+# возвращают и возвращать не должны — на этом держится раздел «Приватность»
+# в README, ради которого из базы убирали имена.
+
+async def count_users() -> int:
+    res = supabase.table("users").select("id", count="exact").execute()
+    return res.count or 0
+
+
+async def count_onboarded_users() -> int:
+    res = supabase.table("users").select("id", count="exact").eq("onboarded", True).execute()
+    return res.count or 0
+
+
+async def count_users_since(since_iso: str) -> int:
+    res = supabase.table("users").select("id", count="exact") \
+        .gte("created_at", since_iso).execute()
+    return res.count or 0
+
+
+async def count_entries_since(since_iso: str) -> int:
+    res = supabase.table("entries").select("id", count="exact") \
+        .gte("created_at", since_iso).execute()
+    return res.count or 0
+
+
+async def active_user_ids_since(since_iso: str) -> set[int]:
+    """Кто вообще что-то записал за период — только id, без сумм."""
+    res = supabase.table("entries").select("user_id").gte("created_at", since_iso).execute()
+    return {row["user_id"] for row in res.data}
+
+
+async def count_shifts_on(date_iso: str) -> int:
+    res = supabase.table("shifts").select("id", count="exact") \
+        .eq("shift_date", date_iso).execute()
+    return res.count or 0
+
+
 # ─── расписание смен ─────────────────────────────────────────────────────────
 
 async def add_shifts(user_id: int, dates: list[str]) -> None:

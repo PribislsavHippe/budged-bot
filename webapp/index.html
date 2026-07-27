@@ -7,7 +7,7 @@
 <title>Мой Бюджет</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Momo+Signature&family=Inter:wght@400;500;600;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;800&display=swap">
 <style>
   :root {
     --ink: #111111;
@@ -19,8 +19,16 @@
     --cash: #a7c6dc;   /* наличка — светлее */
     --card: #4f89ab;   /* карта — насыщеннее */
     --paper: #ffffff;
-    --font-accent: 'Momo Signature', 'Inter', cursive;
+    /* Цифры — моноширинные: колонки сумм выравниваются сами, а знаки
+       не пляшут при обновлении значения. Текст остаётся на Inter. */
+    --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   }
+  /* Утилита для цифр внутри обычного текста («Июль · 12 смен») */
+  .num { font-family: var(--font-mono); font-weight: 500; }
+  /* Разделитель тысяч у toLocaleString — неразрывный пробел. В моноширинном
+     он шириной с цифру и разрывает число надвое: «12  400» читается как два
+     числа. word-spacing поджимает только пробелы, цифры не трогает. */
+  .hero, .r .val, .r .tag, .pt-hero, .pt-tile .t-val, .hist-amt, .num { word-spacing: -0.3em; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html { background: #ffffff; }
   #bg {
@@ -37,13 +45,13 @@
   }
   .head { font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 24px; }
   .hero-label { font-size: 13px; color: var(--ink-soft); }
-  .hero { font-family: var(--font-accent); font-size: 42px; font-weight: 400; line-height: 1.05; margin-bottom: 20px; white-space: nowrap; }
+  .hero { font-family: var(--font-mono); font-size: 40px; font-weight: 500; letter-spacing: -0.03em; line-height: 1.05; margin-bottom: 20px; white-space: nowrap; }
   @keyframes blurIn { from { filter: blur(12px); opacity: 0; } to { filter: blur(0); opacity: 1; } }
   .hero.blur-in { animation: blurIn 0.85s cubic-bezier(0.2, 0.6, 0.2, 1); }
   .r { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
   .r .lbl { font-size: 14px; white-space: nowrap; }
-  .r .tag { font-size: 11px; font-weight: 600; color: var(--ink-soft); white-space: nowrap; }
-  .r .val { font-size: 15px; font-weight: 600; white-space: nowrap; margin-left: auto; }
+  .r .tag { font-family: var(--font-mono); font-size: 11px; font-weight: 500; color: var(--ink-soft); white-space: nowrap; }
+  .r .val { font-family: var(--font-mono); font-size: 15px; font-weight: 500; white-space: nowrap; margin-left: auto; }
   .plan { margin: 18px 0 0; }
   .plan .bar-track { height: 3px; background: var(--track); overflow: hidden; margin-top: 7px; }
   .plan .bar-fill { height: 100%; background: var(--ink); width: 0; }
@@ -65,6 +73,7 @@
   .spend-inputs { display: none; gap: 8px; margin-bottom: 6px; }
   .spend-inputs.on { display: flex; }
   .spend-inputs input { flex: 1; min-width: 0; font-family: inherit; font-size: 15px; padding: 11px 12px; border: 1px solid var(--faint); border-radius: 10px; background: #fff; }
+  #spend-amount { font-family: var(--font-mono); }
   .spend-inputs input:focus { outline: none; border-color: var(--ink); }
   #spend-submit { flex: 0 0 auto; padding: 11px 16px; border-radius: 10px; border: none; background: var(--ink); color: #fff; font-weight: 600; font-family: inherit; font-size: 15px; cursor: pointer; }
   .spend-note { font-size: 13px; color: var(--ink-soft); min-height: 18px; margin-bottom: 12px; }
@@ -79,12 +88,14 @@
   .hist-item { border-bottom: 1px solid #f0f0f0; }
   .hist-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 2px; cursor: pointer; }
   .hist-cat { font-size: 15px; font-weight: 600; }
-  .hist-meta { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
-  .hist-amt { font-size: 15px; font-weight: 700; white-space: nowrap; margin-left: 12px; }
+  .hist-meta { font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+  /* Дата и время моноширинные (колонка выравнивается), название счёта — текст */
+  .hist-meta .txt { font-family: 'Inter', -apple-system, sans-serif; }
+  .hist-amt { font-family: var(--font-mono); font-size: 15px; font-weight: 600; white-space: nowrap; margin-left: 12px; }
   .hist-edit { display: none; padding: 2px 2px 16px; }
   .hist-item.open .hist-edit { display: block; }
   .hist-edit-row { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; }
-  .hist-edit input { flex: 1; min-width: 0; font-family: inherit; font-size: 15px; padding: 10px 12px; border: 1px solid var(--faint); border-radius: 10px; }
+  .hist-edit input { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 15px; padding: 10px 12px; border: 1px solid var(--faint); border-radius: 10px; }
   .hist-edit input:focus { outline: none; border-color: var(--ink); }
   .acc-toggle { display: flex; gap: 6px; }
   .acc-btn { font-size: 13px; font-weight: 600; padding: 9px 13px; border-radius: 18px; border: 1px solid var(--faint); background: #fff; cursor: pointer; font-family: inherit; color: var(--ink); }
@@ -102,11 +113,11 @@
   .pt-back-top { display: inline-flex; align-items: center; gap: 6px; background: none; border: none; font-family: inherit; font-size: 15px; font-weight: 600; color: var(--ink); cursor: pointer; padding: 0; margin-bottom: 22px; }
   .pt-head { font-size: 12px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 6px; }
   .pt-lbl { font-size: 15px; color: var(--ink-soft); margin-bottom: 2px; }
-  .pt-hero { font-size: 46px; font-weight: 800; letter-spacing: -0.02em; line-height: 1; margin-bottom: 6px; }
+  .pt-hero { font-family: var(--font-mono); font-size: 42px; font-weight: 600; letter-spacing: -0.04em; line-height: 1; margin-bottom: 6px; }
   .pt-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 18px 0 8px; }
   .pt-tile { background: rgba(255,255,255,0.38); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-radius: 16px; padding: 16px 18px; }
   .pt-tile .t-lbl { font-size: 13px; color: var(--ink-soft); margin-bottom: 6px; }
-  .pt-tile .t-val { font-size: 30px; font-weight: 800; letter-spacing: -0.01em; line-height: 1; }
+  .pt-tile .t-val { font-family: var(--font-mono); font-size: 27px; font-weight: 600; letter-spacing: -0.03em; line-height: 1; }
   .pt-chart-title { font-size: 14px; font-weight: 600; margin: 26px 0 12px; }
   .pt-cal { display: flex; align-items: flex-end; gap: 2px; height: 80px; }
   .pt-cal .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; }
@@ -124,12 +135,10 @@
   .cal-wd { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-bottom: 5px; }
   .cal-wd span { font-size: 10px; color: var(--ink-soft); text-align: center; }
   .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
-  .cal-cell { aspect-ratio: 1; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--ink-soft); background: rgba(255,255,255,0.35); }
+  .cal-cell { aspect-ratio: 1; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); background: rgba(255,255,255,0.35); }
   .cal-cell.empty { background: transparent; }
   .cal-cell.shift { box-shadow: inset 0 0 0 1.5px var(--card); }
   .cal-cell.today { box-shadow: inset 0 0 0 2px var(--ink); color: var(--ink); font-weight: 700; }
-
-  /* ── достижения (в стиле Duolingo) ── */
 </style>
 </head>
 <body>
@@ -245,11 +254,14 @@ function setHero(text) {
   void el.offsetWidth;                    // форсируем reflow, чтобы анимация перезапустилась
   el.classList.add("blur-in");
 }
+// Возвращает HTML: число моноширинным, слово — обычным шрифтом.
+// n всегда приходит числом из нашего же API, подставлять нечего.
 function shiftsWord(n) {
   const m10 = n % 10, m100 = n % 100;
-  if (m10 === 1 && m100 !== 11) return n + " смена";
-  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return n + " смены";
-  return n + " смен";
+  let word = "смен";
+  if (m10 === 1 && m100 !== 11) word = "смена";
+  else if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) word = "смены";
+  return '<span class="num">' + Number(n) + "</span> " + word;
 }
 
 // ── стек нал/карта: колонка высотой tips/max, внутри cash сверху, card снизу ──
@@ -273,7 +285,7 @@ function stackCol(day, max, hostClass) {
 function render(s) {
   lastStats = s;
   const now = new Date();
-  document.getElementById("head").textContent =
+  document.getElementById("head").innerHTML =
     MONTHS_UP[now.getMonth()] + " · " + shiftsWord(s.shifts_count);
   setHero(rub(s.week_net) + " ₽");
   document.getElementById("today").textContent = rub(s.today_net);
@@ -285,7 +297,8 @@ function render(s) {
   const plan = document.getElementById("plan");
   if (s.shift_goal) {
     plan.style.display = "block";
-    document.getElementById("plan-lbl").textContent = "План смены — " + rub(s.shift_goal);
+    document.getElementById("plan-lbl").innerHTML =
+      'План смены — <span class="num">' + rub(s.shift_goal) + "</span>";
     document.getElementById("plan-val").textContent = s.goal_pct + "%";
     document.getElementById("plan-fill").style.width = s.goal_pct + "%";
   } else {
@@ -337,8 +350,9 @@ function renderPoster(s) {
   document.getElementById("pt-pct").textContent =
     s.avg_tip_pct != null ? String(s.avg_tip_pct).replace(".", ",") + "%" : "—";
   if (s.record) {
-    document.getElementById("pt-rec-lbl").textContent =
-      "Рекорд · " + s.record.weekday.toLowerCase() + " " + s.record.day;
+    document.getElementById("pt-rec-lbl").innerHTML =
+      "Рекорд · " + esc(s.record.weekday).toLowerCase() +
+      ' <span class="num">' + Number(s.record.day) + "</span>";
     document.getElementById("pt-rec").textContent = rub(s.record.tips);
   } else {
     document.getElementById("pt-rec-lbl").textContent = "Рекорд смены";
@@ -353,7 +367,8 @@ function renderPoster(s) {
   const vmax = Math.max.apply(null, s.month_days.map(function (d) { return d.tips; }).concat([1]));
   s.month_days.forEach(function (d) { cal.appendChild(stackCol(d, vmax)); });
   document.getElementById("pt-axis").innerHTML =
-    '<span class="l">1 ' + MONTHS_GEN[now.getMonth()] + '</span><span class="rt">' + s.days_in_month + '</span>';
+    '<span class="l"><span class="num">1</span> ' + MONTHS_GEN[now.getMonth()] +
+    '</span><span class="rt num">' + Number(s.days_in_month) + '</span>';
 
   // Дни недели, стек нал/карта
   const wd = document.getElementById("pt-wd");
@@ -512,7 +527,8 @@ function renderHistory() {
     item.innerHTML =
       '<div class="hist-row">' +
         '<div><div class="hist-cat">' + esc(e.category) + '</div>' +
-        '<div class="hist-meta">' + fmtDT(e.created_at) + ' · ' + accLabel(e.account) + '</div></div>' +
+        '<div class="hist-meta">' + fmtDT(e.created_at) +
+          ' · <span class="txt">' + accLabel(e.account) + '</span></div></div>' +
         '<div class="hist-amt">' + (income ? "+" : "−") + rub(amt) + ' ₽</div>' +
       '</div>' +
       '<div class="hist-edit">' +

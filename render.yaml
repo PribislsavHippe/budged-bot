@@ -24,6 +24,12 @@ services:
         sync: false
       - key: GOOGLE_REDIRECT_URI
         sync: false
+      # Твой Telegram id — включает /admin и /broadcast
+      - key: ADMIN_ID
+        sync: false
+      # Ссылка на исходники для /privacy
+      - key: SOURCE_URL
+        sync: false
       - key: WEBHOOK_PATH
         value: /webhook
       - key: WEBAPP_HOST
