@@ -188,6 +188,35 @@ def looks_like_bank_tips(text: str) -> bool:
 _SHIFT_SCHED_RE = re.compile(r"\b(смены|работа[ю]|график)\b", re.IGNORECASE)
 
 
+# Слова, которые могут стоять внутри перечисления дней и его не обрывают:
+# «работаю 1 числа и 5 го».
+_DAY_FILLER = {"и", "числа", "число", "го", "е"}
+
+
+def _days_after_trigger(text: str) -> list[int]:
+    """Числа из перечисления сразу после слова-триггера.
+
+    Раньше числа выскребались из всего сообщения подряд, и «работаю сегодня,
+    потратил 200 на такси» ставило смену на 20-е: регулярка вырезала «20»
+    из середины «200». Теперь читаем только непрерывный список дней после
+    триггера и останавливаемся на первом постороннем слове — всё, что дальше,
+    к расписанию не относится.
+    """
+    for m in _SHIFT_SCHED_RE.finditer(text):
+        days = []
+        for token in re.findall(r"[^\s,;:.—-]+", text[m.end():]):
+            if token.isdigit():
+                days.append(int(token))
+                continue
+            if token.lower() in _DAY_FILLER:
+                continue
+            break
+        days = sorted({d for d in days if 1 <= d <= 31})
+        if days:
+            return days
+    return []
+
+
 def parse_shift_days(text: str, today) -> list | None:
     """«работаю 22 24 26» → [date(...), ...]. Число < сегодня → следующий месяц.
 
@@ -196,8 +225,7 @@ def parse_shift_days(text: str, today) -> list | None:
     from datetime import date
     if not _SHIFT_SCHED_RE.search(text):
         return None
-    days = [int(m) for m in re.findall(r"\d{1,2}", text)]
-    days = sorted(set(d for d in days if 1 <= d <= 31))
+    days = _days_after_trigger(text)
     if not days:
         return None
 

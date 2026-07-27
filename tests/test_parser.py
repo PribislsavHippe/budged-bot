@@ -204,6 +204,34 @@ def test_parse_shift_days_dedup_and_invalid():
     assert parse_shift_days("работаю 40", today) is None
 
 
+def test_shift_days_ignore_numbers_outside_the_list():
+    """Числа после постороннего слова к расписанию не относятся.
+
+    «работаю сегодня, потратил 200 на такси» раньше ставило смену на 20-е:
+    двузначное вырезалось из середины «200».
+    """
+    from datetime import date
+    from parser import parse_shift_days
+    today = date(2026, 7, 27)
+    assert parse_shift_days("работаю сегодня, потратил 200 на такси", today) is None
+    assert parse_shift_days("работаю 1 числа, потратил 1500", today) == [date(2026, 8, 1)]
+    assert parse_shift_days("работаю 28 30, купил форму за 3000", today) == [
+        date(2026, 7, 28), date(2026, 7, 30)]
+    # триггер в конце фразы, перечисления нет вовсе
+    assert parse_shift_days("потратил 20 на кофе, такой уж график", today) is None
+
+
+def test_shift_days_filler_words():
+    from datetime import date
+    from parser import parse_shift_days
+    today = date(2026, 7, 27)
+    assert parse_shift_days("работаю 1 числа и 5 го", today) == [
+        date(2026, 8, 1), date(2026, 8, 5)]
+    # триггер не первый в строке — перечисление всё равно находится
+    assert parse_shift_days("работаю в баре, график 5 7", today) == [
+        date(2026, 8, 5), date(2026, 8, 7)]
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):
