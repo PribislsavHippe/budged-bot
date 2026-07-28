@@ -395,6 +395,75 @@ def test_api_gcal_unauthorized():
     assert r.status == 401
 
 
+# ─── доступ к чужим записям (IDOR) ───────────────────────────────────────────
+# Идентификаторы записей идут подряд, поэтому чужой id угадывается тривиально.
+# Каждая операция обязана проверять владельца, а не только существование.
+
+def test_idor_cannot_delete_other_users_entry():
+    _db.store.clear()
+    victim = _db.seed(99, "income", "card", 5000)
+    r = run(webapp_api.api_entry_edit(Req({
+        "initData": init_data(TOKEN, 42), "entry_id": victim["id"], "action": "delete",
+    })))
+    assert r.status == 404
+    assert run(_db.get_entry(victim["id"], 99)) is not None   # запись цела
+
+
+def test_idor_cannot_change_other_users_amount():
+    _db.store.clear()
+    victim = _db.seed(99, "income", "card", 5000)
+    r = run(webapp_api.api_entry_edit(Req({
+        "initData": init_data(TOKEN, 42), "entry_id": victim["id"],
+        "action": "amount", "amount": 1,
+    })))
+    assert r.status == 404
+    assert float(run(_db.get_entry(victim["id"], 99))["signed_amount"]) == 5000
+
+
+def test_idor_cannot_move_other_users_entry():
+    _db.store.clear()
+    victim = _db.seed(99, "income", "card", 5000)
+    r = run(webapp_api.api_entry_edit(Req({
+        "initData": init_data(TOKEN, 42), "entry_id": victim["id"],
+        "action": "account", "account": "cash",
+    })))
+    assert r.status == 404
+    assert run(_db.get_entry(victim["id"], 99))["account"] == "card"
+
+
+def test_idor_missing_and_foreign_look_identical():
+    """Чужая и несуществующая запись отвечают одинаково — иначе по разнице
+    ответов можно перебором выяснить, какие идентификаторы заняты."""
+    _db.store.clear()
+    victim = _db.seed(99, "income", "card", 5000)
+    foreign = run(webapp_api.api_entry_edit(Req({
+        "initData": init_data(TOKEN, 42), "entry_id": victim["id"], "action": "delete",
+    })))
+    missing = run(webapp_api.api_entry_edit(Req({
+        "initData": init_data(TOKEN, 42), "entry_id": 10 ** 9, "action": "delete",
+    })))
+    assert foreign.status == missing.status == 404
+    assert foreign.data == missing.data
+
+
+def test_idor_stats_never_include_foreign_entries():
+    _db.store.clear()
+    _db.seed(42, "income", "card", 1000)
+    _db.seed(99, "income", "card", 777000)
+    r = run(webapp_api.api_stats(Req({"initData": init_data(TOKEN, 42)})))
+    assert r.status == 200
+    assert r.data["total_net"] == 1000
+
+
+def test_idor_forged_signature_gets_nothing():
+    """Подменить чужой id в initData нельзя: подпись перестаёт сходиться."""
+    _db.store.clear()
+    _db.seed(99, "income", "card", 5000)
+    forged = init_data(TOKEN, 42).replace("%22id%22%3A+42", "%22id%22%3A+99")
+    r = run(webapp_api.api_entries(Req({"initData": forged})))
+    assert r.status == 401
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):
