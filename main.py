@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 
 import admin
 import handlers
+import report_photo
 from jobs import setup_scheduler
 from webapp_api import register_webapp_routes
 
@@ -33,6 +34,7 @@ def build_dispatcher() -> Dispatcher:
     # Админский роутер первым: иначе /admin и /broadcast перехватит
     # общий обработчик текста в handlers и попробует найти в них сумму.
     dp.include_router(admin.router)
+    dp.include_router(report_photo.router)
     dp.include_router(handlers.router)
     return dp
 
