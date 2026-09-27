@@ -84,6 +84,21 @@ async def main():
             await post('view',{},auth=signed(age=-120),status=401)
             await post('view',{},auth='forged',status=401)
             r=await client.post('/api/sales/view',json=[]);assert r.status==400
+            # Configuration failures must not look like uncertain sale writes.
+            from postgrest.exceptions import APIError
+            for code, expected in [('42501','sales_database_permissions'), ('42P01','sales_database_schema'),
+                                   ('PGRST205','sales_database_schema'), ('PGRST204','sales_database_schema'),
+                                   ('08006','sales_database_unavailable')]:
+                error=APIError({'code':code,'message':'private database details','details':None,'hint':None})
+                with patch.object(sales_db,'load',side_effect=error):
+                    result=await post('view',{},status=503)
+                    assert result['code']==expected
+                    assert 'private' not in result['error'] and 'продажу' not in result['error']
+            with patch.object(sales_db,'load',side_effect=RuntimeError('private failure')):
+                result=await post('view',{},status=503)
+                assert result['error']=='Не удалось загрузить план. Повтори загрузку.'
+            result=await post('view',{})
+            assert result['has_settings'] is False  # An empty month is not an error.
             from sales_chat import parse_sales_message
             from sales_service import chat_write
             await db.get_or_create_user(1)

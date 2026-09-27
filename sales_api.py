@@ -4,6 +4,7 @@ from uuid import UUID
 import logging
 
 from aiohttp import web
+from postgrest.exceptions import APIError
 import db
 import sales_db
 from sales import compute_sales, number, month_key, validate_values, METRICS, TARGETS, KINDS, COUNTS
@@ -41,9 +42,9 @@ async def handle(request):
     user_id, body = await _auth(request)
     if user_id is None:
         return body
+    action = request.match_info["action"]
     try:
         month = month_key(body.get("month", op_today().strftime("%Y-%m")))
-        action = request.match_info["action"]
         if action == "view":
             pass
         elif action == "settings":
@@ -92,9 +93,22 @@ async def handle(request):
         return web.json_response(await payload(user_id, month), headers=NO_CACHE)
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
+    except APIError as e:
+        logging.error("Sales request failed: %s (database code=%s)", action, e.code)
+        if e.code == "42501":
+            message = "План недоступен: ошибка доступа к базе."
+            code = "sales_database_permissions"
+        elif e.code in {"42P01", "42703", "PGRST204", "PGRST205"}:
+            message = "План недоступен: база продаж не настроена."
+            code = "sales_database_schema"
+        else:
+            message = "Не удалось загрузить план. Повтори загрузку." if action == "view" else "Не удалось подтвердить исправление. Повтори исправление."
+            code = "sales_database_unavailable"
+        return web.json_response({"error": message, "code": code}, status=503, headers=NO_CACHE)
     except Exception:
-        logging.exception("Sales request failed: %s", request.match_info.get("action"))
-        return web.json_response({"error": "Не удалось получить подтверждение. Повтори запрос; повтор не создаст вторую продажу."}, status=503)
+        logging.exception("Sales request failed: %s", action)
+        message = "Не удалось загрузить план. Повтори загрузку." if action == "view" else "Не удалось подтвердить исправление. Повтори исправление."
+        return web.json_response({"error": message}, status=503, headers=NO_CACHE)
 
 
 def register_sales_routes(app):
