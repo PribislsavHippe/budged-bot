@@ -232,6 +232,13 @@ def test_shift_days_filler_words():
         date(2026, 8, 5), date(2026, 8, 7)]
 
 
+def test_decimal_comma_in_transactions():
+    rows = parse_transactions("кофе 250,50, такси 350,75")
+    assert [r["amount"] for r in rows] == [250.5, 350.75]
+    assert len(parse_transactions("кофе 200, такси 350")) == 2
+    assert parse_transactions("чай 1,5к")[0]["amount"] == 1500
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

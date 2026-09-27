@@ -13,6 +13,7 @@ services:
         sync: false
       - key: SUPABASE_URL
         sync: false
+      # Серверный service_role: новые таблицы продаж закрыты для anon.
       - key: SUPABASE_KEY
         sync: false
       - key: WEBHOOK_HOST

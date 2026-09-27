@@ -64,5 +64,7 @@ async def evening_shift_prompt(bot):
 def setup_scheduler(bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
     scheduler.add_job(evening_shift_prompt, "cron", hour=22, minute=30, args=[bot])
+    from google_calendar import retry_pending_shifts
+    scheduler.add_job(retry_pending_shifts, "interval", minutes=10, max_instances=1)
     scheduler.add_job(self_ping, "interval", minutes=10)
     return scheduler

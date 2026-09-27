@@ -136,7 +136,9 @@ def parse_transactions(text: str) -> list[dict]:
     Каждая операция: {kind, account, amount, category, note}.
     """
     items = []
-    for part in re.split(r"[,;\n]+", text):
+    # Запятая между цифрами с одной/двумя цифрами после неё — копейки.
+    # Остальные запятые, точка с запятой и перенос строки разделяют записи.
+    for part in re.split(r"[;\n]+|(?<!\d),|,(?!\d{1,2}(?:\D|$))", text):
         part = part.strip()
         if not part:
             continue

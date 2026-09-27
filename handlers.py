@@ -59,14 +59,14 @@ def today_line(income: float, spent: float) -> str:
     """«За сегодня» = чай − траты смены."""
     net = income - spent
     if spent > 0:
-        return f"<b>За сегодня: {fmt(net)} ₽</b>\nЧай {fmt(income)} − траты {fmt(spent)}"
-    return f"<b>За сегодня: {fmt(income)} ₽</b>"
+        return f"<b>Чистыми за сегодня: {fmt(net)} ₽</b>\nЧаевые до расходов {fmt(income)} − расходы {fmt(spent)}"
+    return f"<b>Чистыми за сегодня: {fmt(income)} ₽</b>\nЧаевые до расходов {fmt(income)} − расходы 0"
 
 
 async def today_totals(user_id: int):
     """Итоги текущей смены. Сутки операционные: ночь принадлежит вчерашнему дню."""
     entries = await db.get_entries_since(user_id, op_day_start_utc_iso(op_today()))
-    income = sum(float(e["signed_amount"]) for e in entries if e["kind"] == "income")
+    income = sum(float(e["signed_amount"]) for e in entries if e["kind"] == "income" and e.get("category") == "Чаевые")
     spent = -sum(float(e["signed_amount"]) for e in entries if e["kind"] == "expense")
     return income, spent
 
@@ -190,6 +190,24 @@ async def cmd_start(message: Message, state: FSMContext):
     await _greet(message, _name(message))
 
 
+@router.message(Command("calendar"))
+async def cmd_calendar(message: Message):
+    import google_calendar as gcal
+    if not gcal.is_configured():
+        await message.answer(gcal.ERROR_MESSAGES["not_configured"])
+        return
+    try:
+        status = await gcal.connection_status(message.from_user.id)
+        if not status["connected"]:
+            await message.answer(status["message"] or "Подключи Google Календарь в Статистике.")
+            return
+        result = await gcal.sync_pending(message.from_user.id)
+        await message.answer(f"📆 Отправлено смен: {result['synced']}. Ожидают: {result['pending']}. " + result["message"])
+    except Exception:
+        logging.exception("Manual calendar sync failed")
+        await message.answer("Синхронизация пока недоступна. Записанные смены сохранены.")
+
+
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     await message.answer(
@@ -200,6 +218,12 @@ async def cmd_help(message: Message):
         "покажу чистыми за смену\n"
         "📋 История — последние записи\n"
         "📊 Статистика — графики и календарь\n\n"
+        "Продажи: <i>бокал</i> · <i>коктейль 2</i> · <i>открытка</i> · <i>двд</i>\n"
+        "Суммы: <i>бутылка 3500</i> · <i>десерты 1200</i> · <i>оборот 25000</i>\n"
+        "<i>план продаж вино 143000; коктейли 110; десерты 82000; оборот 1570000</i>\n"
+        "<i>цена бокала 850</i> — оценка, не подтвержденная выручка\n"
+        "<i>отчет 2026-09-13 вино 73238; коктейли 57</i> — итог с начала месяца\n"
+        "/calendar — повторить отправку смен в Google\n\n"
         "<i>работаю 22 24 26</i> — поставить смены на эти дни; вечером спрошу про чай\n"
         "<i>план 2500</i> — цель по чаю на смену\n"
         "/undo — отменить последнюю запись\n"
@@ -279,7 +303,6 @@ SOURCE_URL = os.getenv("SOURCE_URL")
 @router.message(Command("privacy"))
 async def cmd_privacy(message: Message):
     """Короткий и скучный список того, что лежит в базе. Скучность — это и есть аргумент."""
-    entries = await db.get_recent_entries(message.from_user.id, limit=1)
     shifts = await db.get_shift_dates(message.from_user.id)
     lines = [
         "<b>🔒 Что я о тебе знаю</b>",
@@ -290,13 +313,15 @@ async def cmd_privacy(message: Message):
         "• текст самой записи — он сохраняется как заметка",
         f"• даты смен, которые ты поставил — сейчас {len(shifts)}",
         "• план смены, если задавал",
+        "• личные планы продаж, записи продаж и версии официальных отчётов",
+        "• токены Google Календаря, если подключён",
         "",
         "Чего в базе <b>нет</b>: ни имени, ни @username, ни телефона, "
         "ни номера карты. Имя я беру из твоего сообщения, когда здороваюсь, "
         "и не сохраняю.",
         "",
         "Я не считаю твой баланс и не знаю, сколько у тебя денег — "
-        "только чай за смену.",
+        "чаевые и расходы смены; продажи ресторана хранятся отдельно.",
         "",
         "<b>Никто не видит чужого.</b> В боте нет ни рейтинга, ни сравнения "
         "с коллегами, ни экрана, где видно чужие суммы.",
@@ -304,8 +329,7 @@ async def cmd_privacy(message: Message):
         "/export — забрать все свои записи файлом",
         "/delete — стереть себя без следа",
     ]
-    if not entries:
-        lines.insert(2, "<i>Записей пока нет — и хранить нечего.</i>\n")
+
     if SOURCE_URL:
         lines.append(f"\nКод открыт, можно проверить: {SOURCE_URL}")
     await message.answer("\n".join(lines))
@@ -316,7 +340,11 @@ async def cmd_export(message: Message):
     """Отдать человеку его собственные данные — сигнал «это твоё, а не моё»."""
     entries = await db.get_all_entries(message.from_user.id)
     shifts = await db.get_shift_dates(message.from_user.id)
-    if not entries and not shifts:
+    import sales_db
+    import json
+    sales_data = await sales_db.export(message.from_user.id)
+    has_sales = any(sales_data.values())
+    if not entries and not shifts and not has_sales:
         await message.answer("Выгружать пока нечего — записей нет.")
         return
 
@@ -353,12 +381,17 @@ async def cmd_export(message: Message):
         if len(shifts) > 10:
             caption += f" (и ещё {len(shifts) - 10})"
     await message.answer_document(doc, caption=caption)
+    if has_sales:
+        await message.answer_document(BufferedInputFile(
+            json.dumps(sales_data, ensure_ascii=False, indent=2).encode("utf-8"),
+            filename=f"sales-{op_today().isoformat()}.json",
+        ), caption="Планы продаж, все записи (включая отменённые) и версии сверок.")
 
 
 @router.message(Command("delete"))
 async def cmd_delete(message: Message):
     await message.answer(
-        "Стереть <b>всё</b>: записи, смены, профиль и привязку Google Календаря?\n\n"
+        "Стереть <b>всё</b>: записи, смены, планы продаж, отчёты, профиль и привязку Google Календаря?\n\n"
         "<i>Это навсегда. Восстановить не смогу — у меня не остаётся копии.\n"
         "Хочешь сначала забрать данные — /export</i>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
@@ -548,6 +581,15 @@ async def legacy_button(message: Message):
     )
 
 
+@router.callback_query(F.data.startswith("saleundo:"))
+async def undo_sale(callback: CallbackQuery):
+    import sales_db
+    saved = await sales_db.undo(callback.from_user.id, callback.data.split(":", 1)[1])
+    await callback.answer("Продажа отменена" if saved else "Запись не найдена")
+    if saved:
+        await callback.message.edit_text("↩️ Продажа отменена. Официальный итог отчета не меняется.")
+
+
 # ─── главный обработчик текста ───────────────────────────────────────────────
 
 async def _save_bank_tips(message: Message, notif: dict):
@@ -601,6 +643,35 @@ async def handle_text(message: Message, state: FSMContext):
             await _save_bank_tips(message, notif)
             return
 
+    # Sales use their own journal; malformed sales must never become expenses.
+    from sales_chat import parse_sales_message
+    from sales_service import chat_write
+    from uuid import uuid5, NAMESPACE_URL
+    try:
+        sale = parse_sales_message(text, op_today())
+    except ValueError as e:
+        await message.answer(html.escape(str(e)))
+        return
+    if sale:
+        oid = str(uuid5(NAMESPACE_URL, f"budget-sale:{message.bot.id}:{message.chat.id}:{message.message_id}"))
+        try:
+            saved = await chat_write(message.from_user.id, oid, sale)
+        except Exception:
+            logging.exception("Chat sales write failed")
+            await message.answer("Не получил подтверждение записи. Проверь историю в разделе «План» перед повторным вводом.")
+            return
+        if sale["action"] == "save":
+            names = {"glass":"Бокалы","bottle":"Бутылки","cocktails":"Коктейли","desserts":"Десерты","turnover":"Товарооборот","postcards":"Открытки","dvd":"ДВД"}
+            unit = "шт." if sale["kind"] in ("glass","cocktails","postcards","dvd") else "₽"
+            if saved.get("voided"):
+                await message.answer("Эта продажа уже отменена.")
+                return
+            await message.answer(f"✓ {names[sale['kind']]}: {fmt(sale['value'])} {unit} · смена {sale['work_date']}",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Отменить", callback_data=f"saleundo:{oid}")]]))
+        else:
+            await message.answer("✓ " + ("Отчет сохранен по смену " + sale["cutoff"] + " включительно." if sale["action"] == "report" else "План продаж обновлен: " + sale["month"] + ".") + " Исправления — в разделе «План».")
+        return
+
     # 3. Расписание смен: «работаю 22 24 26» → ставим смены
     shift_dates = p.parse_shift_days(text, op_today())
     if shift_dates is not None:
@@ -611,12 +682,14 @@ async def handle_text(message: Message, state: FSMContext):
         extra = ""
         try:
             import google_calendar as gcal
-            if await gcal.is_connected(message.from_user.id):
-                n = await gcal.create_shift_events(message.from_user.id, iso)
-                if n:
-                    extra = f"\n📆 Добавил в Google Календарь ({n})."
+            token = await db.get_google_token(message.from_user.id)
+            if token and (token.get("google_refresh_token") or token.get("google_access_token")):
+                result = await gcal.sync_shifts(message.from_user.id, iso)
+                extra = f"\n📆 В Google Календаре: {result['synced']} из {len(iso)}."
+                if result["message"]: extra += "\n" + result["message"]
         except Exception:
-            pass
+            logging.exception("Calendar sync failed after shift save")
+            extra = "\nВ Google пока не отправлено. Смены сохранены; повтор — /calendar."
         await message.answer(
             f"📅 Поставил {word}: <b>{human}</b>.{extra}\n"
             "Вечером в эти дни спрошу, сколько вышло чая."

@@ -4,7 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <meta http-equiv="Cache-Control" content="no-store">
-<title>Мой Бюджет</title>
+<title>Моя смена</title>
+<link rel="stylesheet" href="/app/sales.css">
+<link rel="stylesheet" href="/app/tips.css">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;800&display=swap">
@@ -167,6 +169,14 @@
 </head>
 <body>
   <div id="bg"></div>
+  <nav class="app-tabs" role="tablist" aria-label="Разделы">
+    <button id="tab-earnings" role="tab" aria-selected="true" aria-controls="earnings-panel">Чаевые</button>
+    <button id="tab-sales" role="tab" aria-selected="false" aria-controls="sales-panel">План</button>
+  </nav>
+  <section id="sales-panel" role="tabpanel" aria-labelledby="tab-sales" hidden></section>
+  <section id="earnings-panel" role="tabpanel" aria-labelledby="tab-earnings">
+  <section id="tips-dashboard" aria-label="Чаевые и расходы"></section>
+  <div hidden>
   <p class="head" id="head">Загружаю…</p>
 
   <p class="hero-label">За неделю</p>
@@ -184,8 +194,10 @@
     <div class="bar-track"><div class="bar-fill" id="plan-fill"></div></div>
   </div>
 
+  </div>
   <p id="err"></p>
 
+  <details class="tips-disclosure calendar-disclosure"><summary>Календарь смен</summary>
   <div class="cal-head">
     <button class="cal-nav" id="cal-prev" aria-label="Предыдущий месяц">‹</button>
     <span class="cal-title" id="cal-title">Календарь</span>
@@ -198,15 +210,19 @@
   <button class="btn btn-ghost" id="gcal-btn" style="display:none; margin-top:14px">Подключить Google Календарь</button>
   <p class="gcal-hint" id="gcal-hint"></p>
 
-  <button class="btn" id="open-spend">Внести траты смены</button>
-  <button class="btn btn-ghost" id="open-poster">Итоги месяца</button>
-  <button class="btn btn-ghost" id="open-history">История и правки</button>
+  </details>
+  <button class="btn" id="open-spend" hidden>Внести траты смены</button>
+
+  <div class="tips-actions"><button class="btn btn-ghost" id="open-history">История и правки</button><button class="btn btn-ghost" id="open-poster">Итоги месяца</button></div>
+
+
+  </section>
 
   <!-- Панель трат за смену -->
   <div id="spend">
     <div class="sheet">
       <p class="sheet-title">Траты за смену</p>
-      <p class="sheet-sub" id="spend-sub">Выбери категорию и укажи сумму.</p>
+      <p class="sheet-sub" id="spend-sub"></p>
       <div class="chips" id="spend-chips"></div>
       <div class="spend-inputs" id="spend-inputs">
         <input type="text" id="spend-name" placeholder="Название" style="display:none">
@@ -250,7 +266,7 @@
 
       <div class="pt-stats">
         <div class="pt-tile"><div class="t-lbl">Смен</div><div class="t-val" id="pt-shifts">—</div></div>
-        <div class="pt-tile"><div class="t-lbl">Средний чай</div><div class="t-val" id="pt-pct">—</div></div>
+        <div class="pt-tile"><div class="t-lbl">Средний чай за смену</div><div class="t-val" id="pt-pct">—</div></div>
         <div class="pt-tile"><div class="t-lbl" id="pt-rec-lbl">Рекорд смены</div><div class="t-val" id="pt-rec">—</div></div>
         <div class="pt-tile"><div class="t-lbl">Траты смен</div><div class="t-val" id="pt-spend">—</div></div>
       </div>
@@ -323,12 +339,13 @@ function stackCol(day, max, hostClass) {
 
 function render(s) {
   lastStats = s;
-  const now = new Date();
+  window.dispatchEvent(new CustomEvent("earnings-updated"));
+  const now = new Date((s.operational_today || new Date().toISOString().slice(0,10)) + "T12:00:00");
   document.getElementById("head").innerHTML =
     MONTHS_UP[now.getMonth()] + " · " + shiftsWord(s.shifts_count);
   setHero(rub(s.week_net) + " ₽");
   document.getElementById("today").textContent = rub(s.today_net);
-  document.getElementById("month").textContent = rub(s.month_net);
+  document.getElementById("month").textContent = rub(s.tip_month ? s.tip_month.net : s.month_net);
   document.getElementById("total").textContent = rub(s.total_net);
   document.getElementById("month-tag").textContent =
     s.vs_prev_month_pct != null ? ((s.vs_prev_month_pct >= 0 ? "▲ " : "▼ ") + Math.abs(s.vs_prev_month_pct) + "%") : "";
@@ -357,7 +374,7 @@ let calYear = null, calMonth = null;   // что сейчас на экране,
 
 function calViewFromStats(s) {
   // Текущий месяц уже пришёл в /api/stats — лишний запрос не нужен.
-  const now = new Date();
+  const now = new Date((s.operational_today || new Date().toISOString().slice(0,10)) + 'T12:00:00');
   return {
     year: now.getFullYear(), month: now.getMonth() + 1,
     days: s.month_days, days_in_month: s.days_in_month,
@@ -428,7 +445,7 @@ function paintCalendar(view) {
     // Месяц вперёд: чая ещё нет, но смены уже поставлены
     sum.innerHTML = "Запланировано " + shiftsWord(planned);
   } else {
-    sum.textContent = "Смен не было";
+    sum.textContent = "Чаевые за месяц не записаны";
   }
 }
 
@@ -449,7 +466,7 @@ function openDay(view, d) {
   const spent = d.spent || 0;
   const rows = [];
   if (d.tips > 0) {
-    rows.push(dayRow("Чай", rub(d.tips) + " ₽"));
+    rows.push(dayRow("Чаевые до расходов", rub(d.tips) + " ₽"));
     if (d.cash > 0 && d.card > 0) {
       rows.push(dayRow("наличными", rub(d.cash) + " ₽"));
       rows.push(dayRow("картой", rub(d.card) + " ₽"));
@@ -507,12 +524,12 @@ document.getElementById("cal-next").onclick = function () { calStep(1); };
 
 function renderPoster(s) {
   if (!s) return;
-  const now = new Date();
+  const now = new Date((s.operational_today || new Date().toISOString().slice(0,10)) + "T12:00:00");
   document.getElementById("pt-head").textContent = MONTHS_UP[now.getMonth()] + " " + now.getFullYear();
-  document.getElementById("pt-hero").textContent = rub(s.month_net) + " ₽";
+  document.getElementById("pt-hero").textContent = rub(s.tip_month ? s.tip_month.net : s.month_net) + " ₽";
   document.getElementById("pt-shifts").textContent = s.shifts_count;
   document.getElementById("pt-pct").textContent =
-    s.avg_tip_pct != null ? String(s.avg_tip_pct).replace(".", ",") + "%" : "—";
+    s.tip_month?.avg_gross != null ? rub(s.tip_month.avg_gross) + " ₽" : "—";
   if (s.record) {
     document.getElementById("pt-rec-lbl").innerHTML =
       "Рекорд · " + esc(s.record.weekday).toLowerCase() +
@@ -523,7 +540,7 @@ function renderPoster(s) {
     document.getElementById("pt-rec").textContent = "—";
   }
   document.getElementById("pt-spend").textContent =
-    s.shift_spend_month > 0 ? "−" + rub(s.shift_spend_month) : "0";
+    s.tip_month ? "−" + rub(s.tip_month.expenses) : "—";
 
   // Календарь смен, стек нал/карта
   const cal = document.getElementById("pt-cal");
@@ -549,6 +566,8 @@ function renderPoster(s) {
 
 // ── загрузка статистики ──
 function applyStats(s) {
+  const posterMonth = new Date((s.operational_today || new Date().toISOString().slice(0,10)) + "T12:00:00").toLocaleDateString("ru-RU", {month:"long"});
+  document.getElementById("open-poster").textContent = "Итоги · " + posterMonth;
   document.getElementById("err").style.display = "none";
   render(s);
   if (document.getElementById("poster").classList.contains("on")) renderPoster(s);
@@ -645,18 +664,23 @@ function gcalRefresh() {
       if (!s || !s.configured) { btn.style.display = "none"; hint.classList.remove("on"); return; }
       btn.style.display = "block";
       gcalAuthUrl = s.auth_url;
+      btn.disabled = !gcalAuthUrl;
       if (s.connected) {
         btn.textContent = "✓ Google Календарь подключён";
         btn.style.color = "var(--card)";
         btn.style.borderColor = "var(--card)";
-        hint.classList.remove("on");
+        hint.textContent = (s.message || "") + " Повтор отправки смен — /calendar в чате.";
+        hint.classList.add("on");
       } else {
-        btn.textContent = "Подключить Google Календарь";
+        btn.textContent = s.error === "temporary" ? "Google временно недоступен" : s.message ? "Переподключить Google Календарь" : "Подключить Google Календарь";
         btn.style.color = "";
         btn.style.borderColor = "";
         // Пока Google не проверил приложение, доступ выдаётся вручную.
         // Честнее сказать это здесь, чем показать ошибку Google после клика.
-        if (s.invite_only) {
+        if (s.message) {
+          hint.textContent = s.message;
+          hint.classList.add("on");
+        } else if (s.invite_only) {
           hint.textContent = "Google ещё не проверил приложение, поэтому " +
             "подключение открывается вручную. Напиши" +
             (s.support ? " " + s.support : " автору бота") +
@@ -674,6 +698,7 @@ document.getElementById("gcal-btn").onclick = function () {
 };
 
 document.getElementById("open-poster").onclick = function () {
+  if (!lastStats) return;
   renderPoster(lastStats);
   document.getElementById("poster").classList.add("on");
   window.scrollTo(0, 0);
@@ -855,5 +880,7 @@ document.addEventListener("visibilitychange", function () {
   gcalRefresh();
 });
 </script>
+<script src="/app/sales.js"></script>
+<script src="/app/tips.js"></script>
 </body>
 </html>

@@ -84,67 +84,143 @@ async def exchange_code(user_id: int, code: str) -> None:
     await db.save_google_token(user_id, tok["access_token"], tok.get("refresh_token"), expiry)
 
 
-async def _valid_token(user_id: int) -> str | None:
+class CalendarError(Exception):
+    def __init__(self, code):
+        self.code = code
+        super().__init__(code)
+
+
+ERROR_MESSAGES = {
+    "reconnect": "Google требует повторного подключения. Открой Статистику → Google Календарь.",
+    "temporary": "Google временно недоступен. Смены сохранены, отправку повторим автоматически.",
+    "forbidden": "Google не разрешил запись в календарь. Проверь доступ приложения и настройки Calendar API.",
+    "not_configured": "Google Календарь не настроен на сервере.",
+}
+
+
+async def _valid_token(user_id: int, force_refresh=False) -> str:
     data = await db.get_google_token(user_id)
-    if not data or not data.get("google_refresh_token"):
-        return None
-    access = data.get("google_access_token")
-    expiry = data.get("google_token_expiry")
-    if access and expiry:
+    if not data or data.get("google_reconnect_required"):
+        raise CalendarError("reconnect")
+    access, expiry = data.get("google_access_token"), data.get("google_token_expiry")
+    if not force_refresh and access and expiry:
         try:
-            exp = datetime.fromisoformat(expiry)
-            if exp > datetime.now(timezone.utc) + timedelta(minutes=2):
-                return access
-        except ValueError:
+            exp = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+            if exp.tzinfo is None: exp = exp.replace(tzinfo=timezone.utc)
+            if exp > datetime.now(timezone.utc) + timedelta(minutes=2): return access
+        except (ValueError, TypeError):
             pass
-    # обновляем по refresh_token
-    async with httpx.AsyncClient(timeout=20) as c:
-        r = await c.post(_TOKEN, data={
-            "refresh_token": data["google_refresh_token"], "client_id": CLIENT_ID,
-            "client_secret": CLIENT_SECRET, "grant_type": "refresh_token",
-        })
+    if not data.get("google_refresh_token"):
+        await db.mark_google_reconnect(user_id, True)
+        raise CalendarError("reconnect")
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.post(_TOKEN, data={"refresh_token":data["google_refresh_token"],
+                "client_id":CLIENT_ID,"client_secret":CLIENT_SECRET,"grant_type":"refresh_token"})
+    except httpx.HTTPError:
+        raise CalendarError("temporary") from None
     if r.status_code != 200:
-        logging.warning(f"google token refresh failed for {user_id}: {r.text[:200]}")
-        return None
+        try:
+            code = r.json().get("error") if r.status_code in (400,401) else None
+        except ValueError:
+            raise CalendarError("temporary") from None
+        if code == "invalid_grant":
+            await db.mark_google_reconnect(user_id, True)
+            raise CalendarError("reconnect")
+        raise CalendarError("forbidden" if r.status_code in (400,401,403) else "temporary")
     tok = r.json()
-    new_exp = (datetime.now(timezone.utc) + timedelta(seconds=tok.get("expires_in", 3600))).isoformat()
-    await db.save_google_token(user_id, tok["access_token"], None, new_exp)
+    expiry = (datetime.now(timezone.utc) + timedelta(seconds=tok.get("expires_in",3600))).isoformat()
+    await db.save_google_token(user_id,tok["access_token"],tok.get("refresh_token"),expiry)
     return tok["access_token"]
 
 
 async def is_connected(user_id: int) -> bool:
     data = await db.get_google_token(user_id)
-    return bool(data and data.get("google_refresh_token"))
+    return bool(data and (data.get("google_refresh_token") or data.get("google_access_token"))
+                and not data.get("google_reconnect_required"))
 
 
-# ─── события ─────────────────────────────────────────────────────────────────
+async def connection_status(user_id: int) -> dict:
+    data = await db.get_google_token(user_id)
+    if not data or not (data.get("google_refresh_token") or data.get("google_access_token")):
+        return {"connected":False,"message":""}
+    try:
+        await _valid_token(user_id)
+        return {"connected":True,"message":"Смены отправляются в основной календарь Google."}
+    except CalendarError as e:
+        return {"connected":False,"message":ERROR_MESSAGES[e.code],"error":e.code}
+
+
+async def _request(user_id, method, **kwargs):
+    token = await _valid_token(user_id)
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(timeout=20) as c:
+                r = await getattr(c, method)(_EVENTS, headers={"Authorization":f"Bearer {token}"}, **kwargs)
+        except httpx.HTTPError:
+            raise CalendarError("temporary") from None
+        if r.status_code != 401: break
+        if attempt == 0: token = await _valid_token(user_id, force_refresh=True)
+    if r.status_code == 401:
+        await db.mark_google_reconnect(user_id,True)
+        raise CalendarError("reconnect")
+    if r.status_code == 403: raise CalendarError("forbidden")
+    if r.status_code >= 400 and r.status_code != 409: raise CalendarError("temporary")
+    return r
+
 
 async def create_shift_event(user_id: int, date_iso: str) -> bool:
-    """Создаёт событие-на-весь-день «Смена» на дату (YYYY-MM-DD)."""
-    token = await _valid_token(user_id)
-    if not token:
-        return False
+    if not is_configured(): raise CalendarError("not_configured")
     d = date.fromisoformat(date_iso)
-    end = (d + timedelta(days=1)).isoformat()  # all-day: end = следующий день
-    body = {
-        "summary": "Смена",
-        "start": {"date": date_iso},
-        "end": {"date": end},
-        "transparency": "transparent",
-        "extendedProperties": {"private": {"budgetbot": "shift"}},
-    }
-    try:
-        async with httpx.AsyncClient(timeout=20) as c:
-            r = await c.post(_EVENTS, headers={"Authorization": f"Bearer {token}"}, json=body)
-        return r.status_code in (200, 201)
-    except Exception as e:
-        logging.warning(f"create_shift_event failed for {user_id}: {e}")
-        return False
+    # Detect events created by older versions with random IDs before retrying.
+    params = {"privateExtendedProperty":"budgetbot=shift",
+        "timeMin":(d-timedelta(days=1)).isoformat()+"T00:00:00Z",
+        "timeMax":(d+timedelta(days=2)).isoformat()+"T00:00:00Z", "maxResults":250}
+    while True:
+        existing = (await _request(user_id,"get",params=params)).json()
+        if any(e.get("start",{}).get("date")==date_iso and e.get("status")!="cancelled" for e in existing.get("items",[])):
+            return True
+        if not existing.get("nextPageToken"): break
+        params["pageToken"] = existing["nextPageToken"]
+    # Hex is valid base32hex for Google event IDs. A lost response can be retried safely.
+    event_id = hashlib.sha256(f"budgetbot-shift:{user_id}:{date_iso}".encode()).hexdigest()
+    r = await _request(user_id,"post",json={"id":event_id,"summary":"Смена",
+        "start":{"date":date_iso},"end":{"date":(d+timedelta(days=1)).isoformat()},
+        "transparency":"transparent","extendedProperties":{"private":{"budgetbot":"shift"}}})
+    return r.status_code in (200,201,409)
+
+
+async def sync_shifts(user_id: int, dates_iso: list[str]) -> dict:
+    synced = 0; error = None
+    for day in dates_iso:
+        try:
+            ok = await create_shift_event(user_id,day)
+            await db.mark_google_shift(user_id,day,ok,None if ok else "temporary")
+            synced += int(ok)
+        except CalendarError as e:
+            error = e.code
+            await db.mark_google_shift(user_id,day,False,error)
+            if error in ("reconnect","forbidden","not_configured"): break
+    return {"synced":synced,"pending":len(dates_iso)-synced,"error":error,
+            "message":ERROR_MESSAGES.get(error,"")}
+
+
+async def sync_pending(user_id: int) -> dict:
+    rows = await db.pending_google_shifts(user_id)
+    return await sync_shifts(user_id,[r["shift_date"] for r in rows])
+
+
+async def retry_pending_shifts():
+    if not is_configured(): return
+    rows = await db.pending_google_shifts()
+    grouped = {}
+    for row in rows: grouped.setdefault(row["user_id"],[]).append(row["shift_date"])
+    for uid, dates in grouped.items():
+        try:
+            if await is_connected(uid): await sync_shifts(uid,dates)
+        except Exception:
+            logging.exception("Calendar retry failed for user %s",uid)
 
 
 async def create_shift_events(user_id: int, dates_iso: list[str]) -> int:
-    created = 0
-    for d in dates_iso:
-        if await create_shift_event(user_id, d):
-            created += 1
-    return created
+    return (await sync_shifts(user_id, dates_iso))["synced"]

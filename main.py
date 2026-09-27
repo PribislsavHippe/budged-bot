@@ -1,6 +1,8 @@
 """Точка входа. Локально — polling, на Render (есть WEBHOOK_HOST) — webhook + мини-ап."""
 import asyncio
 import logging
+import hashlib
+import hmac
 import os
 
 from aiogram import Bot, Dispatcher
@@ -45,7 +47,10 @@ async def run_webhook(bot: Bot, dp: Dispatcher):
     me = await bot.get_me()
     app = web.Application()
     app.router.add_get("/", lambda _: web.Response(text="OK"))
-    SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=WEBHOOK_PATH)
+    secret = os.getenv("WEBHOOK_SECRET") or hmac.new(
+        BOT_TOKEN.encode(), b"telegram-webhook", hashlib.sha256
+    ).hexdigest()
+    SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=secret).register(app, path=WEBHOOK_PATH)
     setup_application(app, dp, bot=bot)
     register_webapp_routes(app, BOT_TOKEN, me.username)
 
@@ -53,7 +58,7 @@ async def run_webhook(bot: Bot, dp: Dispatcher):
     await runner.setup()
     await web.TCPSite(runner, WEBAPP_HOST, WEBAPP_PORT).start()
 
-    await bot.set_webhook(f"{WEBHOOK_HOST}{WEBHOOK_PATH}")
+    await bot.set_webhook(f"{WEBHOOK_HOST}{WEBHOOK_PATH}", secret_token=secret)
     try:
         await bot.set_chat_menu_button(
             menu_button=MenuButtonWebApp(

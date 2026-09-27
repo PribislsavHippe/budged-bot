@@ -13,6 +13,7 @@ import json
 import os
 import sys
 import types
+import time
 from urllib.parse import urlencode
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -173,7 +174,7 @@ TOKEN = "123456:TEST"
 
 def init_data(token, uid):
     user = json.dumps({"id": uid, "first_name": "T"})
-    pairs = {"user": user, "auth_date": "1789000000", "query_id": "AAA"}
+    pairs = {"user": user, "auth_date": str(int(time.time())), "query_id": "AAA"}
     dcs = "\n".join(f"{k}={v}" for k, v in sorted(pairs.items()))
     secret = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
     h = hmac.new(secret, dcs.encode(), hashlib.sha256).hexdigest()
@@ -219,50 +220,16 @@ def test_empty_rejected():
 
 # ─── /api/shift_spend ────────────────────────────────────────────────────────
 
-def test_shift_spend_happy():
+def test_shift_spend_chat_only():
     _db.added.clear()
-    r = run(webapp_api.api_shift_spend(Req({
-        "initData": init_data(TOKEN, 42), "category": "Бар", "amount": 500,
-    })))
-    assert r.status == 200
-    assert len(_db.added) == 1
-    e = _db.added[0]
-    assert e["kind"] == "expense" and e["account"] == "cash"
-    assert e["signed_amount"] == -500 and e["category"] == "Бар"
-    assert e["note"] == "трата смены" and e["user_id"] == 42
-
-
-def test_shift_spend_unauthorized():
-    _db.added.clear()
-    r = run(webapp_api.api_shift_spend(Req({"initData": "", "amount": 500})))
-    assert r.status == 401
+    r = run(webapp_api.api_shift_spend(Req({"initData":init_data(TOKEN,42),"amount":500})))
+    assert r.status == 405
     assert not _db.added
 
 
-def test_shift_spend_bad_amount():
-    for bad in ["abc", 0, -100, 2_000_000, None]:
-        _db.added.clear()
-        r = run(webapp_api.api_shift_spend(Req({
-            "initData": init_data(TOKEN, 42), "category": "Бар", "amount": bad,
-        })))
-        assert r.status == 400, f"amount={bad!r} should be rejected"
-        assert not _db.added
-
-
-def test_shift_spend_category_default():
-    _db.added.clear()
-    run(webapp_api.api_shift_spend(Req({
-        "initData": init_data(TOKEN, 42), "category": "  ", "amount": 100,
-    })))
-    assert _db.added[0]["category"] == "Прочее"
-
-
-def test_shift_spend_category_truncated():
-    _db.added.clear()
-    run(webapp_api.api_shift_spend(Req({
-        "initData": init_data(TOKEN, 42), "category": "Ч" * 100, "amount": 100,
-    })))
-    assert len(_db.added[0]["category"]) == 40
+def test_shift_spend_unauthorized():
+    r = run(webapp_api.api_shift_spend(Req({"initData":"","amount":500})))
+    assert r.status == 401
 
 
 def test_bad_json_400():

@@ -7,6 +7,7 @@ import hmac
 import json
 import logging
 import os
+import time
 from urllib.parse import parse_qsl
 
 from aiohttp import web
@@ -31,6 +32,9 @@ def validate_init_data(init_data: str, bot_token: str) -> int | None:
         calculated = hmac.new(secret, check_string.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(calculated, received_hash):
             return None
+        age = time.time() - int(pairs.get("auth_date", "0"))
+        if not -60 <= age <= 86400:
+            return None
         user = json.loads(pairs.get("user", "{}"))
         return int(user["id"])
     except Exception as e:
@@ -51,6 +55,10 @@ async def _stats_payload(app: web.Application, user_id: int) -> dict:
     goal = await db.get_shift_goal(user_id)
     payload = compute_stats(entries, shift_goal=goal)
     payload["bot_username"] = app.get("bot_username")
+    from tips_stats import summarize
+    today = op_today()
+    payload["tip_month"] = summarize(entries, today.replace(day=1), today, today)
+    payload["operational_today"] = today.isoformat()
     # Смены берём все разом: из них и календарь текущего месяца, и понимание,
     # есть ли соседние месяцы, куда листать.
     today = op_today()
@@ -67,6 +75,8 @@ async def _auth(request: web.Request):
         body = await request.json()
     except Exception:
         return None, web.json_response({"error": "bad request"}, status=400)
+    if not isinstance(body, dict):
+        return None, web.json_response({"error": "bad request"}, status=400)
     user_id = validate_init_data(body.get("initData", ""), request.app["bot_token"])
     if user_id is None:
         return None, web.json_response({"error": "unauthorized"}, status=401)
@@ -81,22 +91,30 @@ async def api_stats(request: web.Request) -> web.Response:
 
 
 async def api_shift_spend(request: web.Request) -> web.Response:
-    """Внести трату за смену прямо из мини-апа. Возвращает свежую статистику."""
     user_id, body = await _auth(request)
     if user_id is None:
         return body
-    category = (str(body.get("category") or "Прочее").strip() or "Прочее")[:40]
+    return web.json_response({"error": "Расходы записываются в чате бота: кофе 200 или Закрыть смену"}, status=405)
+
+
+async def api_tips_compare(request: web.Request) -> web.Response:
+    from datetime import date
+    from tips_stats import compare_tips
+    user_id, body = await _auth(request)
+    if user_id is None:
+        return body
     try:
-        amount = float(body.get("amount"))
-    except (TypeError, ValueError):
-        return web.json_response({"error": "bad amount"}, status=400)
-    if not (0 < amount <= 1_000_000):
-        return web.json_response({"error": "bad amount"}, status=400)
-    await db.add_entry(
-        user_id, "expense", db.CASH, -round(amount, 2),
-        category=category, note="трата смены",
-    )
-    return web.json_response(await _stats_payload(request.app, user_id), headers=NO_CACHE)
+        kind = body.get("kind", "month")
+        anchor = date.fromisoformat(body["anchor"]) if body.get("anchor") else None
+        other = date.fromisoformat(body["other"]) if body.get("other") else None
+        aligned = body.get("aligned", True)
+        if not isinstance(aligned, bool):
+            raise ValueError("Недопустимый режим сравнения")
+        entries = await db.get_all_entries(user_id)
+        result = compare_tips(entries, kind, anchor, other, aligned)
+    except (ValueError, TypeError):
+        return web.json_response({"error": "Проверь даты и тип периода"}, status=400)
+    return web.json_response(result, headers=NO_CACHE)
 
 
 async def api_month(request: web.Request) -> web.Response:
@@ -178,11 +196,14 @@ async def api_gcal(request: web.Request) -> web.Response:
         return body
     if not gcal.is_configured():
         return web.json_response({"configured": False, "connected": False}, headers=NO_CACHE)
-    connected = await gcal.is_connected(user_id)
+    status = await gcal.connection_status(user_id)
+    connected = status["connected"]
     return web.json_response({
         "configured": True,
+        "message": status["message"],
+        "error": status.get("error"),
         "connected": connected,
-        "auth_url": None if connected else gcal.auth_url(user_id),
+        "auth_url": None if connected or status.get("error") == "temporary" else gcal.auth_url(user_id),
         # Приложение не прошло проверку Google, доступ выдаётся вручную —
         # мини-ап предупреждает об этом до нажатия кнопки.
         "invite_only": gcal.INVITE_ONLY,
@@ -207,8 +228,13 @@ async def google_callback(request: web.Request) -> web.Response:
         logging.error(f"google callback error: {e}")
         return web.Response(text=page + "<h2>Ошибка</h2><p>Не удалось подключить календарь.</p>",
                             content_type="text/html", status=500)
+    try:
+        sync = await gcal.sync_pending(user_id)
+    except Exception:
+        logging.exception("Google connected but backfill failed")
+        sync = {"synced": 0, "pending": "неизвестно", "message": "Подключение сохранено. Повторите отправку смен командой /calendar."}
     return web.Response(
-        text=page + "<h2>Готово ✓</h2><p>Google Календарь подключён.<br>Возвращайся в Telegram.</p>",
+        text=page + f"<h2>Подключено ✓</h2><p>Синхронизировано смен: {sync['synced']}. Ожидают: {sync['pending']}.</p><p>{sync['message']}</p><p>Возвращайся в Telegram.</p>",
         content_type="text/html",
     )
 
@@ -216,8 +242,17 @@ async def google_callback(request: web.Request) -> web.Response:
 def register_webapp_routes(app: web.Application, bot_token: str, bot_username: str | None = None):
     app["bot_token"] = bot_token
     app["bot_username"] = bot_username
+    from sales_api import register_sales_routes
+    register_sales_routes(app)
     app.router.add_get("/app", serve_app)
+    app.router.add_get("/app/sales.js", lambda _: web.FileResponse(os.path.join(WEBAPP_DIR, "sales.js"), headers=NO_CACHE))
+    app.router.add_get("/app/sales.css", lambda _: web.FileResponse(os.path.join(WEBAPP_DIR, "sales.css"), headers=NO_CACHE))
     app.router.add_post("/api/stats", api_stats)
+    app.router.add_post("/api/tips_compare", api_tips_compare)
+    for asset in ("tips.js", "tips.css"):
+        async def serve_asset(request, asset=asset):
+            return web.FileResponse(os.path.join(WEBAPP_DIR, asset), headers=NO_CACHE)
+        app.router.add_get("/app/" + asset, serve_asset)
     app.router.add_post("/api/shift_spend", api_shift_spend)
     app.router.add_post("/api/month", api_month)
     app.router.add_post("/api/entries", api_entries)

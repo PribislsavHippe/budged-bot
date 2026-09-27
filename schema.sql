@@ -54,3 +54,5 @@ CREATE INDEX idx_shifts_user ON shifts(user_id, shift_date);
 ALTER TABLE users DISABLE ROW LEVEL SECURITY;
 ALTER TABLE entries DISABLE ROW LEVEL SECURITY;
 ALTER TABLE shifts DISABLE ROW LEVEL SECURITY;
+
+-- После создания основной схемы также выполни migration_v7.sql (продажи) и migration_v8.sql (синхронизация Google).
