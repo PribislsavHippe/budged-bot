@@ -1,5 +1,6 @@
 """Private-chat report import with consent, ephemeral drafts and explicit confirmation."""
 import asyncio
+import html
 import io
 import logging
 from dataclasses import dataclass, field
@@ -69,6 +70,8 @@ def date_valid(value):
 
 def preview(draft):
     lines = [f'<b>Отчёт по {draft.cutoff} включительно</b>']
+    if draft.report.get('selected_name'):
+        lines.append(html.escape(draft.report['selected_name']))
     for key, label in LABELS.items():
         value = draft.totals.get(key)
         unit = 'шт.' if key in ('cocktails', 'postcards', 'dvd') else '₽'
@@ -169,6 +172,21 @@ async def photo_callback(callback):
                 await callback.message.edit_text(text, reply_markup=kb(draft, [('Повторить', 'read'), ('Отмена', 'cancel')]))
                 return
             draft.phase = 'row'
+            from identity_chat import enabled as identity_enabled
+            if identity_enabled():
+                import identity
+                try:
+                    index = await identity.report_row(callback.from_user.id,draft.report['rows'])
+                except Exception:
+                    logging.error('Identity lookup for photo failed')
+                    index = None
+                if index is not None:
+                    row = draft.report.pop('rows')[index]
+                    draft.totals = row['totals']
+                    draft.report['selected_name'] = row['name']
+                    await callback.message.edit_text('Твоя строка найдена.')
+                    await ask_date_or_preview(callback.message,draft)
+                    return
             await callback.message.edit_text('Выбери свою строку:', reply_markup=kb(draft,
                 [(row['name'] or f'Строка {i+1}', f'row{i}') for i, row in enumerate(draft.report['rows'])] + [('Отмена', 'cancel')]))
         elif action.startswith('row') and draft.phase == 'row':
@@ -177,6 +195,7 @@ async def photo_callback(callback):
                 if not 0 <= index < len(draft.report['rows']):
                     return
                 draft.totals = draft.report['rows'][index]['totals']
+                draft.report['selected_name'] = draft.report['rows'][index]['name']
             except ValueError:
                 return
             draft.report.pop('rows', None)  # Discard other employees immediately.

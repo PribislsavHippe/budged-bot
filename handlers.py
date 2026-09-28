@@ -228,10 +228,14 @@ async def cmd_help(message: Message):
         "<i>план 2500</i> — цель по чаю на смену\n"
         "/undo — отменить последнюю запись\n"
         "/reset — очистить журнал\n\n"
-        "🔒 /privacy — что я о тебе храню (спойлер: почти ничего)\n"
+        "🔒 /privacy — какие данные хранятся\n"
         "/export — забрать свои записи файлом\n"
         "/delete — стереть себя без следа"
     )
+    from identity_chat import enabled
+    if enabled():
+        await message.answer("/profile — привязка к ресторану\n/team — сотрудники и заявки для администратора\n"
+                             "/restaurant Название — создать ресторан владельцу бота\n/invite — приглашение сотрудникам")
 
 
 # ─── история ─────────────────────────────────────────────────────────────────
@@ -318,9 +322,10 @@ async def cmd_privacy(message: Message):
         "• фото отчёта отправляется в Groq только после нажатия «Распознать»; "
         "фото не сохраняется в базе, черновик распознавания хранится в памяти до 15 минут",
         "",
-        "Чего в базе <b>нет</b>: ни имени, ни @username, ни телефона, "
-        "ни номера карты. Имя я беру из твоего сообщения, когда здороваюсь, "
-        "и не сохраняю.",
+        "Для идентификации сотрудника отдельно сохраняются ресторан, имя или код "
+        "из отчёта и статус подтверждения. Администратор ресторана видит эти привязки "
+        "и Telegram ID, но не личные чаевые и расходы.",
+        "Имя профиля Telegram, @username, телефон и номер карты не сохраняются.",
         "",
         "Я не считаю твой баланс и не знаю, сколько у тебя денег — "
         "чаевые и расходы смены; продажи ресторана хранятся отдельно.",
@@ -346,7 +351,13 @@ async def cmd_export(message: Message):
     import json
     sales_data = await sales_db.export(message.from_user.id)
     has_sales = any(sales_data.values())
-    if not entries and not shifts and not has_sales:
+    from identity_chat import enabled as identity_enabled
+    identity_data = None
+    if identity_enabled():
+        import identity
+        identity_data = await identity.export(message.from_user.id)
+    has_identity = bool(identity_data and any(identity_data.values()))
+    if not entries and not shifts and not has_sales and not has_identity:
         await message.answer("Выгружать пока нечего — записей нет.")
         return
 
@@ -388,12 +399,17 @@ async def cmd_export(message: Message):
             json.dumps(sales_data, ensure_ascii=False, indent=2).encode("utf-8"),
             filename=f"sales-{op_today().isoformat()}.json",
         ), caption="Планы продаж, все записи (включая отменённые) и версии сверок.")
+    if has_identity:
+        await message.answer_document(BufferedInputFile(
+            json.dumps(identity_data, ensure_ascii=False, indent=2).encode('utf-8'),
+            filename=f'identity-{op_today().isoformat()}.json'), caption='Твоя привязка сотрудника и ресторан.')
 
 
 @router.message(Command("delete"))
 async def cmd_delete(message: Message):
     await message.answer(
-        "Стереть <b>всё</b>: записи, смены, планы продаж, отчёты, профиль и привязку Google Календаря?\n\n"
+        "Стереть <b>всё</b>: записи, смены, планы продаж, отчёты, профиль, привязку сотрудника и Google Календаря?\n"
+        "Если ты администратор ресторана, ресторан останется без администратора.\n\n"
         "<i>Это навсегда. Восстановить не смогу — у меня не остаётся копии.\n"
         "Хочешь сначала забрать данные — /export</i>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
