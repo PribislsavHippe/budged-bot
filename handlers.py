@@ -4,7 +4,6 @@
 Принцип: записываем сразу, отмена — одной кнопкой. Многошаговых диалогов нет.
 """
 import csv
-import glob
 import html
 import io
 import logging
@@ -18,10 +17,8 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     BufferedInputFile,
     CallbackQuery,
-    FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    InputMediaPhoto,
     KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
@@ -30,6 +27,7 @@ from aiogram.types import (
 
 import db
 import parser as p
+from chat_dates import human_date
 from workday import MSK, entry_op_date, op_day_start_utc_iso, op_today
 
 router = Router()
@@ -112,13 +110,13 @@ def undo_kb(entry_ids: list[int], toggle_entry: dict | None = None) -> InlineKey
 
 def _welcome_text(name: str) -> str:
     return (
-        f"Привет, {name}! Я считаю твои чаевые.\n\n"
-        "— пишешь <i>«чай 500»</i> — записываю сразу\n"
-        "— пересылаешь сообщение банка о чаевых — записываю сам\n"
-        "— в конце смены нажимаешь «🧾 Закрыть смену» и вносишь траты — "
-        "покажу, сколько осталось чистыми\n\n"
-        "Запиши первую: <i>чай 500</i>"
+        f"Привет, {html.escape(name)}! Спасибо, что присоединился к тестированию — ты крутой 💛\n\n"
+        "Вместе делаем суперполезного бота для смен: он считает чаевые, вычитает расходы "
+        "и помогает следить за продажами.\n\n"
+        "Напиши «чай 500» или пришли фото отчёта. Если что-то неудобно или непонятно, "
+        "расскажи администратору — твоя обратная связь поможет сделать бота лучше."
     )
+
 
 
 def _name(message: Message) -> str:
@@ -126,53 +124,8 @@ def _name(message: Message) -> str:
     return message.from_user.first_name or "друг"
 
 
-ONBOARDING_DIR = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "webapp", "onboarding"
-)
-# Слайд «Как начать» со ссылкой на бота нужен только тем, кто смотрит
-# презентацию со стороны. Человеку, который уже открыл чат, идти по ссылке
-# некуда — в знакомство этот слайд не попадает.
-SHARE_ONLY_SLIDES = {"slide-6.jpg"}
-
-# file_id, выданные Телеграмом при первой отправке: заливать полтора мегабайта
-# заново каждому новому человеку незачем.
-_slide_file_ids: list[str] = []
-
-
-def onboarding_slide_paths() -> list[str]:
-    return [
-        p for p in sorted(glob.glob(os.path.join(ONBOARDING_DIR, "slide-*.jpg")))
-        if os.path.basename(p) not in SHARE_ONLY_SLIDES
-    ]
-
-
-async def send_onboarding_slides(message: Message) -> None:
-    """Картинки с объяснением бота — альбомом, перед приветствием.
-
-    Если картинок нет или Телеграм отказал, знакомство продолжается текстом:
-    из-за оформления человек не должен остаться без ответа.
-    """
-    global _slide_file_ids
-    paths = onboarding_slide_paths()
-    if not paths:
-        return
-    try:
-        if _slide_file_ids:
-            media = [InputMediaPhoto(media=fid) for fid in _slide_file_ids]
-        else:
-            media = [InputMediaPhoto(media=FSInputFile(p)) for p in paths]
-        sent = await message.answer_media_group(media)
-        if not _slide_file_ids:
-            _slide_file_ids = [m.photo[-1].file_id for m in sent if m.photo]
-    except Exception as e:
-        logging.warning(f"onboarding slides failed: {e}")
-
-
 async def _greet(message: Message, name: str):
     await db.set_onboarded(message.from_user.id)
-    # Сначала картинки — они объясняют бота быстрее текста, — потом
-    # приветствие с клавиатурой: у альбома своих кнопок быть не может.
-    await send_onboarding_slides(message)
     await message.answer(_welcome_text(name), reply_markup=main_menu())
 
 
@@ -205,7 +158,7 @@ async def cmd_calendar(message: Message):
         await message.answer(f"📆 Отправлено смен: {result['synced']}. Ожидают: {result['pending']}. " + result["message"])
     except Exception:
         logging.exception("Manual calendar sync failed")
-        await message.answer("Синхронизация пока недоступна. Записанные смены сохранены.")
+        await message.answer("Смены сохранил, но пока не смог добавить их в Google Календарь. Попробуй /calendar позже.")
 
 
 @router.message(Command("help"))
@@ -222,7 +175,7 @@ async def cmd_help(message: Message):
         "Суммы: <i>бутылка 3500</i> · <i>десерты 1200</i> · <i>оборот 25000</i>\n"
         "<i>план продаж вино 143000; коктейли 110; десерты 82000; оборот 1570000</i>\n"
         "<i>цена бокала 850</i> — оценка, не подтвержденная выручка\n"
-        "<i>отчет 2026-09-13 вино 73238; коктейли 57</i> — итог с начала месяца\n"
+        "<i>отчёт по 13 сентября, вино 73 238, коктейли 57</i> — итог с начала месяца\n"
         "/calendar — повторить отправку смен в Google\n\n"
         "<i>работаю 22 24 26</i> — поставить смены на эти дни; вечером спрошу про чай\n"
         "<i>план 2500</i> — цель по чаю на смену\n"
@@ -230,11 +183,11 @@ async def cmd_help(message: Message):
         "/reset — очистить журнал\n\n"
         "🔒 /privacy — какие данные хранятся\n"
         "/export — забрать свои записи файлом\n"
-        "/delete — стереть себя без следа"
+        "/delete — удалить свои данные"
     )
     from identity_chat import enabled
     if enabled():
-        await message.answer("/profile — привязка к ресторану\n/team — сотрудники и заявки для администратора\n"
+        await message.answer("/profile — твой ресторан\n/team — сотрудники и заявки для администратора\n"
                              "/restaurant Название — создать ресторан владельцу бота\n/invite — приглашение сотрудникам")
 
 
@@ -318,13 +271,14 @@ async def cmd_privacy(message: Message):
         f"• даты смен, которые ты поставил — сейчас {len(shifts)}",
         "• план смены, если задавал",
         "• личные планы продаж, записи продаж и версии официальных отчётов",
-        "• токены Google Календаря, если подключён",
+        "• разрешение на добавление смен в Google Календарь, если ты его подключил",
         "• фото отчёта отправляется в Groq только после нажатия «Распознать»; "
         "фото не сохраняется в базе, черновик распознавания хранится в памяти до 15 минут",
         "",
-        "Для идентификации сотрудника отдельно сохраняются ресторан, имя или код "
-        "из отчёта и статус подтверждения. Администратор ресторана видит эти привязки "
-        "и Telegram ID, но не личные чаевые и расходы.",
+        "Чтобы находить твою строку в отчёте, сохраняются ресторан, имя или код "
+        "из отчёта и статус подтверждения. Администратор видит твоё имя, Telegram ID, "
+        "планы и продажи, записанные после присоединения к ресторану. "
+        "Личные чаевые и расходы в его кабинете не показываются.",
         "Имя профиля Telegram, @username, телефон и номер карты не сохраняются.",
         "",
         "Я не считаю твой баланс и не знаю, сколько у тебя денег — "
@@ -334,7 +288,7 @@ async def cmd_privacy(message: Message):
         "с коллегами, ни экрана, где видно чужие суммы.",
         "",
         "/export — забрать все свои записи файлом",
-        "/delete — стереть себя без следа",
+        "/delete — удалить свои данные",
     ]
 
     if SOURCE_URL:
@@ -358,7 +312,7 @@ async def cmd_export(message: Message):
         identity_data = await identity.export(message.from_user.id)
     has_identity = bool(identity_data and any(identity_data.values()))
     if not entries and not shifts and not has_sales and not has_identity:
-        await message.answer("Выгружать пока нечего — записей нет.")
+        await message.answer("Пока нет записей, которые можно скачать.")
         return
 
     from datetime import datetime
@@ -413,7 +367,7 @@ async def cmd_delete(message: Message):
         "<i>Это навсегда. Восстановить не смогу — у меня не остаётся копии.\n"
         "Хочешь сначала забрать данные — /export</i>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="Да, стереть меня", callback_data="del:yes"),
+            InlineKeyboardButton(text="Да, удалить мои данные", callback_data="del:yes"),
             InlineKeyboardButton(text="Отмена", callback_data="del:no"),
         ]]),
     )
@@ -470,7 +424,7 @@ async def cb_toggle_account(callback: CallbackQuery):
 
 # ─── план смены ──────────────────────────────────────────────────────────────
 
-PLAN_RE = re.compile(r"^\s*план(?:\s+смены)?\s*[:\-—]?\s*(\d[\d ]*)?\s*$", re.IGNORECASE)
+PLAN_RE = re.compile(r"^\s*(?:план|цель)(?:\s+(?:на\s+)?смен[ыу])?\s*[:\-—]?\s*((?:\d[\d .,]*|ноль)(?:\s*(?:к|тыс\.?|тысяч[аи]?))?(?:\s*(?:₽|руб(?:лей|ля|ль|\.)?))?)?\s*$", re.IGNORECASE)
 
 
 @router.message(F.text.regexp(PLAN_RE))
@@ -485,9 +439,14 @@ async def shift_plan(message: Message):
                 "Изменить: <i>план 2500</i> · Убрать: <i>план 0</i>"
             )
         else:
-            await message.answer("План не задан. Задай: <i>план 2000</i>")
+            await message.answer("Пока не знаем цель на смену. Напиши: <i>план 2000</i>")
         return
-    goal = float(raw.replace(" ", ""))
+    from sales_chat import _value
+    try:
+        goal = _value(raw, zero=True)
+    except ValueError as error:
+        await message.answer(html.escape(str(error)))
+        return
     if goal <= 0:
         await db.set_shift_goal(message.from_user.id, None)
         await message.answer("План смены убрал.")
@@ -538,7 +497,7 @@ async def shift_spend_chip(callback: CallbackQuery, state: FSMContext):
         return
     await state.set_state(ShiftSpend.waiting_amount)
     await state.update_data(shift_category=choice)
-    await callback.message.answer(f"Сколько ушло на «{choice}»? Просто число.")
+    await callback.message.answer(f"Сколько ушло на «{choice}»? Например, 350 рублей.")
     await callback.answer()
 
 
@@ -676,7 +635,7 @@ async def handle_text(message: Message, state: FSMContext):
             saved = await chat_write(message.from_user.id, oid, sale)
         except Exception:
             logging.exception("Chat sales write failed")
-            await message.answer("Не получил подтверждение записи. Проверь историю в разделе «План» перед повторным вводом.")
+            await message.answer("Ответ о сохранении не пришёл. Загляни в историю в разделе «План», прежде чем отправлять сумму снова.")
             return
         if sale["action"] == "save":
             names = {"glass":"Бокалы","bottle":"Бутылки","cocktails":"Коктейли","desserts":"Десерты","turnover":"Товарооборот","postcards":"Открытки","dvd":"ДВД"}
@@ -684,10 +643,10 @@ async def handle_text(message: Message, state: FSMContext):
             if saved.get("voided"):
                 await message.answer("Эта продажа уже отменена.")
                 return
-            await message.answer(f"✓ {names[sale['kind']]}: {fmt(sale['value'])} {unit} · смена {sale['work_date']}",
+            await message.answer(f"✓ {names[sale['kind']]}: {fmt(sale['value'])} {unit} · смена {human_date(sale['work_date'])}",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Отменить", callback_data=f"saleundo:{oid}")]]))
         else:
-            await message.answer("✓ " + ("Отчет сохранен по смену " + sale["cutoff"] + " включительно." if sale["action"] == "report" else "План продаж обновлен: " + sale["month"] + ".") + " Исправления — в разделе «План».")
+            await message.answer("✓ " + ("Записал отчёт по " + human_date(sale["cutoff"]) + " включительно." if sale["action"] == "report" else "План продаж обновлен: " + sale["month"] + ".") + " Исправления — в разделе «План».")
         return
 
     # 3. Расписание смен: «работаю 22 24 26» → ставим смены

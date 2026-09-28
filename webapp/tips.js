@@ -37,7 +37,7 @@
     $('tips-result').hidden=true;$('tips-comparison-result').hidden=true;$('tips-daily-result').hidden=true;
     try{
       const r=await fetch('/api/tips_compare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initData:tg?.initData||'',kind,anchor:inputDate('tips-a'),other:custom?inputDate('tips-b'):undefined,aligned:$('tips-align').checked}),signal:activeController.signal});
-      const s=await r.json();if(!r.ok)throw new Error(r.status===401?'Открой мини-приложение заново: сессия истекла.':s.error);
+      const s=await r.json();if(!r.ok)throw new Error(r.status===401?'Открой бота и зайди в приложение ещё раз.':s.error);
       if(token!==request)return;current=s;
       for(const [id,p] of [['tips-a',s.overview],['tips-b',s.b]]){$(id).value=kind==='month'?p.start.slice(0,7):p.start;$(id).max=kind==='month'?s.today.slice(0,7):s.today;}
       $('tips-next').disabled=s.a_full_end>=s.today;$('tips-prev').disabled=s.overview.start<=(kind==='month'?'2000-01-01':'2000-01-03');

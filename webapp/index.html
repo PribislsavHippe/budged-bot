@@ -7,6 +7,7 @@
 <title>Моя смена</title>
 <link rel="stylesheet" href="/app/sales.css">
 <link rel="stylesheet" href="/app/tips.css">
+<link rel="stylesheet" href="/app/restaurant.css">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;800&display=swap">
@@ -172,7 +173,9 @@
   <nav class="app-tabs" role="tablist" aria-label="Разделы">
     <button id="tab-earnings" role="tab" aria-selected="true" aria-controls="earnings-panel">Чаевые</button>
     <button id="tab-sales" role="tab" aria-selected="false" aria-controls="sales-panel">План</button>
+    <button id="tab-restaurant" role="tab" aria-selected="false" aria-controls="restaurant-panel" hidden>Ресторан</button>
   </nav>
+  <section id="restaurant-panel" role="tabpanel" aria-labelledby="tab-restaurant" hidden></section>
   <section id="sales-panel" role="tabpanel" aria-labelledby="tab-sales" hidden></section>
   <section id="earnings-panel" role="tabpanel" aria-labelledby="tab-earnings">
   <section id="tips-dashboard" aria-label="Чаевые и расходы"></section>
@@ -506,7 +509,7 @@ function loadMonth(year, month) {
     .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then(paintCalendar)
     .catch(function (e) {
-      document.getElementById("cal-sum").textContent = "Не смог загрузить месяц (" + e.message + ")";
+      document.getElementById("cal-sum").textContent = "Не получилось загрузить месяц. Попробуй ещё раз.";
     })
     .then(function () { grid.classList.remove("loading"); });
 }
@@ -582,7 +585,7 @@ function load() {
     .catch(function (e) {
       const el = document.getElementById("err");
       el.style.display = "block";
-      el.textContent = "Не смог загрузить данные. Открой мини-ап из чата с ботом. (" + e.message + ")";
+      el.textContent = "Не получилось загрузить данные. Открой бота и зайди в приложение ещё раз.";
       document.getElementById("head").textContent = "Мой Бюджет";
     });
 }
@@ -640,7 +643,7 @@ function submitSpend() {
       document.getElementById("spend-amount").value = "";
       document.getElementById("spend-name").value = "";
     })
-    .catch(function (e) { document.getElementById("spend-note").textContent = "Не вышло записать (" + e.message + ")"; });
+    .catch(function (e) { document.getElementById("spend-note").textContent = "Не получилось сохранить. Проверь историю, прежде чем повторять."; });
 }
 
 document.getElementById("open-spend").onclick = openSpend;
@@ -785,7 +788,7 @@ function editEntry(id, payload, silent) {
     })
     .catch(function (err) {
       document.getElementById("hist-list").insertAdjacentHTML("afterbegin",
-        '<p class="hist-empty">Не вышло: ' + err.message + '</p>');
+        '<p class="hist-empty">Не получилось сохранить. Обнови историю и проверь запись.</p>');
       return null;
     });
 }
@@ -810,7 +813,7 @@ function openHistory() {
     .then(function (resp) { histEntries = resp.entries; renderHistory(); })
     .catch(function (err) {
       document.getElementById("hist-list").innerHTML =
-        '<p class="hist-empty">Не смог загрузить (' + err.message + ')</p>';
+        '<p class="hist-empty">Не получилось загрузить историю. Попробуй ещё раз.</p>';
     });
 }
 
@@ -882,5 +885,6 @@ document.addEventListener("visibilitychange", function () {
 </script>
 <script src="/app/sales.js"></script>
 <script src="/app/tips.js"></script>
+<script src="/app/restaurant.js"></script>
 </body>
 </html>

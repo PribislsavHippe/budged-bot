@@ -7,8 +7,8 @@ from uuid import uuid4
 from postgrest.exceptions import APIError
 import db
 
-STATUSES = {'pending':'Ожидает подтверждения', 'approved':'Подтверждено',
-            'rejected':'Заявка отклонена', 'revoked':'Привязка отозвана'}
+STATUSES = {'pending':'Ждём подтверждения администратора', 'approved':'Ты в команде',
+            'rejected':'Заявка отклонена', 'revoked':'Доступ к ресторану закрыт'}
 
 
 def name(value):
@@ -31,16 +31,16 @@ async def action(uid, kind, args):
         return (await db._execute(db.supabase.rpc('identity_action', {'actor':uid,'action':kind,'args':args}))).data
     except APIError as error:
         # Provider error text is used only for fixed classification, never echoed.
-        messages = {'identity_forbidden':'Нет прав для этого действия.',
-                    'identity_stale':'Эта заявка уже изменилась. Открой /team заново.',
-                    'identity_invite_expired':'Приглашение недействительно. Попроси новое у администратора.',
-                    'identity_other_restaurant':'Сначала отключи прежнюю привязку в /profile.'}
+        messages = {'identity_forbidden':'Это может сделать администратор ресторана.',
+                    'identity_stale':'Заявка уже изменилась. Обнови список сотрудников или открой /team.',
+                    'identity_invite_expired':'Эта ссылка больше не работает. Попроси администратора прислать новую.',
+                    'identity_other_restaurant':'Сначала выйди из прежнего ресторана через /profile.'}
         for code, message in messages.items():
             if code in str(error):
                 raise ValueError(message) from None
         if error.code == '23505':
-            raise ValueError('Это имя уже привязано. Проверь сотрудника; для тёзок нужен уникальный код в отчёте.') from None
-        raise ValueError('Идентификация недоступна. Проверь миграцию v9 и серверный ключ Supabase.') from None
+            raise ValueError('Под этим именем уже есть сотрудник. Если это тёзки, в отчёте нужны разные имена или коды.') from None
+        raise ValueError('Пока не получается подключить тебя к ресторану. Сообщи администратору — он поможет.') from None
 
 
 async def owner_restaurant(uid):

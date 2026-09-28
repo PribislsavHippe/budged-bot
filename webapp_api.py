@@ -244,12 +244,14 @@ def register_webapp_routes(app: web.Application, bot_token: str, bot_username: s
     app["bot_username"] = bot_username
     from sales_api import register_sales_routes
     register_sales_routes(app)
+    from restaurant_api import register
+    register(app)
     app.router.add_get("/app", serve_app)
     app.router.add_get("/app/sales.js", lambda _: web.FileResponse(os.path.join(WEBAPP_DIR, "sales.js"), headers=NO_CACHE))
     app.router.add_get("/app/sales.css", lambda _: web.FileResponse(os.path.join(WEBAPP_DIR, "sales.css"), headers=NO_CACHE))
     app.router.add_post("/api/stats", api_stats)
     app.router.add_post("/api/tips_compare", api_tips_compare)
-    for asset in ("tips.js", "tips.css"):
+    for asset in ("tips.js", "tips.css", "restaurant.js", "restaurant.css"):
         async def serve_asset(request, asset=asset):
             return web.FileResponse(os.path.join(WEBAPP_DIR, asset), headers=NO_CACHE)
         app.router.add_get("/app/" + asset, serve_asset)

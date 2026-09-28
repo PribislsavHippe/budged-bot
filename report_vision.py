@@ -55,7 +55,7 @@ def clean_result(raw):
 
 async def request_json(image, prompt, max_tokens=1800):
     if not configured():
-        raise VisionError('Распознавание пока не подключено.')
+        raise VisionError('Читать фото пока не умею. Можно записать отчёт сообщением.')
     if not image or len(image) > MAX_BYTES:
         raise VisionError('Пришли фото размером до 8 МБ.')
     if image.startswith(b'\xff\xd8\xff'):
@@ -63,7 +63,7 @@ async def request_json(image, prompt, max_tokens=1800):
     elif image.startswith(b'\x89PNG\r\n\x1a\n'):
         mime = 'image/png'
     else:
-        raise VisionError('Нужно изображение JPEG или PNG.')
+        raise VisionError('Пришли фото или скриншот в JPG или PNG.')
     body = {'model': os.getenv('GROQ_VISION_MODEL', MODEL),
             'messages': [{'role': 'system', 'content': prompt}, {'role': 'user', 'content': [
                 {'type': 'text', 'text': 'Extract this report as JSON.'},
@@ -81,12 +81,12 @@ async def request_json(image, prompt, max_tokens=1800):
             except (ValueError, AttributeError):
                 message = ''
             if isinstance(message, str) and 'request too large' in message.lower():
-                raise VisionError('Запрос превышает лимит Groq по размеру. Повтор того же запроса не поможет; требуется уменьшить объём обработки.')
-            raise VisionError('Лимит распознавания исчерпан. Попробуй позже.')
+                raise VisionError('Фото не проходит по размеру запроса. Попробуй прислать только таблицу, без полей вокруг.')
+            raise VisionError('Сервис пока не принимает новые фото. Попробуй чуть позже.')
         if response.status_code in (401, 403):
-            raise VisionError('Сервис распознавания недоступен: проверь настройку ключа Groq.')
+            raise VisionError('Фото пока прочитать не получается. Сообщи администратору — он проверит подключение.')
         if response.status_code != 200:
-            raise VisionError('Сервис не смог обработать фото. Попробуй позже.')
+            raise VisionError('Не получилось прочитать фото. Попробуй чуть позже.')
         choice = response.json()['choices'][0]
         if choice.get('finish_reason') != 'stop':
             raise ValueError('Incomplete response')
@@ -99,7 +99,7 @@ async def recognize(image):
     try:
         result = clean_result(await request_json(image, PROMPT, 6000))
     except (ValueError, TypeError):
-        raise VisionError('Не удалось проверить числа отчёта.') from None
+        raise VisionError('Не уверен в цифрах на фото. Пришли более чёткий файл или запиши их сообщением.') from None
     if not result['rows']:
         raise VisionError('Не удалось прочитать отчёт. Пришли более чёткий файл.')
     return result
@@ -148,7 +148,7 @@ async def recognize_row(image, index, expected_name):
         raw['totals']={key:printed_number(value) for key,value in raw['totals'].items()}
         row=clean_result({'rows':[raw],'targets':{}})['rows'][0]
         if normalize(row['name'])!=normalize(expected_name):
-            raise VisionError('Имя в строке не совпало. Пришли более чёткий файл; данные не сохранены.')
+            raise VisionError('Не уверен, что прочитал твою строку. Ничего не сохранил — пришли более чёткий файл.')
         import math
         percentages=raw.get('percent',{})
         if not isinstance(percentages,dict):raise ValueError()

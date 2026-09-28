@@ -1,0 +1,26 @@
+#restaurant-panel {font-family:Inter,sans-serif;color:#172126;padding-bottom:32px}
+#restaurant-panel [hidden],.app-tabs [hidden]{display:none!important}
+.restaurant-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.restaurant-head h1{font-size:24px;margin:8px 0 20px;overflow-wrap:anywhere}
+#restaurant-panel input{font:inherit;border:1px solid #bdc8cd;border-radius:6px;padding:9px;max-width:100%;box-sizing:border-box;background:#fff}
+#restaurant-panel button{font:inherit;cursor:pointer;color:#203c49;min-height:44px;border:0;background:none;padding:8px}
+#restaurant-panel button:disabled{opacity:.45;cursor:default}
+#restaurant-panel label{display:block;margin-bottom:14px}
+#restaurant-panel label input{display:block;width:100%;margin-top:8px}
+.restaurant-filters{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid #dbe1e4;margin-top:12px}
+.restaurant-filters button[aria-pressed=true]{font-weight:600;border-bottom:2px solid #203c49}
+.restaurant-scope,.restaurant-id{font-size:12px;color:#52616b;line-height:1.5}
+.restaurant-member{border-bottom:1px solid #dbe1e4;padding:16px 0}
+.restaurant-member summary{display:flex;justify-content:space-between;align-items:center;gap:12px;cursor:pointer;list-style:none}
+.restaurant-member strong{font-size:15px;font-weight:600}
+.restaurant-member small{display:block;font-size:12px;font-weight:400;color:#52616b;margin-top:5px}
+.restaurant-turnover{text-align:right;font-size:20px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.restaurant-member table{width:100%;border-collapse:collapse;font-size:13px;margin:12px 0;font-variant-numeric:tabular-nums}
+.restaurant-member th,.restaurant-member td{text-align:right;padding:10px 3px;border-bottom:1px solid #edf0f2}
+.restaurant-member th:first-child{text-align:left;font-weight:400}
+.restaurant-actions{display:flex;gap:8px;flex-wrap:wrap}
+.restaurant-pages{display:flex;justify-content:space-between;align-items:center;margin:12px 0;font-size:13px}
+.restaurant-invite{margin-top:24px}.restaurant-invite summary{cursor:pointer;padding:10px 0}
+#restaurant-error{color:#9a3426;line-height:1.5}#restaurant-notice{color:#315547;font-size:14px}
+#restaurant-panel :focus-visible{outline:2px solid #355e72;outline-offset:3px}
+@media(max-width:380px){.restaurant-head{align-items:flex-start;flex-direction:column}.restaurant-head h1{margin-bottom:0}.restaurant-turnover{font-size:17px}.restaurant-filters button{font-size:12px}.app-tabs{gap:18px}}

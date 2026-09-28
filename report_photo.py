@@ -14,7 +14,8 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 import db
 import report_vision as vision
 from sales import month_key
-from sales_chat import parse_sales_message
+from sales_chat import parse_sales_message, parse_report_edit
+from chat_dates import parse_date, human_date
 from sales_service import chat_write, save_report
 from workday import op_today
 
@@ -64,7 +65,7 @@ def kb(draft, buttons):
 
 
 def date_valid(value):
-    day = date.fromisoformat(value)
+    day = parse_date(value, op_today())
     month_key(day.isoformat()[:7])
     if day > op_today():
         raise ValueError('Дата отчёта не может быть в будущем.')
@@ -76,7 +77,7 @@ def number(value):
 
 
 def preview(draft):
-    lines = [f'<b>Отчёт по {draft.cutoff} включительно</b>']
+    lines = [f"<b>Отчёт по {human_date(draft.cutoff) if draft.cutoff else '—'} включительно</b>"]
     if draft.report.get('selected_name'):
         lines.append(html.escape(draft.report['selected_name']))
     for key, label in LABELS.items():
@@ -85,7 +86,7 @@ def preview(draft):
         mark = '⚠ ' if key in draft.report.get('warnings', []) else ''
         lines.append(mark + (f'{label}: {number(value)} {unit}' if value is not None else f'{label}: —'))
     if draft.report.get('row_mode'):
-        lines.append('\nСверка с планом: ' + draft.report.get('check_status','—'))
+        lines.append('\nПроверка по плану: ' + draft.report.get('check_status','—'))
     if draft.report.get('targets'):
         lines.append('\n<b>Месячный план</b>')
         for key, value in draft.report['targets'].items():
@@ -102,7 +103,7 @@ async def reset_draft(message):
     if draft:
         expire(message.from_user.id, draft)
     if message.text.split()[0].split('@')[0] == '/cancel':
-        await message.answer('Черновик закрыт.')
+        await message.answer('Хорошо, этот отчёт не сохраняю.')
         return
     return UNHANDLED
 
@@ -110,7 +111,7 @@ async def reset_draft(message):
 @router.message(F.photo | (F.document.mime_type.in_({'image/jpeg', 'image/png'})))
 async def receive_photo(message):
     if not vision.configured():
-        await message.answer('Распознавание отчётов пока не подключено.')
+        await message.answer('Читать фото пока не умею. Можно записать отчёт сообщением.')
         return
     old = drafts.get(message.from_user.id)
     if old and (old.lock.locked() or old.phase == 'uncertain'):
@@ -121,7 +122,7 @@ async def receive_photo(message):
         await message.answer('Пришли фото размером до 8 МБ.')
         return
     if len(drafts) >= 100 and message.from_user.id not in drafts:
-        await message.answer('Распознавание занято. Попробуй позже.')
+        await message.answer('Сейчас читаю другие отчёты. Попробуй через минуту.')
         return
     oid = str(uuid5(NAMESPACE_URL, f'report-photo:{message.bot.id}:{message.chat.id}:{message.message_id}'))
     if old and old.oid == oid:
@@ -140,7 +141,7 @@ async def ask_date_or_preview(message, draft):
         draft.cutoff = date_valid(draft.cutoff)
     except (ValueError, TypeError):
         draft.phase = 'date'
-        await message.answer('По какую дату отчёт включительно? Напиши ГГГГ-ММ-ДД.',
+        await message.answer('По какой день этот отчёт? Например: «13 сентября», «13.09» или «вчера».',
                              reply_markup=kb(draft, [('Отмена', 'cancel')]))
         return
     if draft.report.get('row_mode'):
@@ -155,17 +156,17 @@ async def photo_callback(callback):
     parts = callback.data.split(':')
     draft = drafts.get(callback.from_user.id)
     if len(parts) != 3 or not draft or draft.nonce != parts[1]:
-        await callback.answer('Черновик истёк. Пришли фото заново.', show_alert=True)
+        await callback.answer('Это фото уже закрылось. Пришли его ещё раз.', show_alert=True)
         return
     if draft.lock.locked():
-        await callback.answer('Обрабатываю…')
+        await callback.answer('Ещё читаю фото…')
         return
     await callback.answer()
     async with draft.lock:
         action = parts[2]
         if action == 'cancel':
             expire(callback.from_user.id, draft)
-            await callback.message.edit_text('Черновик закрыт.')
+            await callback.message.edit_text('Хорошо, этот отчёт не сохраняю.')
         elif action == 'read' and draft.phase == 'consent':
             draft.phase = 'reading'
             await callback.message.edit_text('Распознаю…')
@@ -181,7 +182,7 @@ async def photo_callback(callback):
                     if vision.row_mode():
                         data = image.getvalue()
                         if sum(len(item.image or b'') for item in drafts.values() if item is not draft) + len(data) > MAX_IMAGE_MEMORY:
-                            raise vision.VisionError('Распознавание занято. Попробуй позже.')
+                            raise vision.VisionError('Сейчас читаю другие отчёты. Попробуй через минуту.')
                         draft.image = data
                         draft.report = await vision.recognize_directory(draft.image)
                         draft.report['row_mode'] = True
@@ -206,7 +207,7 @@ async def photo_callback(callback):
                 if index is not None:
                     if not await select_row(callback.message, draft, index):
                         return
-                    await callback.message.edit_text('Твоя строка найдена.')
+                    await callback.message.edit_text('Нашёл твою строку. Проверь цифры.')
                     await ask_date_or_preview(callback.message,draft)
                     return
             await callback.message.edit_text('Выбери свою строку:', reply_markup=kb(draft,
@@ -221,12 +222,12 @@ async def photo_callback(callback):
             except ValueError:
                 return
             draft.report.pop('rows', None)  # Discard other employees immediately.
-            await callback.message.edit_text('Строка выбрана.')
+            await callback.message.edit_text('Нашёл. Проверь цифры перед сохранением.')
             await ask_date_or_preview(callback.message, draft)
         elif action == 'edit' and draft.phase == 'review':
             draft.phase = 'edit'
-            await callback.message.answer('Пришли исправленный отчёт: отчет ГГГГ-ММ-ДД вино 73238; коктейли 57. '
-                                          'Будут сохранены только перечисленные показатели; план из фото будет пропущен.',
+            await callback.message.answer('Напиши, что исправить: «вино 73 238, коктейлей 57». Остальные числа оставлю. '
+                                          'Чтобы поменять и дату: «отчёт за вчера, вино 73 238».',
                                           reply_markup=kb(draft, [('Отмена', 'cancel')]))
         elif action == 'save' and draft.phase in ('review', 'uncertain'):
             draft.phase = 'uncertain'
@@ -239,8 +240,8 @@ async def photo_callback(callback):
                 await save_report(callback.from_user.id, draft.oid, month, draft.cutoff, draft.totals)
             except Exception:
                 logging.error('Photo report save failed')
-                await callback.message.answer('Не удалось подтвердить сохранение. План мог уже обновиться. Повтори сохранение этого отчёта; повтор не создаст дубль.',
-                                             reply_markup=kb(draft, [('Повторить сохранение', 'save')]))
+                await callback.message.answer('Ответ о сохранении не пришёл. Нажми «Сохранить ещё раз» — второй такой записи не появится.',
+                                             reply_markup=kb(draft, [('Сохранить ещё раз', 'save')]))
                 return
             expire(callback.from_user.id, draft)
             await callback.message.edit_text('Отчёт сохранён.' + (' План месяца обновлён.' if draft.report.get('targets') else ''))
@@ -261,17 +262,16 @@ async def photo_text(message):
             if draft.phase == 'date':
                 draft.cutoff = date_valid(message.text.strip())
             else:
-                command = parse_sales_message(message.text, op_today())
-                if not command or command['action'] != 'report':
-                    raise ValueError('Нужен текст вида: отчет ГГГГ-ММ-ДД вино 73238; коктейли 57')
-                draft.cutoff = date_valid(command['cutoff'])
-                draft.totals = command['totals']
+                cutoff, totals = parse_report_edit(message.text, op_today(), draft.cutoff, draft.totals)
+                draft.cutoff = date_valid(cutoff)
+                draft.totals = totals
                 draft.report['targets'] = {}
                 draft.report['percent'] = {}
             await ask_date_or_preview(message, draft)
-        except (ValueError, TypeError):
-            await message.answer('Проверь дату и числа. ' + ('Дата: ГГГГ-ММ-ДД.' if draft.phase == 'date' else
-                                                          'Пример: отчет 2026-09-13 вино 73238; коктейли 57'))
+        except (ValueError, TypeError) as error:
+            await message.answer(html.escape(str(error)) if isinstance(error, ValueError) else
+                                 'Не совсем понял. Напиши дату словами или показатель и число: «вино 73 238».')
+
 
 
 async def select_row(message, draft, index):
@@ -281,7 +281,7 @@ async def select_row(message, draft, index):
             if not draft.image:
                 raise vision.VisionError('Фото больше недоступно. Пришли отчёт заново.')
             if _recognition_slots.locked():
-                raise vision.VisionError('Распознавание занято. Попробуй позже.')
+                raise vision.VisionError('Сейчас читаю другие отчёты. Попробуй через минуту.')
             await message.answer('Читаю твою строку…')
             async with _recognition_slots:
                 row=await vision.recognize_row(draft.image,row['index'],row['name'])

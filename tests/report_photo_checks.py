@@ -85,6 +85,25 @@ class RowVisionTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(vision.VisionError):await vision.recognize_row(b'photo',0,'Другой Человек')
 
 class FlowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_flexible_shift_goal(self):
+        import handlers
+        message=NS(from_user=NS(id=1),text='план 2,5 тыс',answer=AsyncMock())
+        self.assertIsNotNone(handlers.PLAN_RE.fullmatch(message.text))
+        self.assertIsNone(handlers.PLAN_RE.fullmatch('план на октябрь вино 143 тыс'))
+        with patch.object(handlers.db,'set_shift_goal',new=AsyncMock()) as save:
+            await handlers.shift_plan(message)
+            save.assert_awaited_once_with(1,2500)
+
+    async def test_welcome_has_no_presentation(self):
+        import handlers
+        message=NS(from_user=NS(id=1),answer=AsyncMock(),answer_media_group=AsyncMock())
+        with patch.object(handlers.db,'set_onboarded',new=AsyncMock()):
+            await handlers._greet(message,'<Имя>')
+        message.answer_media_group.assert_not_awaited()
+        text=message.answer.call_args.args[0]
+        self.assertIn('тестированию',text);self.assertIn('крутой',text)
+        self.assertIn('&lt;Имя&gt;',text)
+
     def test_preview_does_not_round_large_amounts(self):
         draft=photo.Draft('n','id','file',totals={'turnover':919783.5})
         self.assertIn('919 783,5',photo.preview(draft))
@@ -135,7 +154,7 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(photo.drafts[1],draft)
             self.assertEqual(draft.phase,'consent')
             self.assertEqual(self.message.edit_text.call_args.args[0],
-                             'Лимит распознавания исчерпан. Попробуй позже.')
+                             'Сервис пока не принимает новые фото. Попробуй чуть позже.')
             save.assert_not_awaited();plans.assert_not_awaited()
             with patch.object(vision,'recognize',new=AsyncMock(return_value=vision.clean_result(copy.deepcopy(RAW)))):
                 await photo.photo_callback(self.callback(draft,'read'))

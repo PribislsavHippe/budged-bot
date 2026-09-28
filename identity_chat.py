@@ -34,7 +34,7 @@ def buttons(rows):
 
 
 async def error(message, exception):
-    text=str(exception) if isinstance(exception,ValueError) else 'Идентификация недоступна. Попробуй позже.'
+    text=str(exception) if isinstance(exception,ValueError) else 'Сейчас не получается открыть данные ресторана. Попробуй чуть позже.'
     await message.answer(html.escape(text))
 
 
@@ -74,7 +74,7 @@ async def start_invite(message,command,state):
     await state.clear()
     await state.set_state(Identification.name)
     await state.update_data(invite_token=token)
-    await message.answer('Напиши своё имя точно как в отчёте. Оно сохранится в базе и будет видно администратору ресторана для подтверждения.\n/cancel — отменить')
+    await message.answer('Как тебя зовут в отчёте? Администратор проверит имя и увидит твои планы и продажи, записанные после присоединения. Личные чаевые и расходы останутся доступны только тебе в боте.\n/cancel — отменить')
 
 
 @router.message(Identification.name, F.photo | F.document)
@@ -95,7 +95,7 @@ async def register_name(message,state):
     try:
         result=await identity.request(message.from_user.id,data.get('invite_token',''),message.text)
         await state.clear()
-        await message.answer(f"{identity.STATUSES[result['status']]}.\n/profile — твоя привязка")
+        await message.answer(f"{identity.STATUSES[result['status']]}.\n/profile — твой ресторан")
     except Exception as exc: await error(message,exc)
 
 
@@ -104,12 +104,12 @@ async def profile(message):
     try:
         row=await identity.profile(message.from_user.id)
         if not row:
-            await message.answer('Привязки нет. Открой приглашение своего ресторана.')
+            await message.answer('Ты ещё не присоединился к ресторану. Открой ссылку, которую прислал администратор.')
             return
         note='' if row['has_admin'] else '\nУ ресторана нет действующего администратора.'
         await message.answer(f"<b>{html.escape(row['restaurant_name'])}</b>\n"
                              f"В отчёте: {html.escape(row['report_name'])}\n{identity.STATUSES[row['status']]}{note}",
-                             reply_markup=buttons([[('Отключить привязку',f"ident:leaveask:{row['id']}")]]))
+                             reply_markup=buttons([[('Выйти из ресторана',f"ident:leaveask:{row['id']}")]]))
     except Exception as exc: await error(message,exc)
 
 
@@ -143,19 +143,19 @@ async def callback(query):
         _,action,target=query.data.split(':')
         if action=='page':
             page=int(target)
-            if not 0<=page<=1000:raise ValueError('Недопустимая страница.')
+            if not 0<=page<=1000:raise ValueError('Не получилось открыть страницу. Обнови список.')
             await show_team(query.message,query.from_user.id,page)
             return
         target=str(UUID(target))
         if action in ('leaveask','leave'):
             row=await identity.profile(query.from_user.id)
-            if not row or row['id']!=target:raise ValueError('Привязка уже изменилась. Открой /profile.')
+            if not row or row['id']!=target:raise ValueError('Данные ресторана уже изменились. Открой /profile ещё раз.')
             if action=='leaveask':
-                await query.message.answer('Отключить привязку? Личные записи и отчёты останутся.',reply_markup=buttons([
+                await query.message.answer('Выйти из ресторана? Личные записи и отчёты останутся.',reply_markup=buttons([
                     [('Отключить',f'ident:leave:{target}'),('Отмена',f'ident:cancel:{target}')]]))
             else:
                 await identity.action(query.from_user.id,'leave',{'id':target})
-                await query.message.edit_text('Привязка отключена.')
+                await query.message.edit_text('Ты вышел из ресторана. Твои записи остались.')
         elif action=='cancel':await query.message.edit_text('Отмена.')
         elif action=='revokeask':
             # The final mutation checks owner, restaurant and current status atomically.

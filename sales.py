@@ -11,15 +11,15 @@ DEFAULT_GLASS_PRICE = 850
 
 def number(value, *, count=False, zero=False):
     if isinstance(value, bool) or value is None:
-        raise ValueError("Укажи число")
+        raise ValueError("Напиши число, например 250 или 250,50")
     try:
         n = Decimal(str(value).replace(" ", "").replace(",", "."))
     except InvalidOperation:
-        raise ValueError("Укажи число") from None
+        raise ValueError("Напиши число, например 250 или 250,50") from None
     if not n.is_finite() or n < 0 or (n == 0 and not zero) or n > 100_000_000:
-        raise ValueError("Сумма или количество вне допустимого диапазона")
+        raise ValueError("Нужно число от нуля до 100 миллионов; для новой продажи — больше нуля")
     if n != n.quantize(Decimal("1") if count else Decimal("0.01")):
-        raise ValueError("Количество должно быть целым, сумма — не точнее копейки")
+        raise ValueError("Количество укажи целым числом, а сумму — с копейками, например 250,50")
     return int(n) if count else float(n)
 
 
@@ -29,15 +29,15 @@ def month_key(value):
     try:
         d = date.fromisoformat(value + "-01")
     except ValueError:
-        raise ValueError("Укажи месяц в формате ГГГГ-ММ") from None
+        raise ValueError("Выбери месяц ещё раз") from None
     if not 2000 <= d.year <= 2100 or d.strftime("%Y-%m") != value:
-        raise ValueError("Недопустимый месяц")
+        raise ValueError("Этот месяц не поддерживается. Выбери другой")
     return value
 
 
 def validate_values(values, keys):
     if not isinstance(values, dict) or not set(values) <= set(keys):
-        raise ValueError("Неизвестный показатель")
+        raise ValueError("Не понял, что это за показатель")
     return {k: number(v, count=k in COUNTS, zero=True) for k, v in values.items()}
 
 

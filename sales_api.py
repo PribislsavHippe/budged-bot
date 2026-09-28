@@ -15,7 +15,7 @@ def operation_id(value):
     try:
         return str(UUID(str(value)))
     except (ValueError, TypeError, AttributeError):
-        raise ValueError("Нужен идентификатор операции") from None
+        raise ValueError("Не получилось сохранить изменение. Обнови страницу и попробуй ещё раз") from None
 
 
 def work_date(value, month):
@@ -81,7 +81,7 @@ async def handle(request):
                 raise ValueError("Заполни хотя бы один результат")
             complete = body.get("records_complete", False)
             if not isinstance(complete, bool):
-                raise ValueError("Укажи полноту записей")
+                raise ValueError("Отметь, все ли продажи за этот период записаны")
             oid = operation_id(body.get("operation_id"))
             settings, events, reports = await sales_db.load(user_id, month)
             if not any(r["cutoff"] == cutoff for r in reports):
@@ -96,18 +96,18 @@ async def handle(request):
     except APIError as e:
         logging.error("Sales request failed: %s (database code=%s)", action, e.code)
         if e.code == "42501":
-            message = "План недоступен: ошибка доступа к базе."
+            message = "План пока не открывается. Сообщи администратору — он проверит подключение."
             code = "sales_database_permissions"
         elif e.code in {"42P01", "42703", "PGRST204", "PGRST205"}:
-            message = "План недоступен: база продаж не настроена."
+            message = "Раздел продаж ещё не настроен. Сообщи администратору."
             code = "sales_database_schema"
         else:
-            message = "Не удалось загрузить план. Повтори загрузку." if action == "view" else "Не удалось подтвердить исправление. Повтори исправление."
+            message = "Не удалось загрузить план. Повтори загрузку." if action == "view" else "Ответ о сохранении не пришёл. Нажми «Сохранить ещё раз»."
             code = "sales_database_unavailable"
         return web.json_response({"error": message, "code": code}, status=503, headers=NO_CACHE)
     except Exception:
         logging.exception("Sales request failed: %s", action)
-        message = "Не удалось загрузить план. Повтори загрузку." if action == "view" else "Не удалось подтвердить исправление. Повтори исправление."
+        message = "Не удалось загрузить план. Повтори загрузку." if action == "view" else "Ответ о сохранении не пришёл. Нажми «Сохранить ещё раз»."
         return web.json_response({"error": message}, status=503, headers=NO_CACHE)
 
 

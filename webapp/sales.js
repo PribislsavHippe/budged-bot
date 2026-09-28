@@ -14,21 +14,21 @@
   function persist(){try{pending?sessionStorage.setItem(storage,JSON.stringify(pending)):sessionStorage.removeItem(storage);}catch(_){}}
   $('sales-panel').innerHTML=`<div class="sales-toolbar"><h1>План месяца</h1><input id="sales-month" aria-label="Месяц плана" type="month" min="2000-01" max="2100-12"></div>
     <div id="sales-error" role="alert"></div><p id="sales-status" role="status"></p>
-    <button class="btn btn-ghost" id="sales-reload" hidden>Повторить загрузку</button><button class="btn" id="sales-retry" hidden>Повторить исправление</button>
+    <button class="btn btn-ghost" id="sales-reload" hidden>Загрузить ещё раз</button><button class="btn" id="sales-retry" hidden>Сохранить ещё раз</button>
     <div id="sales-content" hidden><p id="sales-freshness" class="sales-muted"></p><div id="sales-metrics"></div><div id="sales-counts" class="sales-counts"></div>
     <details class="sales-form" id="sales-settings"><summary>Исправить план и цену бокала</summary><form id="sales-settings-form">${fields('target',['wine','cocktails','desserts','turnover'])}<label>Оценка цены бокала · ₽<input id="glass-price" inputmode="decimal" required></label><button class="btn" data-change>Сохранить план</button></form></details>
     <div id="sales-reports"></div>
-    <section class="sales-form" id="sales-report" hidden><h2>Исправить отчет</h2><form id="sales-report-form"><label>По смену включительно<input id="report-cutoff" type="date" readonly></label>${fields('report',Object.keys(labels))}<label><input id="report-complete" type="checkbox"> Свои продажи записаны полностью</label><button class="btn" data-change>Сохранить отчет</button></form></section>
+    <section class="sales-form" id="sales-report" hidden><h2>Исправить отчет</h2><form id="sales-report-form"><label>По какой день отчёт<input id="report-cutoff" type="date" readonly></label>${fields('report',Object.keys(labels))}<label><input id="report-complete" type="checkbox"> Я записал все продажи за этот период</label><button class="btn" data-change>Сохранить отчет</button></form></section>
     <section class="sales-form" id="sales-edit" hidden><h2 id="sales-edit-title">Исправить запись</h2><form id="sales-edit-form"><label>Сумма или количество<input id="sales-edit-value" inputmode="decimal" required></label><label>Дата смены<input id="sales-edit-date" type="date" required></label><button class="btn" data-change>Сохранить запись</button></form></section>
-    <details class="sales-form"><summary>Записи продаж и правки</summary><div id="sales-history"></div></details></div>`;
+    <details class="sales-form"><summary>История продаж</summary><div id="sales-history"></div></details></div>`;
   function lock(){document.querySelectorAll('#sales-panel [data-change]').forEach(b=>b.disabled=busy||!!pending);$('sales-month').disabled=busy||!!pending;$('sales-retry').hidden=!pending;$('sales-retry').disabled=busy;}
-  async function api(action,body){const r=await fetch('/api/sales/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,initData:tg?.initData||''}),signal:AbortSignal.timeout(20000)});const j=await r.json();if(!r.ok){const e=new Error(r.status===401?'Открой мини-приложение заново: сессия истекла.':j.error);e.status=r.status;throw e;}return j;}
+  async function api(action,body){const r=await fetch('/api/sales/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,initData:tg?.initData||''}),signal:AbortSignal.timeout(20000)});const j=await r.json();if(!r.ok){const e=new Error(r.status===401?'Открой бота и зайди в приложение ещё раз.':j.error);e.status=r.status;throw e;}return j;}
   function render(s){
     const openMetrics=data?.month===s.month?[...document.querySelectorAll('.sales-goal[open]')].map(el=>el.dataset.metric):[];
     data=s;$('sales-month').value=s.month;$('sales-content').hidden=false;
     const shortDate=d=>new Date(d+'T12:00:00').toLocaleDateString('ru-RU',{day:'numeric',month:'short'});
     const cutoffs=Object.values(s.metrics).map(v=>v.cutoff).filter(Boolean).sort();
-    $('sales-freshness').textContent=cutoffs.length?'Сверка: '+shortDate(cutoffs.at(-1)):'Без сверки';
+    $('sales-freshness').textContent=cutoffs.length?'Отчёт по '+shortDate(cutoffs.at(-1)):'Отчёта пока нет';
     function metric(k,v){
       const target=v.target,denom=target||1;
       let left=100;const widths=[v.official||0,v.recorded,v.estimated].map(n=>{const w=Math.max(0,Math.min(left,n/denom*100));left-=w;return w;});
@@ -58,6 +58,6 @@
   $('sales-report-form').onsubmit=e=>{e.preventDefault();if(!pending)mutate('report',{cutoff:$('report-cutoff').value,totals:values('report',Object.keys(labels)),records_complete:$('report-complete').checked,operation_id:crypto.randomUUID()});};
   $('sales-month').onchange=()=>{$('sales-content').hidden=true;$('sales-edit').hidden=true;$('sales-report').hidden=true;$('sales-settings').open=false;$('sales-settings-form').reset();load();};
   $('sales-reload').onclick=load;$('sales-retry').onclick=()=>{if(pending)mutate(pending.action,pending.body);};
-  for(const tab of document.querySelectorAll('.app-tabs button'))tab.onclick=()=>{const plan=tab.id==='tab-sales';$('sales-panel').hidden=!plan;$('earnings-panel').hidden=plan;$('tab-sales').setAttribute('aria-selected',String(plan));$('tab-earnings').setAttribute('aria-selected',String(!plan));if(plan)load();else window.dispatchEvent(new Event('earnings-updated'));};
+  for(const tab of document.querySelectorAll('#tab-sales,#tab-earnings'))tab.onclick=()=>{document.getElementById('restaurant-panel').hidden=true;document.getElementById('tab-restaurant').setAttribute('aria-selected','false');const plan=tab.id==='tab-sales';$('sales-panel').hidden=!plan;$('earnings-panel').hidden=plan;$('tab-sales').setAttribute('aria-selected',String(plan));$('tab-earnings').setAttribute('aria-selected',String(!plan));if(plan)load();else window.dispatchEvent(new Event('earnings-updated'));};
   if(pending?.body?.month)$('sales-month').value=pending.body.month;lock();
 })();
