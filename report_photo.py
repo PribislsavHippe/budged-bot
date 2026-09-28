@@ -24,6 +24,7 @@ router.callback_query.filter(F.message.chat.type == 'private')
 LABELS = {'wine': 'Вино', 'cocktails': 'Коктейли', 'desserts': 'Десерты',
           'turnover': 'Товарооборот', 'postcards': 'Открытки', 'dvd': 'ДВД'}
 DRAFT_TTL = 15 * 60
+MAX_IMAGE_MEMORY = 32 * 1024 * 1024
 
 
 class LimitedImage(io.BytesIO):
@@ -42,6 +43,7 @@ class Draft:
     report: dict = field(default_factory=dict)
     totals: dict = field(default_factory=dict)
     cutoff: str | None = None
+    image: bytes | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -52,6 +54,7 @@ _recognition_slots = asyncio.Semaphore(2)
 def expire(uid, draft):
     if drafts.get(uid) is draft:
         drafts.pop(uid, None)
+        draft.image = None
 
 
 def kb(draft, buttons):
@@ -68,6 +71,10 @@ def date_valid(value):
     return day.isoformat()
 
 
+def number(value):
+    return f'{value:,.2f}'.rstrip('0').rstrip('.').replace(',', ' ').replace('.', ',')
+
+
 def preview(draft):
     lines = [f'<b>Отчёт по {draft.cutoff} включительно</b>']
     if draft.report.get('selected_name'):
@@ -75,11 +82,14 @@ def preview(draft):
     for key, label in LABELS.items():
         value = draft.totals.get(key)
         unit = 'шт.' if key in ('cocktails', 'postcards', 'dvd') else '₽'
-        lines.append(f'{label}: {value:g} {unit}' if value is not None else f'{label}: —')
+        mark = '⚠ ' if key in draft.report.get('warnings', []) else ''
+        lines.append(mark + (f'{label}: {number(value)} {unit}' if value is not None else f'{label}: —'))
+    if draft.report.get('row_mode'):
+        lines.append('\nСверка с планом: ' + draft.report.get('check_status','—'))
     if draft.report.get('targets'):
         lines.append('\n<b>Месячный план</b>')
         for key, value in draft.report['targets'].items():
-            lines.append(f'{LABELS[key]}: {value:g}')
+            lines.append(f'{LABELS[key]}: {number(value)}')
     return '\n'.join(lines)
 
 
@@ -116,10 +126,12 @@ async def receive_photo(message):
     oid = str(uuid5(NAMESPACE_URL, f'report-photo:{message.bot.id}:{message.chat.id}:{message.message_id}'))
     if old and old.oid == oid:
         return
+    if old:
+        expire(message.from_user.id, old)
     draft = Draft(uuid4().hex[:12], oid, image.file_id)
     drafts[message.from_user.id] = draft
     asyncio.get_running_loop().call_later(DRAFT_TTL, expire, message.from_user.id, draft)
-    await message.answer('Распознать отчёт? Фото будет отправлено в Groq. Лучше оставить только свою строку и шапку.',
+    await message.answer('Распознать отчёт? Фото будет отправлено в Groq. Можно прислать общий отчёт целиком.',
                          reply_markup=kb(draft, [('Распознать', 'read'), ('Отмена', 'cancel')]))
 
 
@@ -131,6 +143,8 @@ async def ask_date_or_preview(message, draft):
         await message.answer('По какую дату отчёт включительно? Напиши ГГГГ-ММ-ДД.',
                              reply_markup=kb(draft, [('Отмена', 'cancel')]))
         return
+    if draft.report.get('row_mode'):
+        await check_plan(message.chat.id, draft)
     draft.phase = 'review'
     await message.answer(preview(draft), reply_markup=kb(draft, [
         ('Сохранить', 'save'), ('Исправить', 'edit'), ('Отмена', 'cancel')]))
@@ -164,9 +178,18 @@ async def photo_callback(callback):
                         raise vision.VisionError('Пришли фото размером до 8 МБ.')
                     image = LimitedImage()
                     await callback.bot.download_file(file.file_path, destination=image)
-                    draft.report = await vision.recognize(image.getvalue())
+                    if vision.row_mode():
+                        data = image.getvalue()
+                        if sum(len(item.image or b'') for item in drafts.values() if item is not draft) + len(data) > MAX_IMAGE_MEMORY:
+                            raise vision.VisionError('Распознавание занято. Попробуй позже.')
+                        draft.image = data
+                        draft.report = await vision.recognize_directory(draft.image)
+                        draft.report['row_mode'] = True
+                    else:
+                        draft.report = await vision.recognize(image.getvalue())
                 draft.cutoff = draft.report['cutoff']
             except Exception as error:
+                draft.image = None
                 draft.phase = 'consent'
                 text = str(error) if isinstance(error, vision.VisionError) else 'Не удалось скачать фото. Попробуй ещё раз.'
                 await callback.message.edit_text(text, reply_markup=kb(draft, [('Повторить', 'read'), ('Отмена', 'cancel')]))
@@ -181,9 +204,8 @@ async def photo_callback(callback):
                     logging.error('Identity lookup for photo failed')
                     index = None
                 if index is not None:
-                    row = draft.report.pop('rows')[index]
-                    draft.totals = row['totals']
-                    draft.report['selected_name'] = row['name']
+                    if not await select_row(callback.message, draft, index):
+                        return
                     await callback.message.edit_text('Твоя строка найдена.')
                     await ask_date_or_preview(callback.message,draft)
                     return
@@ -194,8 +216,8 @@ async def photo_callback(callback):
                 index = int(action[3:])
                 if not 0 <= index < len(draft.report['rows']):
                     return
-                draft.totals = draft.report['rows'][index]['totals']
-                draft.report['selected_name'] = draft.report['rows'][index]['name']
+                if not await select_row(callback.message, draft, index):
+                    return
             except ValueError:
                 return
             draft.report.pop('rows', None)  # Discard other employees immediately.
@@ -221,7 +243,7 @@ async def photo_callback(callback):
                                              reply_markup=kb(draft, [('Повторить сохранение', 'save')]))
                 return
             expire(callback.from_user.id, draft)
-            await callback.message.edit_text('Отчёт сохранён. План месяца обновлён.')
+            await callback.message.edit_text('Отчёт сохранён.' + (' План месяца обновлён.' if draft.report.get('targets') else ''))
 
 
 async def waiting_text(message):
@@ -245,7 +267,54 @@ async def photo_text(message):
                 draft.cutoff = date_valid(command['cutoff'])
                 draft.totals = command['totals']
                 draft.report['targets'] = {}
+                draft.report['percent'] = {}
             await ask_date_or_preview(message, draft)
         except (ValueError, TypeError):
             await message.answer('Проверь дату и числа. ' + ('Дата: ГГГГ-ММ-ДД.' if draft.phase == 'date' else
                                                           'Пример: отчет 2026-09-13 вино 73238; коктейли 57'))
+
+
+async def select_row(message, draft, index):
+    row=draft.report['rows'][index]
+    if draft.report.get('row_mode'):
+        try:
+            if not draft.image:
+                raise vision.VisionError('Фото больше недоступно. Пришли отчёт заново.')
+            if _recognition_slots.locked():
+                raise vision.VisionError('Распознавание занято. Попробуй позже.')
+            await message.answer('Читаю твою строку…')
+            async with _recognition_slots:
+                row=await vision.recognize_row(draft.image,row['index'],row['name'])
+            draft.report['percent']=row['percent']
+        except vision.VisionError as exc:
+            await message.answer(str(exc),reply_markup=kb(draft,[('Повторить',f'row{index}'),('Отмена','cancel')]))
+            return False
+    draft.totals=row['totals']
+    draft.report['selected_name']=row['name']
+    draft.report.pop('rows',None)
+    draft.image=None
+    return True
+
+
+async def check_plan(uid,draft):
+    """Only existing personal monthly targets; OCR never changes them in row mode."""
+    from decimal import Decimal
+    draft.report['warnings']=[]
+    draft.report['check_status']='—'
+    try:
+        response=await db._execute(db.supabase.table('sales_months').select('targets')
+                                   .eq('user_id',uid).eq('month',draft.cutoff[:7]))
+        targets=response.data[0]['targets'] if response.data else {}
+        checked=[]
+        for key,percent in draft.report.get('percent',{}).items():
+            if key in draft.totals and targets.get(key,0)>0:
+                actual=Decimal(str(draft.totals[key]))*100/Decimal(str(targets[key]))
+                checked.append(key)
+                if abs(actual-Decimal(str(percent)))>Decimal('0.011'):
+                    draft.report['warnings'].append(key)
+        if draft.report['warnings']:draft.report['check_status']='есть расхождения ⚠'
+        elif len(checked)==len(set(draft.totals)&set(vision.TARGETS)) and checked:
+            draft.report['check_status']='совпадает'
+        elif checked:draft.report['check_status']='частично'
+    except Exception:
+        logging.error('Photo plan check unavailable')
