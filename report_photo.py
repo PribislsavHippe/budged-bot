@@ -124,6 +124,8 @@ async def receive_photo(message):
     if len(drafts) >= 100 and message.from_user.id not in drafts:
         await message.answer('Сейчас читаю другие отчёты. Попробуй через минуту.')
         return
+    import research
+    research.track(message.from_user.id,'sales_report_started')
     oid = str(uuid5(NAMESPACE_URL, f'report-photo:{message.bot.id}:{message.chat.id}:{message.message_id}'))
     if old and old.oid == oid:
         return
@@ -168,6 +170,8 @@ async def photo_callback(callback):
             expire(callback.from_user.id, draft)
             await callback.message.edit_text('Хорошо, этот отчёт не сохраняю.')
         elif action == 'read' and draft.phase == 'consent':
+            import research
+            research.track(callback.from_user.id,'vision_started')
             draft.phase = 'reading'
             await callback.message.edit_text('Распознаю…')
             try:
@@ -190,11 +194,13 @@ async def photo_callback(callback):
                         draft.report = await vision.recognize(image.getvalue())
                 draft.cutoff = draft.report['cutoff']
             except Exception as error:
+                research.track(callback.from_user.id,'vision_failed',error_code='vision')
                 draft.image = None
                 draft.phase = 'consent'
                 text = str(error) if isinstance(error, vision.VisionError) else 'Не удалось скачать фото. Попробуй ещё раз.'
                 await callback.message.edit_text(text, reply_markup=kb(draft, [('Повторить', 'read'), ('Отмена', 'cancel')]))
                 return
+            research.track(callback.from_user.id,'vision_completed')
             draft.phase = 'row'
             from identity_chat import enabled as identity_enabled
             if identity_enabled():
@@ -239,10 +245,14 @@ async def photo_callback(callback):
                                                                       'targets': draft.report['targets']})
                 await save_report(callback.from_user.id, draft.oid, month, draft.cutoff, draft.totals)
             except Exception:
+                import research
+                research.track(callback.from_user.id,'sales_report_error',error_code='save')
                 logging.error('Photo report save failed')
                 await callback.message.answer('Ответ о сохранении не пришёл. Нажми «Сохранить ещё раз» — второй такой записи не появится.',
                                              reply_markup=kb(draft, [('Сохранить ещё раз', 'save')]))
                 return
+            import research
+            research.track(callback.from_user.id,'sales_report_completed',operation=draft.oid)
             expire(callback.from_user.id, draft)
             await callback.message.edit_text('Отчёт сохранён.' + (' План месяца обновлён.' if draft.report.get('targets') else ''))
 
@@ -277,6 +287,8 @@ async def photo_text(message):
 async def select_row(message, draft, index):
     row=draft.report['rows'][index]
     if draft.report.get('row_mode'):
+        import research
+        research.track(message.chat.id,'vision_started')
         try:
             if not draft.image:
                 raise vision.VisionError('Фото больше недоступно. Пришли отчёт заново.')
@@ -286,7 +298,9 @@ async def select_row(message, draft, index):
             async with _recognition_slots:
                 row=await vision.recognize_row(draft.image,row['index'],row['name'])
             draft.report['percent']=row['percent']
+            research.track(message.chat.id,'vision_completed')
         except vision.VisionError as exc:
+            research.track(message.chat.id,'vision_failed',error_code='vision')
             await message.answer(str(exc),reply_markup=kb(draft,[('Повторить',f'row{index}'),('Отмена','cancel')]))
             return False
     draft.totals=row['totals']

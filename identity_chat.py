@@ -64,6 +64,9 @@ async def start_invite(message,command,state):
     if not token or len(token)>64:
         await message.answer('Приглашение недействительно.')
         return
+    import db, research
+    await db.get_or_create_user(message.from_user.id)
+    research.track(message.from_user.id,'user_started')
     # Do not publish the employee directory to invite holders.
     from report_photo import drafts, expire
     draft=drafts.get(message.from_user.id)
@@ -96,6 +99,8 @@ async def register_name(message,state):
         result=await identity.request(message.from_user.id,data.get('invite_token',''),message.text)
         await state.clear()
         await message.answer(f"{identity.STATUSES[result['status']]}.\n/profile — твой ресторан")
+        from ux_chat import begin
+        await begin(message)
     except Exception as exc: await error(message,exc)
 
 

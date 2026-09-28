@@ -38,7 +38,7 @@ def validate_init_data(init_data: str, bot_token: str) -> int | None:
         user = json.loads(pairs.get("user", "{}"))
         return int(user["id"])
     except Exception as e:
-        logging.warning(f"initData validation error: {e}")
+        logging.warning("initData validation failed")
         return None
 
 
@@ -74,12 +74,13 @@ async def _auth(request: web.Request):
     try:
         body = await request.json()
     except Exception:
-        return None, web.json_response({"error": "bad request"}, status=400)
+        return None, web.json_response({"error": "bad request"}, status=400, headers=NO_CACHE)
     if not isinstance(body, dict):
-        return None, web.json_response({"error": "bad request"}, status=400)
+        return None, web.json_response({"error": "bad request"}, status=400, headers=NO_CACHE)
     user_id = validate_init_data(body.get("initData", ""), request.app["bot_token"])
     if user_id is None:
-        return None, web.json_response({"error": "unauthorized"}, status=401)
+        return None, web.json_response({"error": "unauthorized"}, status=401, headers=NO_CACHE)
+    request["verified_uid"] = user_id
     return user_id, body
 
 
@@ -239,11 +240,40 @@ async def google_callback(request: web.Request) -> web.Response:
     )
 
 
+@web.middleware
+async def api_errors(request, handler):
+    if not request.path.startswith('/api/'):
+        return await handler(request)
+    import research
+    screens={'/api/stats':'earnings','/api/month':'calendar','/api/entries':'history',
+             '/api/tips_compare':'earnings','/api/restaurant/view':'restaurant',
+             '/api/restaurant/access':'restaurant','/api/sales/view':'sales'}
+    screen=screens.get(request.path)
+    try:
+        response=await handler(request)
+    except Exception as error:
+        from diagnostics import failure
+        code,reference=failure(error,area='miniapp',stage=screen or 'api')
+        uid=request.get('verified_uid')
+        if uid and screen:research.track(uid,'cabinet_load_error',source='server',screen=screen,error_code=code)
+        return web.json_response({'error':'Не получилось загрузить данные. Попробуй ещё раз.',
+                                  'code':code,'reference':reference},status=503,headers=NO_CACHE)
+    uid=request.get('verified_uid')
+    if uid and screen and response.status==200 and request.path not in {'/api/restaurant/access'}:
+        research.track(uid,'cabinet_loaded',source='server',screen=screen)
+    elif uid and screen and response.status>=500 and not request.path.startswith('/api/restaurant/'):
+        research.track(uid,'cabinet_load_error',source='server',screen=screen,error_code='backend')
+    return response
+
+
 def register_webapp_routes(app: web.Application, bot_token: str, bot_username: str | None = None):
     app["bot_token"] = bot_token
     app["bot_username"] = bot_username
     from sales_api import register_sales_routes
     register_sales_routes(app)
+    from research_api import register as register_research
+    register_research(app)
+    app.middlewares.append(api_errors)
     from restaurant_api import register
     register(app)
     app.router.add_get("/app", serve_app)
@@ -251,7 +281,7 @@ def register_webapp_routes(app: web.Application, bot_token: str, bot_username: s
     app.router.add_get("/app/sales.css", lambda _: web.FileResponse(os.path.join(WEBAPP_DIR, "sales.css"), headers=NO_CACHE))
     app.router.add_post("/api/stats", api_stats)
     app.router.add_post("/api/tips_compare", api_tips_compare)
-    for asset in ("tips.js", "tips.css", "restaurant.js", "restaurant.css"):
+    for asset in ("tips.js", "tips.css", "restaurant.js", "restaurant.css", "ux.js", "research.js", "research.css"):
         async def serve_asset(request, asset=asset):
             return web.FileResponse(os.path.join(WEBAPP_DIR, asset), headers=NO_CACHE)
         app.router.add_get("/app/" + asset, serve_asset)

@@ -32,6 +32,7 @@ async def handle(request):
     def response(data,status=200):return web.json_response(data,status=status,headers=NO_CACHE)
     if not enabled():return response({'available':False},404)
     action=request.match_info['action']
+    stage='identity'
     try:
         restaurant=await identity.owner_restaurant(uid)
         if action=='access':
@@ -55,6 +56,7 @@ async def handle(request):
         if type(page) is not int or not 0<=page<=1000:raise ValueError('Не удалось открыть страницу. Обнови список.')
         status=body.get('status','approved')
         if status not in identity.STATUSES:raise ValueError('Выбери раздел со списком сотрудников.')
+        stage='roster'
         roster=await db._pages(lambda:db.supabase.table('employee_links')
             .select('id,user_id,report_name,status,requested_at').eq('restaurant_id',restaurant['id'])
             .order('requested_at').order('id'))
@@ -62,10 +64,12 @@ async def handle(request):
         selected=[r for r in roster if r['status']==status]
         rows=selected[page*10:page*10+10]
         if status=='approved':
+            stage='sales'
             results=await asyncio.gather(*(member_sales(row,month) for row in rows))
             for row,data in zip(rows,results):row['sales']=data
         # Recheck membership/ownership after reads so a concurrent revoke cannot
         # deliver newly fetched financial data to an owner who lost access.
+        stage='access_recheck'
         if await identity.owner_restaurant(uid)!=restaurant:return response({'error':'Доступ изменился. Открой приложение заново.'},403)
         active=await db._pages(lambda:db.supabase.table('employee_links').select('id,status')
                 .eq('restaurant_id',restaurant['id']).order('id'))
@@ -73,13 +77,17 @@ async def handle(request):
         rows=[r for r in rows if (r['id'],r['status']) in allowed]
         return response({'restaurant':restaurant,'month':month,'status':status,'page':page,
                          'more':len(selected)>(page+1)*10,'counts':counts,'rows':rows})
-    except (ValueError,TypeError,AttributeError) as error:
+    except ValueError as error:
         text=str(error) if isinstance(error,ValueError) else 'Не получилось выполнить действие. Обнови страницу.'
         if 'UUID' in text or 'hexadecimal' in text:text='Заявка изменилась. Обнови список.'
         return response({'error':text},400)
-    except Exception:
-        logging.exception('Restaurant dashboard failed')
-        return response({'error':'Не получилось загрузить кабинет. Попробуй ещё раз чуть позже.'},503)
+    except Exception as error:
+        from diagnostics import failure
+        code,reference=failure(error,area='restaurant',stage=stage)
+        from research import track
+        track(uid,'cabinet_load_error',source='server',screen='restaurant',error_code=code)
+        return response({'error':'Не получилось загрузить кабинет. Попробуй ещё раз чуть позже.',
+                         'code':code,'reference':reference},503)
 
 
 def register(app):

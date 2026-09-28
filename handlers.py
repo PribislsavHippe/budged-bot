@@ -127,12 +127,21 @@ def _name(message: Message) -> str:
 async def _greet(message: Message, name: str):
     await db.set_onboarded(message.from_user.id)
     await message.answer(_welcome_text(name), reply_markup=main_menu())
+    import research
+    research.track(message.from_user.id,'user_started')
+    from ux_chat import begin
+    await begin(message)
 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     user = await db.get_or_create_user(message.from_user.id)
+    import research
+    research.track(message.from_user.id,'user_started')
+    if (message.text or '').strip().endswith('help'):
+        await cmd_help(message)
+        return
     # Deep-link из мини-апа: кнопка «Внести траты смены»
     if user.get("onboarded") and (message.text or "").strip().endswith("close_shift"):
         await send_shift_close_prompt(message)
@@ -163,6 +172,10 @@ async def cmd_calendar(message: Message):
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
+    import research
+    from ux_chat import help_buttons
+    research.track(message.from_user.id,'help_opened')
+    await message.answer('Помощь\n\nЕсли что-то не работает или есть идея — напиши нам.',reply_markup=help_buttons())
     await message.answer(
         "<b>Как я работаю</b>\n\n"
         "Чаевые: <i>чай 500</i>, <i>смена 2500</i>\n"
@@ -195,6 +208,8 @@ async def cmd_help(message: Message):
 
 @router.message(F.text == "📋 История")
 async def show_history(message: Message):
+    import research
+    research.track(message.from_user.id,"tab_opened",screen="history")
     entries = await db.get_recent_entries(message.from_user.id, limit=15)
     if not entries:
         await message.answer("Пока пусто. Напиши первую: <i>чай 500</i>")
@@ -280,12 +295,18 @@ async def cmd_privacy(message: Message):
         "планы и продажи, записанные после присоединения к ресторану. "
         "Личные чаевые и расходы в его кабинете не показываются.",
         "Имя профиля Telegram, @username, телефон и номер карты не сохраняются.",
+        "Для улучшения бота отдельно сохраняем действия: открытие раздела, успешную запись, "
+        "шаг знакомства и код ошибки. Без сумм, сообщений и фотографий. "
+        "Владелец бота видит эти пути под внутренними номерами, например U-0184. "
+        "Обращения, которые ты отправляешь через /feedback, он читает отдельно. "
+        "Свои события и обращения можно получить через /export и удалить через /delete.",
         "",
         "Я не считаю твой баланс и не знаю, сколько у тебя денег — "
         "чаевые и расходы смены; продажи ресторана хранятся отдельно.",
         "",
-        "<b>Никто не видит чужого.</b> В боте нет ни рейтинга, ни сравнения "
-        "с коллегами, ни экрана, где видно чужие суммы.",
+        "<b>Личные чаевые и расходы видишь только ты в своём кабинете.</b> "
+        "Владелец серверного доступа к базе технически может прочитать хранимые данные — "
+        "обещать абсолютную анонимность было бы неправильно.",
         "",
         "/export — забрать все свои записи файлом",
         "/delete — удалить свои данные",
@@ -311,6 +332,18 @@ async def cmd_export(message: Message):
         import identity
         identity_data = await identity.export(message.from_user.id)
     has_identity = bool(identity_data and any(identity_data.values()))
+    import research
+    if research.enabled():
+        try:
+            research_data=await research.export(message.from_user.id)
+            if research_data:
+                await message.answer_document(BufferedInputFile(
+                    json.dumps(research_data,ensure_ascii=False,indent=2).encode('utf-8'),
+                    filename='my-ux-data.json'),caption='Твои события использования и обращения.')
+        except Exception as error:
+            from diagnostics import failure
+            failure(error,area='analytics',stage='export')
+            await message.answer('События использования пока не удалось выгрузить. Остальные записи отправлю отдельно.')
     if not entries and not shifts and not has_sales and not has_identity:
         await message.answer("Пока нет записей, которые можно скачать.")
         return
@@ -362,7 +395,7 @@ async def cmd_export(message: Message):
 @router.message(Command("delete"))
 async def cmd_delete(message: Message):
     await message.answer(
-        "Стереть <b>всё</b>: записи, смены, планы продаж, отчёты, профиль, привязку сотрудника и Google Календаря?\n"
+        "Стереть <b>всё</b>: записи, смены, планы продаж, отчёты, профиль, привязку сотрудника, Google Календаря, события использования и обращения?\n"
         "Если ты администратор ресторана, ресторан останется без администратора.\n\n"
         "<i>Это навсегда. Восстановить не смогу — у меня не остаётся копии.\n"
         "Хочешь сначала забрать данные — /export</i>",
@@ -493,6 +526,8 @@ async def shift_spend_chip(callback: CallbackQuery, state: FSMContext):
     if choice == "done":
         await state.clear()
         await _send_day_summary(callback.message, callback.from_user.id)
+        import research
+        research.track(callback.from_user.id,'shift_closed')
         await callback.answer()
         return
     await state.set_state(ShiftSpend.waiting_amount)
@@ -509,7 +544,7 @@ async def shift_spend_amount(message: Message, state: FSMContext):
         return
     data = await state.get_data()
     category = data.get("shift_category", "Прочее")
-    await db.add_entry(
+    entry = await db.add_entry(
         message.from_user.id, "expense", db.CASH, -amount,
         category=category, note="трата смены",
     )
@@ -518,6 +553,8 @@ async def shift_spend_amount(message: Message, state: FSMContext):
         f"➖ {category} {fmt(amount)} ₽\n\nЕщё что-то?",
         reply_markup=shift_spend_kb(),
     )
+    from ux_chat import value_saved
+    await value_saved(message,entry)
 
 
 async def _send_day_summary(message: Message, user_id: int):
@@ -589,6 +626,8 @@ async def _save_bank_tips(message: Message, notif: dict):
         + await today_block(message.from_user.id),
         reply_markup=undo_kb([entry["id"]], toggle_entry=entry),
     )
+    from ux_chat import value_saved
+    await value_saved(message,entry)
 
 
 @router.message(F.text)
@@ -599,7 +638,6 @@ async def handle_text(message: Message, state: FSMContext):
     # Новый пользователь (или без /start): знакомство
     if not user.get("onboarded"):
         await _greet(message, _name(message))
-        return
 
     # 1. Пересланное сообщение банка о чаевых → на карту
     if message.forward_origin is not None:
@@ -630,13 +668,17 @@ async def handle_text(message: Message, state: FSMContext):
         await message.answer(html.escape(str(e)))
         return
     if sale:
+        import research
+        if sale['action']=='report':research.track(message.from_user.id,'sales_report_started')
         oid = str(uuid5(NAMESPACE_URL, f"budget-sale:{message.bot.id}:{message.chat.id}:{message.message_id}"))
         try:
             saved = await chat_write(message.from_user.id, oid, sale)
         except Exception:
-            logging.exception("Chat sales write failed")
+            logging.error('Chat sales write failed')
+            if sale['action']=='report':research.track(message.from_user.id,'sales_report_error',error_code='save')
             await message.answer("Ответ о сохранении не пришёл. Загляни в историю в разделе «План», прежде чем отправлять сумму снова.")
             return
+        if sale['action']=='report':research.track(message.from_user.id,'sales_report_completed',operation=oid)
         if sale["action"] == "save":
             names = {"glass":"Бокалы","bottle":"Бутылки","cocktails":"Коктейли","desserts":"Десерты","turnover":"Товарооборот","postcards":"Открытки","dvd":"ДВД"}
             unit = "шт." if sale["kind"] in ("glass","cocktails","postcards","dvd") else "₽"
@@ -654,6 +696,8 @@ async def handle_text(message: Message, state: FSMContext):
     if shift_dates is not None:
         iso = [d.isoformat() for d in shift_dates]
         await db.add_shifts(message.from_user.id, iso)
+        import research
+        research.track(message.from_user.id,'shift_planned')
         human = ", ".join(d.strftime("%d.%m") for d in shift_dates)
         word = "смену" if len(shift_dates) == 1 else "смены"
         extra = ""
@@ -706,3 +750,7 @@ async def handle_text(message: Message, state: FSMContext):
         body + "\n\n" + await today_block(message.from_user.id),
         reply_markup=undo_kb([e["id"] for e in saved], toggle_entry=toggle),
     )
+
+    from ux_chat import value_saved
+    for entry in saved:
+        await value_saved(message,entry)

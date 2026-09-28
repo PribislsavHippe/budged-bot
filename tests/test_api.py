@@ -45,6 +45,7 @@ _web.FileResponse = _FileResponse
 _web.Response = _Resp
 _web.Application = dict
 _web.Request = object
+_web.middleware = lambda handler: handler
 
 _aiohttp = types.ModuleType("aiohttp")
 _aiohttp.web = _web
@@ -181,7 +182,7 @@ def init_data(token, uid):
     return urlencode({**pairs, "hash": h})
 
 
-class Req:
+class Req(dict):
     def __init__(self, body):
         self.app = {"bot_token": TOKEN, "bot_username": "b"}
         self._body = body

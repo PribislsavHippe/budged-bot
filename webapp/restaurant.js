@@ -19,7 +19,7 @@
   $('restaurant-month').value=month;
   async function api(action,body={}){
     const r=await fetch('/api/restaurant/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,initData:tg?.initData||''}),signal:AbortSignal.timeout(20000)});
-    const data=await r.json();if(!r.ok){const e=new Error(r.status===401?'Открой бота и зайди в приложение ещё раз.':data.error||'Кабинет пока недоступен.');e.status=r.status;throw e;}return data;
+    let data;try{data=await r.json();}catch(_){const e=new Error('Сервер не ответил. Попробуй ещё раз.');e.status=r.status;throw e;}if(!r.ok){const e=new Error(r.status===401?'Открой бота и зайди в приложение ещё раз.':data.error||'Кабинет пока недоступен.');e.status=r.status;throw e;}return data;
   }
   function lock(){panel.querySelectorAll('button,input').forEach(el=>el.disabled=busy);}
   function render(data){
@@ -44,7 +44,7 @@
     try{const access=await api('access');if(!access.available)throw new Error('Кабинет доступен администратору ресторана.');restaurant=access.restaurant;
       if(!restaurant){$('restaurant-create').hidden=false;$('restaurant-content').hidden=true;return;}
       render(await api('view',{month,page,status}));
-    }catch(e){$('restaurant-error').textContent=e.name==='TimeoutError'?'Ответ задерживается. Попробуй ещё раз.':e.message;$('restaurant-retry').hidden=false;}
+    }catch(e){if(!e.status)window.uxEvent?.('cabinet_load_error','restaurant',e.name==='TimeoutError'?'timeout':'network');$('restaurant-error').textContent=e.name==='TimeoutError'?'Ответ задерживается. Попробуй ещё раз.':e.message;$('restaurant-retry').hidden=false;}
     finally{busy=false;lock();}
   }
   async function change(action,body){
@@ -69,6 +69,6 @@
   $('restaurant-retry').onclick=load;$('restaurant-invite').onclick=()=>change('invite',{});
   $('restaurant-copy').onclick=async()=>{try{await navigator.clipboard.writeText($('restaurant-url').value);$('restaurant-notice').textContent='Ссылка скопирована.';}catch(_){$('restaurant-url').select();$('restaurant-notice').textContent='Выделил ссылку — её можно скопировать.';}};
   $('restaurant-create').onsubmit=e=>{e.preventDefault();change('create',{name:$('restaurant-name').value});};
-  $('tab-restaurant').onclick=()=>{for(const key of ['earnings','sales','restaurant']){$(key+'-panel').hidden=key!=='restaurant';$('tab-'+key).setAttribute('aria-selected',String(key==='restaurant'));}load();};
+  $('tab-restaurant').onclick=()=>{for(const key of ['earnings','sales','restaurant','research']){$(key+'-panel').hidden=key!=='restaurant';$('tab-'+key).setAttribute('aria-selected',String(key==='restaurant'));}window.uxEvent?.('cabinet_opened','restaurant');load();};
   api('access').then(data=>{$('tab-restaurant').hidden=!data.available;}).catch(e=>{if(e.status!==403&&e.status!==404&&e.status!==401){$('tab-restaurant').hidden=false;}});
 })();

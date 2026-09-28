@@ -9,6 +9,8 @@
 <link rel="stylesheet" href="/app/tips.css">
 <link rel="stylesheet" href="/app/restaurant.css">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="/app/ux.js"></script>
+<link rel="stylesheet" href="/app/research.css">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;800&display=swap">
 <style>
@@ -174,7 +176,10 @@
     <button id="tab-earnings" role="tab" aria-selected="true" aria-controls="earnings-panel">Чаевые</button>
     <button id="tab-sales" role="tab" aria-selected="false" aria-controls="sales-panel">План</button>
     <button id="tab-restaurant" role="tab" aria-selected="false" aria-controls="restaurant-panel" hidden>Ресторан</button>
+    <button id="tab-research" role="tab" aria-selected="false" aria-controls="research-panel" hidden>UX Research</button>
   </nav>
+  <button id="ux-help">Помощь</button>
+  <section id="research-panel" role="tabpanel" aria-labelledby="tab-research" hidden></section>
   <section id="restaurant-panel" role="tabpanel" aria-labelledby="tab-restaurant" hidden></section>
   <section id="sales-panel" role="tabpanel" aria-labelledby="tab-sales" hidden></section>
   <section id="earnings-panel" role="tabpanel" aria-labelledby="tab-earnings">
@@ -577,12 +582,13 @@ function applyStats(s) {
 }
 function load() {
   fetch("/api/stats?t=" + Date.now(), {
-    method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+    method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", signal: AbortSignal.timeout(20000),
     body: JSON.stringify({ initData: tg ? tg.initData : "" }),
   })
     .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then(applyStats)
     .catch(function (e) {
+      if (!/^HTTP /.test(e.message)) window.uxEvent?.("cabinet_load_error", "earnings", e.name === "TimeoutError" ? "timeout" : e.name === "SyntaxError" ? "invalid" : "network");
       const el = document.getElementById("err");
       el.style.display = "block";
       el.textContent = "Не получилось загрузить данные. Открой бота и зайди в приложение ещё раз.";
@@ -886,5 +892,6 @@ document.addEventListener("visibilitychange", function () {
 <script src="/app/sales.js"></script>
 <script src="/app/tips.js"></script>
 <script src="/app/restaurant.js"></script>
+<script src="/app/research.js"></script>
 </body>
 </html>
