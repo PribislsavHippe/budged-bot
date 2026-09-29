@@ -17,7 +17,7 @@ _client = None
 
 
 def enabled():
-    return os.getenv('UX_RESEARCH_ENABLED','0') == '1'
+    return os.getenv('UX_RESEARCH_ENABLED','0').strip().lower() in {'1','true','yes','on'}
 
 
 def version():

@@ -36,6 +36,8 @@ def build_dispatcher() -> Dispatcher:
     dp.message.outer_middleware(ux_chat.ActivityMiddleware())
     dp.callback_query.outer_middleware(ux_chat.ActivityMiddleware())
     dp.include_router(ux_chat.router)
+    import schedule_chat
+    dp.include_router(schedule_chat.router)
     # Админский роутер первым: иначе /admin и /broadcast перехватит
     # общий обработчик текста в handlers и попробует найти в них сумму.
     dp.include_router(admin.router)

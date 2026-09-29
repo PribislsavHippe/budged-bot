@@ -46,6 +46,22 @@ class CalendarTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await gcal.create_shift_event(1,'2026-09-27'))
         self.assertEqual(self.client.get.await_count,2)
         self.assertEqual(self.client.get.await_args.kwargs['headers']['Authorization'],'Bearer fresh')
+    async def test_timed_event_and_legacy_update(self):
+        import schedule
+        self.client.get.return_value=response(200,{'items':[]})
+        self.client.post.return_value=response(201,{})
+        self.client.patch.return_value=response(200,{})
+        with patch.object(schedule,'enabled',return_value=True),patch.object(schedule,'load_shift',new=AsyncMock(return_value={'starts_at':'10:00:00','ends_at':'22:00:00'})) as load:
+            await gcal.create_shift_event(1,'2026-10-01')
+            event=self.client.post.await_args.kwargs['json']
+            self.assertEqual(event['start']['dateTime'],'2026-10-01T10:00:00+03:00')
+            self.assertEqual(event['end']['dateTime'],'2026-10-01T22:00:00+03:00')
+            self.client.get.return_value=response(200,{'items':[{'id':'old-event','start':{'date':'2026-10-01'}}]})
+            await gcal.create_shift_event(1,'2026-10-01')
+            self.assertEqual(self.client.post.await_count,1)
+            self.assertTrue(self.client.patch.await_args.args[0].endswith('/old-event'))
+            load.assert_awaited_with(1,'2026-10-01')
+
     async def test_network_failure_remains_pending(self):
         self.client.get.side_effect=httpx.ConnectError('offline')
         r=await gcal.sync_shifts(1,['2026-09-27'])

@@ -178,7 +178,6 @@
     <button id="tab-restaurant" role="tab" aria-selected="false" aria-controls="restaurant-panel" hidden>Ресторан</button>
     <button id="tab-research" role="tab" aria-selected="false" aria-controls="research-panel" hidden>UX Research</button>
   </nav>
-  <button id="ux-help">Помощь</button>
   <section id="research-panel" role="tabpanel" aria-labelledby="tab-research" hidden></section>
   <section id="restaurant-panel" role="tabpanel" aria-labelledby="tab-restaurant" hidden></section>
   <section id="sales-panel" role="tabpanel" aria-labelledby="tab-sales" hidden></section>
@@ -219,22 +218,24 @@
   <p class="gcal-hint" id="gcal-hint"></p>
 
   </details>
-  <button class="btn" id="open-spend" hidden>Внести траты смены</button>
+  <button class="btn btn-ghost" id="open-spend">+ Записать расход</button>
 
   <div class="tips-actions"><button class="btn btn-ghost" id="open-history">История и правки</button><button class="btn btn-ghost" id="open-poster">Итоги месяца</button></div>
 
 
   </section>
 
+  <footer class="app-footer"><button id="ux-help">Помощь и обратная связь</button><button id="ux-access-retry" hidden>Не все разделы загрузились · повторить</button></footer>
+
   <!-- Панель трат за смену -->
   <div id="spend">
     <div class="sheet">
-      <p class="sheet-title">Траты за смену</p>
+      <p class="sheet-title">Расход</p>
       <p class="sheet-sub" id="spend-sub"></p>
       <div class="chips" id="spend-chips"></div>
       <div class="spend-inputs" id="spend-inputs">
-        <input type="text" id="spend-name" placeholder="Название" style="display:none">
-        <input type="number" inputmode="numeric" id="spend-amount" placeholder="Сумма ₽">
+        <input type="text" id="spend-name" aria-label="Название расхода" placeholder="Название" style="display:none">
+        <input type="number" inputmode="decimal" step="0.01" min="0.01" max="10000000" id="spend-amount" aria-label="Сумма расхода" placeholder="Сумма ₽">
         <button id="spend-submit">Внести</button>
       </div>
       <p class="spend-note" id="spend-note"></p>
@@ -621,6 +622,7 @@ function buildChips() {
   });
 }
 function openSpend() {
+  if(spendPending){document.getElementById('spend').classList.add('on');return;}
   spendCat = null;
   buildChips();
   document.getElementById("spend-inputs").classList.remove("on");
@@ -629,27 +631,30 @@ function openSpend() {
   document.getElementById("spend-note").textContent = "";
   document.getElementById("spend").classList.add("on");
 }
-function submitSpend() {
-  const amount = parseFloat(document.getElementById("spend-amount").value);
-  if (!amount || amount <= 0) {
-    document.getElementById("spend-note").textContent = "Введи сумму.";
-    return;
+let spendPending=null,spendBusy=false;
+function lockSpend(){
+  document.querySelectorAll('#spend input,#spend-chips button').forEach(el=>el.disabled=spendBusy||!!spendPending);
+  document.getElementById('spend-submit').disabled=spendBusy;
+}
+async function submitSpend() {
+  if(spendBusy)return;
+  if(!spendPending){
+    const amount=Number(document.getElementById('spend-amount').value.replace(',','.'));
+    if(!spendCat||!Number.isFinite(amount)||amount<=0||amount>10000000){document.getElementById('spend-note').textContent='Выбери категорию и введи сумму.';return;}
+    const category=spendCat==='Своя'?(document.getElementById('spend-name').value.trim()||'Прочее'):spendCat;
+    spendPending={operation_id:crypto.randomUUID(),category,amount};
   }
-  let category = spendCat;
-  if (spendCat === "Своя") category = document.getElementById("spend-name").value.trim() || "Прочее";
-  document.getElementById("spend-note").textContent = "Записываю…";
-  fetch("/api/shift_spend", {
-    method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
-    body: JSON.stringify({ initData: tg ? tg.initData : "", category: category, amount: amount }),
-  })
-    .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-    .then(function (s) {
-      applyStats(s);
-      document.getElementById("spend-note").textContent = "➖ " + category + " " + rub(amount) + " ₽ записал";
-      document.getElementById("spend-amount").value = "";
-      document.getElementById("spend-name").value = "";
-    })
-    .catch(function (e) { document.getElementById("spend-note").textContent = "Не получилось сохранить. Проверь историю, прежде чем повторять."; });
+  spendBusy=true;lockSpend();document.getElementById('spend-note').textContent='Записываю…';
+  try{
+    const r=await fetch('/api/shift_spend',{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',signal:AbortSignal.timeout(20000),body:JSON.stringify({...spendPending,initData:tg?.initData||''})});
+    const data=await r.json();
+    if(!r.ok){if(r.status===400)spendPending=null;throw new Error(data.error||'Не получил подтверждение. Повтори — дубля не будет.');}
+    if(data.stats)applyStats(data.stats);
+    document.getElementById('spend-note').textContent='Расход записан'+(data.stats?'.':'. Статистика обновится позже.');
+    spendPending=null;document.getElementById('spend-amount').value='';document.getElementById('spend-name').value='';
+    document.getElementById('spend-submit').textContent='Внести';window.dispatchEvent(new Event('earnings-updated'));
+  }catch(e){document.getElementById('spend-note').textContent=e.name==='TimeoutError'?'Ответ задерживается. Повтори — дубля не будет.':e.message;document.getElementById('spend-submit').textContent=spendPending?'Повторить':'Внести';}
+  finally{spendBusy=false;lockSpend();}
 }
 
 document.getElementById("open-spend").onclick = openSpend;

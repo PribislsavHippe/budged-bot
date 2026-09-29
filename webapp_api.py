@@ -92,10 +92,41 @@ async def api_stats(request: web.Request) -> web.Response:
 
 
 async def api_shift_spend(request: web.Request) -> web.Response:
+    from decimal import Decimal,InvalidOperation
+    from uuid import UUID,uuid5,NAMESPACE_URL
     user_id, body = await _auth(request)
-    if user_id is None:
-        return body
-    return web.json_response({"error": "Расходы записываются в чате бота: кофе 200 или Закрыть смену"}, status=405)
+    if user_id is None:return body
+    try:
+        operation=str(UUID(str(body.get('operation_id',''))))
+        raw=body.get('amount')
+        if isinstance(raw,bool):raise ValueError()
+        amount=Decimal(str(raw).replace(' ','').replace(',','.'))
+        if not amount.is_finite() or not 0<amount<=10000000 or amount!=amount.quantize(Decimal('.01')):raise ValueError()
+        category=body.get('category','Прочее')
+        if not isinstance(category,str):raise ValueError()
+        category=category.strip()
+        if not 1<=len(category)<=60 or any(ord(c)<32 for c in category):raise ValueError()
+    except (ValueError,InvalidOperation,TypeError):
+        return web.json_response({'error':'Проверь сумму и название расхода.'},status=400,headers=NO_CACHE)
+    await db.get_or_create_user(user_id)
+    try:
+        result=(await db._execute(db.supabase.rpc('add_miniapp_expense',
+            {'actor':user_id,'operation':operation,'amount':float(amount),'category_name':category}))).data
+    except Exception as error:
+        from diagnostics import failure
+        code,reference=failure(error,area='expense',stage='save')
+        return web.json_response({'error':'Не получил подтверждение. Повтори — второй расход не появится.',
+                                  'code':code,'reference':reference},status=503,headers=NO_CACHE)
+    import research
+    research.track(user_id,'expense_added',source='miniapp',screen='earnings',
+                   operation=str(uuid5(NAMESPACE_URL,f"ux-entry:{user_id}:{result['id']}")))
+    # Saving succeeded even if refreshing the chart fails. Never ask to re-enter it.
+    try:stats=await _stats_payload(request.app,user_id)
+    except Exception as error:
+        from diagnostics import failure
+        failure(error,area='expense',stage='refresh')
+        stats=None
+    return web.json_response({'saved':True,'stats':stats},headers=NO_CACHE)
 
 
 async def api_tips_compare(request: web.Request) -> web.Response:

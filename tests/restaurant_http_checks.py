@@ -13,10 +13,10 @@ class TrackedStore(Store):
 async def main():
     store=TrackedStore()
     ids=['00000000-0000-0000-0000-00000000000'+str(i) for i in range(1,6)]
-    store.rows={'restaurants':[{'id':'a','name':'A','owner_id':1},{'id':'b','name':'B','owner_id':2}],
-       'employee_links':[{'id':ids[0],'restaurant_id':'a','user_id':3,'report_name':'A Employee','status':'approved','requested_at':'2026-09-10T00:00:00Z'},
-                         {'id':ids[1],'restaurant_id':'a','user_id':4,'report_name':'Pending','status':'pending','requested_at':'2026-09-10T00:00:00Z'},
-                         {'id':ids[2],'restaurant_id':'b','user_id':5,'report_name':'Other Restaurant','status':'approved','requested_at':'2026-09-10T00:00:00Z'}],
+    store.rows={'restaurants':[{'id':'aaaaaaaa-0000-0000-0000-000000000001','name':'A','owner_id':1,'created_at':'2026-09-01'},{'id':'bbbbbbbb-0000-0000-0000-000000000002','name':'B','owner_id':2,'created_at':'2026-09-01'}],
+       'employee_links':[{'id':ids[0],'restaurant_id':'aaaaaaaa-0000-0000-0000-000000000001','user_id':3,'report_name':'A Employee','status':'approved','requested_at':'2026-09-10T00:00:00Z'},
+                         {'id':ids[1],'restaurant_id':'aaaaaaaa-0000-0000-0000-000000000001','user_id':4,'report_name':'Pending','status':'pending','requested_at':'2026-09-10T00:00:00Z'},
+                         {'id':ids[2],'restaurant_id':'bbbbbbbb-0000-0000-0000-000000000002','user_id':5,'report_name':'Other Restaurant','status':'approved','requested_at':'2026-09-10T00:00:00Z'}],
        'sales_months':[{'user_id':3,'month':'2026-09','targets':{'wine':1000},'created_at':'2026-09-11T00:00:00Z'}],
        'sales_events':[{'id':'e','user_id':3,'month':'2026-09','kind':'bottle','value':100,'work_date':'2026-09-12','created_at':'2026-09-12T00:00:00Z'},
                        {'id':'old','user_id':3,'month':'2026-09','kind':'bottle','value':99999,'work_date':'2026-09-01','created_at':'2026-09-01T00:00:00Z'},
@@ -33,7 +33,7 @@ async def main():
                     return data
                 for uid in (3,5,999):
                     assert not (await post('access',uid))['available']
-                    await post('view',uid,status=403,user_id=1,restaurant_id='a')
+                    await post('view',uid,status=403,user_id=1,restaurant_id='aaaaaaaa-0000-0000-0000-000000000001')
                     with patch.object(identity,'action',new=AsyncMock()) as mutation:
                         await post('approve',uid,status=403,id=ids[0]);mutation.assert_not_awaited()
                 response=await client.post('/api/restaurant/view',json={'initData':'forged'});assert response.status==401
@@ -48,7 +48,15 @@ async def main():
                 await post('create',uid=3,status=400,name='Unauthorized')
                 with patch.object(identity,'action',new=AsyncMock(return_value={'status':'approved'})) as mutation:
                     await post('approve',id=ids[0],user_id=2)
-                    mutation.assert_awaited_once_with(1,'approve',{'id':ids[0]})
+                    mutation.assert_awaited_once_with(1,'approve',{'id':ids[0],'restaurant_id':'aaaaaaaa-0000-0000-0000-000000000001'})
+                # Multiple venues: explicit selection and no cross-owner access.
+                second='cccccccc-0000-0000-0000-000000000003'
+                store.rows['restaurants'].append({'id':second,'name':'Second A','owner_id':1,'created_at':'2026-09-02'})
+                assert len((await post('access'))['restaurants'])==2
+                await post('view',status=400)
+                selected=await post('view',restaurant_id=second)
+                assert selected['restaurant']['id']==second and not selected['rows']
+                await post('view',restaurant_id='bbbbbbbb-0000-0000-0000-000000000002',status=403)
                 with patch.dict(os.environ,{'IDENTITY_ENABLED':'0'}):await post('view',status=404)
                 assert set(store.tables)<={'restaurants','employee_links','sales_months','sales_events','sales_reports'},store.tables
     print('Restaurant HTTP checks passed: signed identity, owner isolation, membership boundaries, no tips access, actions and feature flag.')

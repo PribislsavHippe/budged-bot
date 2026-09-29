@@ -5,11 +5,12 @@
   const num=n=>n==null?'—':Number(n).toLocaleString('ru-RU',{maximumFractionDigits:2});
   const date=s=>s?new Date(s+'T12:00:00').toLocaleDateString('ru-RU',{day:'numeric',month:'short'}):'Нет отчёта';
   const names={wine:'Вино',cocktails:'Коктейли',desserts:'Десерты',turnover:'Оборот',postcards:'Открытки',dvd:'DVD'};
-  let restaurant=null, status='approved',page=0,busy=false,month=new Date().toLocaleDateString('sv-SE',{timeZone:'Europe/Moscow'}).slice(0,7);
+  let restaurant=null,selectedId=null,restaurants=[],canCreate=false, status='approved',page=0,busy=false,month=new Date().toLocaleDateString('sv-SE',{timeZone:'Europe/Moscow'}).slice(0,7);
   panel.innerHTML=`<header class="restaurant-head"><h1 id="restaurant-title">Ресторан</h1><input type="month" id="restaurant-month" aria-label="Месяц продаж"></header>
+    <div class="restaurant-switch"><select id="restaurant-select" aria-label="Ресторан" hidden></select><button id="restaurant-add" hidden>+ Добавить ресторан</button></div>
     <p id="restaurant-error" role="alert"></p><p id="restaurant-notice" role="status"></p>
     <button id="restaurant-retry" class="btn btn-ghost" hidden>Попробовать ещё раз</button>
-    <form id="restaurant-create" hidden><label>Название ресторана<input id="restaurant-name" maxlength="80" minlength="2" required autocomplete="organization"></label><button class="btn">Создать кабинет</button></form>
+    <form id="restaurant-create" hidden><label>Название ресторана<input id="restaurant-name" maxlength="80" minlength="2" required autocomplete="organization"></label><button class="btn">Создать ресторан</button><button type="button" id="restaurant-create-cancel">Отмена</button></form>
     <div id="restaurant-content" hidden><div class="restaurant-filters" aria-label="Сотрудники">
       <button data-status="approved" aria-pressed="true">Сотрудники</button><button data-status="pending" aria-pressed="false">Заявки</button>
       <button data-status="rejected" aria-pressed="false">Отклонённые</button><button data-status="revoked" aria-pressed="false">Без доступа</button></div>
@@ -18,10 +19,10 @@
     <details class="restaurant-invite"><summary>Пригласить сотрудника</summary><button id="restaurant-invite" class="btn btn-ghost">Создать ссылку</button><div id="restaurant-link" hidden><label>Приглашение на 7 дней<input readonly id="restaurant-url"></label><button id="restaurant-copy">Скопировать</button></div></details></div>`;
   $('restaurant-month').value=month;
   async function api(action,body={}){
-    const r=await fetch('/api/restaurant/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,initData:tg?.initData||''}),signal:AbortSignal.timeout(20000)});
+    const r=await fetch('/api/restaurant/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({restaurant_id:selectedId,...body,initData:tg?.initData||''}),signal:AbortSignal.timeout(20000)});
     let data;try{data=await r.json();}catch(_){const e=new Error('Сервер не ответил. Попробуй ещё раз.');e.status=r.status;throw e;}if(!r.ok){const e=new Error(r.status===401?'Открой бота и зайди в приложение ещё раз.':data.error||'Кабинет пока недоступен.');e.status=r.status;throw e;}return data;
   }
-  function lock(){panel.querySelectorAll('button,input').forEach(el=>el.disabled=busy);}
+  function lock(){panel.querySelectorAll('button,input,select').forEach(el=>el.disabled=busy);}
   function render(data){
     restaurant=data.restaurant;$('restaurant-title').textContent=restaurant.name;
     $('restaurant-create').hidden=true;$('restaurant-content').hidden=false;
@@ -41,8 +42,17 @@
   }
   async function load(){
     if(busy)return;busy=true;lock();$('restaurant-error').textContent='';$('restaurant-retry').hidden=true;$('restaurant-rows').hidden=true;
-    try{const access=await api('access');if(!access.available)throw new Error('Кабинет доступен администратору ресторана.');restaurant=access.restaurant;
-      if(!restaurant){$('restaurant-create').hidden=false;$('restaurant-content').hidden=true;return;}
+    try{const access=await api('access');if(!access.available)throw new Error('Кабинет доступен администратору ресторана.');
+      restaurants=access.restaurants||[];canCreate=!!access.can_create;
+      if(canCreate)window.showResearchTab?.();
+      if(!restaurants.some(r=>r.id===selectedId))selectedId=restaurants[0]?.id||null;
+      restaurant=restaurants.find(r=>r.id===selectedId)||null;
+      $('restaurant-add').hidden=!canCreate||!restaurant;
+      $('restaurant-select').hidden=restaurants.length<2;
+      $('restaurant-select').innerHTML=restaurants.map(r=>`<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('');
+      $('restaurant-select').value=selectedId||'';
+      if(!restaurant){$('restaurant-create').hidden=!canCreate;$('restaurant-create-cancel').hidden=true;$('restaurant-content').hidden=true;return;}
+      $('restaurant-create-cancel').hidden=false;
       render(await api('view',{month,page,status}));
     }catch(e){if(!e.status)window.uxEvent?.('cabinet_load_error','restaurant',e.name==='TimeoutError'?'timeout':'network');$('restaurant-error').textContent=e.name==='TimeoutError'?'Ответ задерживается. Попробуй ещё раз.':e.message;$('restaurant-retry').hidden=false;}
     finally{busy=false;lock();}
@@ -53,22 +63,26 @@
     if(action==='invite'&&!confirm('Создать приглашение на 7 дней? Предыдущая ссылка перестанет работать.'))return;
     busy=true;lock();$('restaurant-error').textContent='';let failure='';
     try{const data=await api(action,body);
+      if(action==='create'){selectedId=data.restaurant.id;page=0;status='approved';$('restaurant-name').value='';$('restaurant-link').hidden=true;}
       if(action==='invite'){$('restaurant-url').value=data.url;$('restaurant-link').hidden=false;}
       else{$('restaurant-notice').textContent=action==='approve'?'Сотрудник подтверждён.':action==='create'?'Кабинет готов.':'Готово.';}
     }catch(e){failure=e.name==='TimeoutError'?'Ответ задерживается. Обнови список, прежде чем повторять действие.':e.message;$('restaurant-error').textContent=failure;$('restaurant-retry').hidden=false;}
     finally{busy=false;lock();}
-    if(action!=='invite')await load();
+    if(action!=='invite'&&!failure)await load();
     if(failure){$('restaurant-error').textContent=failure;$('restaurant-retry').hidden=false;}
   }
   panel.addEventListener('click',e=>{const b=e.target.closest('button');if(!b||busy)return;
     if(b.dataset.status){status=b.dataset.status;page=0;load();}
     if(b.dataset.action)change(b.dataset.action,{id:b.dataset.id});
   });
+  $('restaurant-add').onclick=()=>{$('restaurant-create').hidden=false;$('restaurant-name').focus();};
+  $('restaurant-create-cancel').onclick=()=>{$('restaurant-create').hidden=true;};
+  $('restaurant-select').onchange=()=>{selectedId=$('restaurant-select').value;page=0;status='approved';$('restaurant-link').hidden=true;$('restaurant-url').value='';$('restaurant-notice').textContent='';load();};
   $('restaurant-month').onchange=()=>{month=$('restaurant-month').value;page=0;load();};
   $('restaurant-prev').onclick=()=>{page=Math.max(0,page-1);load();};$('restaurant-next').onclick=()=>{page++;load();};
   $('restaurant-retry').onclick=load;$('restaurant-invite').onclick=()=>change('invite',{});
   $('restaurant-copy').onclick=async()=>{try{await navigator.clipboard.writeText($('restaurant-url').value);$('restaurant-notice').textContent='Ссылка скопирована.';}catch(_){$('restaurant-url').select();$('restaurant-notice').textContent='Выделил ссылку — её можно скопировать.';}};
   $('restaurant-create').onsubmit=e=>{e.preventDefault();change('create',{name:$('restaurant-name').value});};
   $('tab-restaurant').onclick=()=>{for(const key of ['earnings','sales','restaurant','research']){$(key+'-panel').hidden=key!=='restaurant';$('tab-'+key).setAttribute('aria-selected',String(key==='restaurant'));}window.uxEvent?.('cabinet_opened','restaurant');load();};
-  api('access').then(data=>{$('tab-restaurant').hidden=!data.available;}).catch(e=>{if(e.status!==403&&e.status!==404&&e.status!==401){$('tab-restaurant').hidden=false;}});
+  api('access').then(data=>{$('tab-restaurant').hidden=!data.available;if(data.can_create)window.showResearchTab?.();}).catch(e=>{if(e.status!==403&&e.status!==404&&e.status!==401){$('tab-restaurant').hidden=false;}});
 })();

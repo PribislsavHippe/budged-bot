@@ -1,0 +1,37 @@
+import fs from 'node:fs/promises';import assert from 'node:assert/strict';
+const {PGlite}=await import(process.env.PGLITE_PATH||'@electric-sql/pglite');const db=new PGlite();
+await db.exec('CREATE ROLE anon;CREATE ROLE authenticated;CREATE ROLE service_role BYPASSRLS;');
+for(const file of ['schema.sql','migration_v8.sql','migration_v9.sql','migration_v10.sql'])await db.exec(await fs.readFile(new URL('../'+file,import.meta.url),'utf8'));
+await db.exec('INSERT INTO users(id) VALUES(1),(2),(3),(4)');
+const call=async(uid,action,args)=>(await db.query('select identity_action($1,$2,$3) r',[uid,action,JSON.stringify(args)])).rows[0].r;
+const a='aaaaaaaa-0000-0000-0000-000000000001',b='bbbbbbbb-0000-0000-0000-000000000002',c='cccccccc-0000-0000-0000-000000000003',e='dddddddd-0000-0000-0000-000000000004';
+await call(1,'create',{id:a,name:'First'});
+for(const file of ['migration_v11.sql','migration_v12.sql'])await db.exec(await fs.readFile(new URL('../'+file,import.meta.url),'utf8'));
+await call(1,'create',{id:b,name:'Second'});await call(2,'create',{id:c,name:'Other'});
+assert.equal((await call(1,'create',{id:e,name:'second'})).id,b);
+await assert.rejects(call(1,'invite',{hash:'ambiguous'}),/identity_select_restaurant/);
+await call(1,'invite',{restaurant_id:b,hash:'invite-b'});
+await assert.rejects(call(2,'invite',{restaurant_id:b,hash:'attack'}),/identity_forbidden/);
+await call(3,'request',{id:e,hash:'invite-b',name:'Test',name_key:'test'});
+await assert.rejects(call(1,'approve',{id:e,restaurant_id:a}),/identity_forbidden/);
+await call(1,'approve',{id:e,restaurant_id:b});
+const expense=async(uid,amount=430)=>db.query('select add_miniapp_expense($1,$2,$3,$4)',[uid,e,amount,'Такси']);
+await expense(3);await expense(3);assert.equal((await db.query('select count(*)::int n from entries')).rows[0].n,1);
+await assert.rejects(expense(3,431),/expense_conflict/);await expense(4);
+await db.exec('INSERT INTO users(id) VALUES(5)');
+assert.equal((await db.query('select tutorial_step from users where id=5')).rows[0].tutorial_step,'new');
+assert.equal((await db.query('select tutorial_step from users where id=1')).rows[0].tutorial_step,null);
+const cells=[{date:'2026-10-01',start:'10:00',end:'22:00'}];
+await db.query('select save_schedule($1,$2)',[3,JSON.stringify(cells)]);await db.query('select save_schedule($1,$2)',[3,JSON.stringify(cells)]);
+assert.equal((await db.query('select count(*)::int n from shifts')).rows[0].n,1);
+await db.exec("INSERT INTO worked_shifts(user_id,shift_date,actual_start,actual_end) VALUES(3,'2026-10-01','2026-10-01 10:00+03','2026-10-01 23:30+03')");
+await db.query('select set_hourly_rate(3,350,$1)',['2026-10-01']);await db.query('select set_hourly_rate(3,400,$1)',['2026-10-01']);
+assert.equal(Number((await db.query('select hourly_rate from worked_shifts')).rows[0].hourly_rate),350);
+for(const role of ['anon','authenticated']){
+ await db.exec('SET ROLE '+role);
+ for(const table of ['users','entries','shifts','worked_shifts'])await assert.rejects(db.query('select * from '+table),/permission denied/);
+ await assert.rejects(db.query('select save_schedule(3,$1)',[JSON.stringify(cells)]),/permission denied/);await db.exec('RESET ROLE');
+}
+await db.exec('SET ROLE service_role');await expense(3);await db.exec('RESET ROLE');
+await db.exec('delete from users where id=3');assert.equal((await db.query('select count(*)::int n from worked_shifts')).rows[0].n,0);
+console.log('v11/v12 SQL passed: existing rows, multiple restaurants, selected invitations and approvals, expenses dedupe, tutorials, schedule merge, fixed pay snapshot, permissions, cascade.');await db.close();

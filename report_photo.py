@@ -124,8 +124,6 @@ async def receive_photo(message):
     if len(drafts) >= 100 and message.from_user.id not in drafts:
         await message.answer('Сейчас читаю другие отчёты. Попробуй через минуту.')
         return
-    import research
-    research.track(message.from_user.id,'sales_report_started')
     oid = str(uuid5(NAMESPACE_URL, f'report-photo:{message.bot.id}:{message.chat.id}:{message.message_id}'))
     if old and old.oid == oid:
         return
@@ -134,8 +132,9 @@ async def receive_photo(message):
     draft = Draft(uuid4().hex[:12], oid, image.file_id)
     drafts[message.from_user.id] = draft
     asyncio.get_running_loop().call_later(DRAFT_TTL, expire, message.from_user.id, draft)
-    await message.answer('Распознать отчёт? Фото будет отправлено в Groq. Можно прислать общий отчёт целиком.',
-                         reply_markup=kb(draft, [('Распознать', 'read'), ('Отмена', 'cancel')]))
+    import schedule
+    options=[('Отчёт продаж','read')]+([('График смен','schedule')] if schedule.enabled() else [])+[('Отмена','cancel')]
+    await message.answer('Что на фото? Для распознавания отправлю изображение в Groq.',reply_markup=kb(draft,options))
 
 
 async def ask_date_or_preview(message, draft):
@@ -169,8 +168,12 @@ async def photo_callback(callback):
         if action == 'cancel':
             expire(callback.from_user.id, draft)
             await callback.message.edit_text('Хорошо, этот отчёт не сохраняю.')
+        elif action == 'schedule' and draft.phase == 'consent':
+            from schedule_chat import start_photo
+            await start_photo(callback,draft)
         elif action == 'read' and draft.phase == 'consent':
             import research
+            research.track(callback.from_user.id,'sales_report_started')
             research.track(callback.from_user.id,'vision_started')
             draft.phase = 'reading'
             await callback.message.edit_text('Распознаю…')
@@ -296,7 +299,7 @@ async def select_row(message, draft, index):
                 raise vision.VisionError('Сейчас читаю другие отчёты. Попробуй через минуту.')
             await message.answer('Читаю твою строку…')
             async with _recognition_slots:
-                row=await vision.recognize_row(draft.image,row['index'],row['name'])
+                row=await vision.recognize_row(draft.image,row['index'],row['name'],relaxed_grid=True) if draft.report.get('relaxed_grid') else await vision.recognize_row(draft.image,row['index'],row['name'])
             draft.report['percent']=row['percent']
             research.track(message.chat.id,'vision_completed')
         except vision.VisionError as exc:

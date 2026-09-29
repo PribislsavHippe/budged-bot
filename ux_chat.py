@@ -24,39 +24,51 @@ def skip_button():
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Пропустить',callback_data='ux:skip')]])
 
 
-async def begin(message):
-    uid=message.from_user.id
-    s=await research.subject(uid)
-    if not s or s['cohort']!='new' or s['onboarding_state']!='not_started':return False
-    result=await research.record(uid,'onboarding_started')
-    if not result:return False
+async def begin(message, *, uid=None, repeat=False):
+    import db
+    uid=uid or message.from_user.id
+    user=await db.get_or_create_user(uid)
+    if not repeat and user.get('tutorial_step')!='new':return False
+    await db._execute(db.supabase.table('users').update({'tutorial_step':'tip','onboarded':True}).eq('id',uid))
+    await research.record(uid,'onboarding_started')
     research.track(uid,'onboarding_step',step='tip')
     await message.answer('Здесь можно считать, сколько ты реально зарабатываешь на сменах.\n\n'
-                         'Запишем первые чаевые? Отправь, например: <b>чай 1500</b>. '
+                         'Запишем чаевые? Отправь, например: <b>чай 1500</b>. '
                          'Укажи свою сумму — это будет настоящая запись.',reply_markup=skip_button())
     return True
 
 
 async def value_saved(message,entry):
-    """After successful ordinary persistence; no amount or text crosses telemetry boundary."""
     if entry.get('kind') not in {'income','expense'}:return
+    uid=message.from_user.id
     event='tip_added' if entry['kind']=='income' else 'expense_added'
-    operation=str(uuid5(NAMESPACE_URL,f"ux-entry:{message.from_user.id}:{entry['id']}"))
-    # Optional state transition, uses short-timeout client, catches all backend errors.
-    result=await research.record(message.from_user.id,event,operation=operation)
-    if result.get('was_learning') and result.get('first_value'):
-        if entry['kind']=='income':
-            research.track(message.from_user.id,'onboarding_step',step='expense')
-            await message.answer('Готово! Теперь можно вычесть расход: например, <b>такси 430</b>. '
-                                 'Записывай только настоящие траты.\n\n'
-                                 'Итог — в «Статистике». Если нужна подсказка, открой /help.',reply_markup=help_buttons())
-        else:
-            await message.answer('Первая запись готова! Чаевые можно добавить так: <b>чай 1500</b>. '
-                                 'Итог — в «Статистике», подсказки — /help.')
+    operation=str(uuid5(NAMESPACE_URL,f"ux-entry:{uid}:{entry['id']}"))
+    await research.record(uid,event,operation=operation)
+    import db
+    try:
+        user=await db.get_or_create_user(uid)
+        step=user.get('tutorial_step')
+        if step not in {'tip','expense'}:return
+        if step=='expense' and entry['kind']!='expense':return
+        following='expense' if step=='tip' and entry['kind']=='income' else None
+        await db._execute(db.supabase.table('users').update({'tutorial_step':following}).eq('id',uid))
+    except Exception as error:
+        from diagnostics import failure
+        failure(error,area='onboarding',stage='advance')
+        return
+    if following:
+        research.track(uid,'onboarding_step',step='expense')
+        await message.answer('Чаевые записаны. Расход можно добавить так: <b>такси 430</b>. '
+                             'Укажи свою настоящую трату. Если трат не было — пропусти.',reply_markup=skip_button())
+    else:
+        await message.answer('Готово! В «Статистике» уже виден результат. '
+                             'Продолжай присылать записи, а за подсказками приходи в /help.',reply_markup=help_buttons())
 
 
 @router.callback_query(F.data=='ux:skip')
 async def skip(callback):
+    import db
+    await db._execute(db.supabase.table('users').update({'tutorial_step':None}).eq('id',callback.from_user.id))
     await research.record(callback.from_user.id,'onboarding_skipped')
     await callback.answer()
     await callback.message.edit_reply_markup(reply_markup=None)
@@ -64,19 +76,18 @@ async def skip(callback):
 
 
 @router.message(Command('learn'))
-async def learn_message(message):
+async def learn_message(message,state=None):
+    if state is not None:await state.clear()
     research.track(message.from_user.id,'help_opened')
-    await message.answer('Попробуй записать настоящие чаевые: <b>чай 1500</b>, со своей суммой. '
-                         'Для расхода — <b>такси 430</b>. Ошибочную запись можно отменить кнопкой под ней.')
+    await begin(message,repeat=True)
 
 
 @router.callback_query(F.data=='ux:learn')
-async def learn(callback):
+async def learn(callback,state=None):
+    if state is not None:await state.clear()
     await callback.answer()
     research.track(callback.from_user.id,'help_opened')
-    await callback.message.answer('Запиши свои чаевые сообщением: <b>чай 1500</b>. '
-                                 'Это настоящая запись, поэтому укажи свою сумму. '
-                                 'Для расхода — <b>такси 430</b>. Отменить запись можно кнопкой под ней.')
+    await begin(callback.message,uid=callback.from_user.id,repeat=True)
 
 
 async def categories(message,state):

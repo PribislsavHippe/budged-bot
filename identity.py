@@ -31,7 +31,8 @@ async def action(uid, kind, args):
         return (await db._execute(db.supabase.rpc('identity_action', {'actor':uid,'action':kind,'args':args}))).data
     except APIError as error:
         # Provider error text is used only for fixed classification, never echoed.
-        messages = {'identity_forbidden':'Это может сделать администратор ресторана.',
+        messages = {'identity_select_restaurant':'Выбери ресторан в миниаппе — там у каждого своя ссылка и список сотрудников.',
+                    'identity_forbidden':'Это может сделать администратор ресторана.',
                     'identity_stale':'Заявка уже изменилась. Обнови список сотрудников или открой /team.',
                     'identity_invite_expired':'Эта ссылка больше не работает. Попроси администратора прислать новую.',
                     'identity_other_restaurant':'Сначала выйди из прежнего ресторана через /profile.'}
@@ -43,8 +44,19 @@ async def action(uid, kind, args):
         raise ValueError('Пока не получается подключить тебя к ресторану. Сообщи администратору — он поможет.') from None
 
 
-async def owner_restaurant(uid):
-    rows=(await db._execute(db.supabase.table('restaurants').select('id,name').eq('owner_id',uid))).data
+async def owner_restaurants(uid):
+    return await db._pages(lambda:db.supabase.table('restaurants').select('id,name')
+                           .eq('owner_id',uid).order('created_at').order('id'))
+
+
+async def owner_restaurant(uid, restaurant_id=None):
+    query=db.supabase.table('restaurants').select('id,name').eq('owner_id',uid)
+    if restaurant_id is not None:
+        from uuid import UUID
+        query=query.eq('id',str(UUID(str(restaurant_id))))
+    rows=(await db._execute(query.order('created_at').order('id').limit(2))).data
+    if restaurant_id is None and len(rows)>1:
+        raise ValueError('Выбери ресторан в миниаппе — у каждого свой список сотрудников.')
     return rows[0] if rows else None
 
 
@@ -66,9 +78,11 @@ async def create(uid, title):
     return await action(uid,'create',{'id':str(uuid4()),'name':name(title)})
 
 
-async def invite(uid):
+async def invite(uid, restaurant_id=None):
     token=secrets.token_urlsafe(24)
-    restaurant=await action(uid,'invite',{'hash':token_hash(token)})
+    args={'hash':token_hash(token)}
+    if restaurant_id is not None:args['restaurant_id']=restaurant_id
+    restaurant=await action(uid,'invite',args)
     return restaurant,token
 
 
@@ -88,8 +102,8 @@ async def team(uid, page=0):
 
 async def export(uid):
     row=await profile(uid)
-    owned=await owner_restaurant(uid)
-    return {'employee_link':row,'owned_restaurant':owned}
+    owned=await owner_restaurants(uid)
+    return {'employee_link':row,'owned_restaurant':owned[0] if len(owned)==1 else None,'owned_restaurants':owned}
 
 
 async def report_row(uid, rows):

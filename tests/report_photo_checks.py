@@ -68,6 +68,17 @@ class RowVisionTests(unittest.IsolatedAsyncioTestCase):
         doubled=image.resize((2560,692))
         self.assertEqual(len(layout.detect(layout.encode(doubled))[2]),16)
 
+    def test_recalibration_preserves_row_with_white_margins(self):
+        from PIL import Image,ImageDraw,ImageOps
+        import report_layout as layout
+        image=Image.new('RGB',(1280,346),'white');draw=ImageDraw.Draw(image)
+        draw.rectangle((0,0,1279,345),outline='black')
+        for y in range(67,324,16):draw.line((20,y,1279,y),fill='black')
+        for x in layout.EDGES:draw.line((x,67,x,323),fill='black')
+        raw=layout.encode(image);padded=layout.encode(ImageOps.expand(image,border=40,fill='white'))
+        self.assertEqual(layout.row_image(raw,6,relaxed=True),layout.row_image(padded,6,relaxed=True))
+        with self.assertRaises(ValueError):layout.relaxed_detect(layout.encode(image.resize((640,173))))
+
     def test_printed_number_rejects_ambiguous_formats(self):
         self.assertEqual(vision.printed_number('73 238,00'),73238)
         for value in ('1 2','1,234,56','NaN','1e6','-1','about 10'):
@@ -76,6 +87,20 @@ class RowVisionTests(unittest.IsolatedAsyncioTestCase):
     async def test_directory_rejects_duplicate_indexes(self):
         with patch('report_layout.directory',return_value=(b'image',3)),patch.object(vision,'request_json',new=AsyncMock(return_value={'rows':[{'index':0,'name':'Тест Имя'},{'index':0,'name':'Другой'}]})):
             with self.assertRaises(vision.VisionError):await vision.recognize_directory(b'photo')
+
+    async def test_recalibrated_grid_always_uses_verified_row_crop(self):
+        with patch('report_layout.directory',side_effect=[ValueError('grid'),(b'prepared',3)]) as directory,patch.object(vision,'request_json',new=AsyncMock(return_value={'rows':[{'index':0,'name':'Тест Имя'}]})) as read:
+            result=await vision.recognize_directory(b'whole photo')
+            self.assertTrue(result['relaxed_grid']);self.assertEqual(read.await_args.args[0],b'prepared')
+            self.assertTrue(directory.call_args.kwargs['relaxed'])
+        raw={'name':'Тест Имя','totals':{'wine':100},'percent':{}}
+        with patch('report_layout.row_image',return_value=b'one verified row') as crop,patch.object(vision,'request_json',new=AsyncMock(return_value=raw)) as read:
+            result=await vision.recognize_row(b'whole photo',0,'Тест Имя',relaxed_grid=True)
+            crop.assert_called_once_with(b'whole photo',0,relaxed=True)
+            self.assertEqual(read.await_args.args[0],b'one verified row')
+        with patch('report_layout.directory',side_effect=ValueError('unknown grid')),patch.object(vision,'request_json',new=AsyncMock()) as read:
+            with self.assertRaises(vision.VisionError):await vision.recognize_directory(b'whole photo')
+            read.assert_not_awaited()
 
     async def test_row_name_and_decimal_percentage(self):
         raw={'name':'Тест Имя','totals':{'cocktails':'39,00'},'percent':{'cocktails':'35,45%'}}

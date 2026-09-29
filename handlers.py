@@ -198,6 +198,12 @@ async def cmd_help(message: Message):
         "/export — забрать свои записи файлом\n"
         "/delete — удалить свои данные"
     )
+    import schedule
+    if schedule.enabled():
+        await message.answer('Пришли фото графика → «График смен» → выбери свою строку и месяц.\n'
+                             '/hours — записать время ухода; /hours вчера — за прошлую смену\n'
+                             '/rate 350 — твоя ставка за час\n/work — часы и заработок за месяц\n'
+                             '/learn — пройти знакомство ещё раз')
     from identity_chat import enabled
     if enabled():
         await message.answer("/profile — твой ресторан\n/team — сотрудники и заявки для администратора\n"
@@ -283,11 +289,12 @@ async def cmd_privacy(message: Message):
         f"• твой номер в Telegram — <code>{message.from_user.id}</code>",
         "• записи: сумма, категория, нал/карта, время",
         "• текст самой записи — он сохраняется как заметка",
-        f"• даты смен, которые ты поставил — сейчас {len(shifts)}",
+        f"• даты и часы смен, которые ты поставил — сейчас {len(shifts)}",
         "• план смены, если задавал",
+        "• фактическое время работы и часовая ставка, если записывал; они не видны администратору ресторана",
         "• личные планы продаж, записи продаж и версии официальных отчётов",
         "• разрешение на добавление смен в Google Календарь, если ты его подключил",
-        "• фото отчёта отправляется в Groq только после нажатия «Распознать»; "
+        "• фото отчёта или графика отправляется в Groq только после выбора типа распознавания; "
         "фото не сохраняется в базе, черновик распознавания хранится в памяти до 15 минут",
         "",
         "Чтобы находить твою строку в отчёте, сохраняются ресторан, имя или код "
@@ -344,7 +351,20 @@ async def cmd_export(message: Message):
             from diagnostics import failure
             failure(error,area='analytics',stage='export')
             await message.answer('События использования пока не удалось выгрузить. Остальные записи отправлю отдельно.')
-    if not entries and not shifts and not has_sales and not has_identity:
+    import schedule
+    has_work=False
+    if schedule.enabled():
+        try:
+            work_data=await schedule.export(message.from_user.id)
+            has_work=bool(work_data['worked_shifts'] or work_data['planned_shifts'] or work_data['hourly_rate'])
+            await message.answer_document(BufferedInputFile(
+                json.dumps(work_data,ensure_ascii=False,indent=2).encode('utf-8'),
+                filename='my-work-hours.json'),caption='Твой график, отработанное время и ставка.')
+        except Exception as error:
+            from diagnostics import failure
+            failure(error,area='work_time',stage='export')
+            await message.answer('Часы работы пока не удалось выгрузить. Остальные записи отправлю отдельно.')
+    if not entries and not shifts and not has_sales and not has_identity and not has_work:
         await message.answer("Пока нет записей, которые можно скачать.")
         return
 

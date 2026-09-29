@@ -24,3 +24,7 @@
 #restaurant-error{color:#9a3426;line-height:1.5}#restaurant-notice{color:#315547;font-size:14px}
 #restaurant-panel :focus-visible{outline:2px solid #355e72;outline-offset:3px}
 @media(max-width:380px){.restaurant-head{align-items:flex-start;flex-direction:column}.restaurant-head h1{margin-bottom:0}.restaurant-turnover{font-size:17px}.restaurant-filters button{font-size:12px}.app-tabs{gap:18px}}
+
+.restaurant-switch{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:12px 0 20px;flex-wrap:wrap}
+.restaurant-switch select{font:inherit;max-width:100%;min-height:44px;border:1px solid #d8d4dd;border-radius:10px;background:rgba(255,255,255,.6);padding:8px 12px}
+.restaurant-switch button,#restaurant-create-cancel{font:inherit;border:0;background:none;color:#52616b;padding:10px 0;cursor:pointer;min-height:44px}

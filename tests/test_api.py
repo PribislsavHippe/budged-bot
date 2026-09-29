@@ -221,10 +221,10 @@ def test_empty_rejected():
 
 # ─── /api/shift_spend ────────────────────────────────────────────────────────
 
-def test_shift_spend_chat_only():
+def test_shift_spend_requires_idempotency_key():
     _db.added.clear()
     r = run(webapp_api.api_shift_spend(Req({"initData":init_data(TOKEN,42),"amount":500})))
-    assert r.status == 405
+    assert r.status == 400
     assert not _db.added
 
 

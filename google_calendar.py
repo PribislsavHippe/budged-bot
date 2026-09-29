@@ -3,7 +3,7 @@
 Поток: мини-ап открывает auth_url во ВНЕШНЕМ браузере (Google блокирует OAuth
 внутри вебвью Telegram) → пользователь соглашается → Google редиректит на
 /google/callback → exchange_code сохраняет токены. Дальше смены создаются
-как события-на-весь-день в его календаре.
+с указанными часами, а смены без часов — как события на весь день.
 """
 import hashlib
 import hmac
@@ -151,12 +151,14 @@ async def connection_status(user_id: int) -> dict:
         return {"connected":False,"message":ERROR_MESSAGES[e.code],"error":e.code}
 
 
-async def _request(user_id, method, **kwargs):
+async def _request(user_id, method, event_id=None, **kwargs):
     token = await _valid_token(user_id)
     for attempt in range(2):
         try:
             async with httpx.AsyncClient(timeout=20) as c:
-                r = await getattr(c, method)(_EVENTS, headers={"Authorization":f"Bearer {token}"}, **kwargs)
+                from urllib.parse import quote
+                url=_EVENTS+('/'+quote(event_id,safe='') if event_id else '')
+                r = await getattr(c, method)(url, headers={"Authorization":f"Bearer {token}"}, **kwargs)
         except httpx.HTTPError:
             raise CalendarError("temporary") from None
         if r.status_code != 401: break
@@ -169,25 +171,48 @@ async def _request(user_id, method, **kwargs):
     return r
 
 
+async def _patch_timed(user_id, event_id, payload):
+    # Remove legacy all-day fields explicitly when converting to a timed shift.
+    body={**payload,'start':{**payload['start'],'date':None},'end':{**payload['end'],'date':None}}
+    response=await _request(user_id,'patch',event_id=event_id,json=body)
+    if response.status_code!=200:raise CalendarError('temporary')
+
+
 async def create_shift_event(user_id: int, date_iso: str) -> bool:
     if not is_configured(): raise CalendarError("not_configured")
     d = date.fromisoformat(date_iso)
+    import schedule
+    planned=await schedule.load_shift(user_id,date_iso) if schedule.enabled() else None
+    timed=bool(planned and planned.get('starts_at') and planned.get('ends_at'))
+    payload={'summary':'Смена','start':{'date':date_iso},'end':{'date':(d+timedelta(days=1)).isoformat()},
+             'transparency':'transparent','extendedProperties':{'private':{'budgetbot':'shift'}}}
+    if timed:
+        payload['start']={'dateTime':datetime.combine(d,schedule.clock(planned['starts_at']),schedule.TZ).isoformat(),'timeZone':'Europe/Moscow'}
+        payload['end']={'dateTime':datetime.combine(d,schedule.clock(planned['ends_at']),schedule.TZ).isoformat(),'timeZone':'Europe/Moscow'}
     # Detect events created by older versions with random IDs before retrying.
     params = {"privateExtendedProperty":"budgetbot=shift",
         "timeMin":(d-timedelta(days=1)).isoformat()+"T00:00:00Z",
         "timeMax":(d+timedelta(days=2)).isoformat()+"T00:00:00Z", "maxResults":250}
     while True:
         existing = (await _request(user_id,"get",params=params)).json()
-        if any(e.get("start",{}).get("date")==date_iso and e.get("status")!="cancelled" for e in existing.get("items",[])):
-            return True
+        for event in existing.get('items',[]):
+            start=event.get('start',{})
+            day=start.get('date')
+            if start.get('dateTime'):
+                day=datetime.fromisoformat(start['dateTime'].replace('Z','+00:00')).astimezone(schedule.TZ).date().isoformat()
+            if day==date_iso and event.get('status')!='cancelled':
+                if timed:
+                    await _patch_timed(user_id,event['id'],payload)
+                return True
         if not existing.get("nextPageToken"): break
         params["pageToken"] = existing["nextPageToken"]
     # Hex is valid base32hex for Google event IDs. A lost response can be retried safely.
     event_id = hashlib.sha256(f"budgetbot-shift:{user_id}:{date_iso}".encode()).hexdigest()
-    r = await _request(user_id,"post",json={"id":event_id,"summary":"Смена",
-        "start":{"date":date_iso},"end":{"date":(d+timedelta(days=1)).isoformat()},
-        "transparency":"transparent","extendedProperties":{"private":{"budgetbot":"shift"}}})
+    r=await _request(user_id,'post',json={'id':event_id,**payload})
+    if r.status_code==409 and timed:
+        await _patch_timed(user_id,event_id,payload)
     return r.status_code in (200,201,409)
+
 
 
 async def sync_shifts(user_id: int, dates_iso: list[str]) -> dict:

@@ -1,5 +1,8 @@
 # Обновление кабинета и UX Research
 
+Для следующего релиза 29 сентября см. [установку v11/v12](SCHEDULE_AND_RESTAURANTS.md).
+Ниже сохранена диагностика и инструкция первоначальной установки v9/v10.
+
 ## Причина сбоя 28 сентября 2026
 
 Полученный от владельца лог Render: `POST /api/restaurant/access` → 503, Supabase `PGRST205`: `Could not find the table 'public.restaurants' in the schema cache`.

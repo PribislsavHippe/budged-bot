@@ -53,8 +53,8 @@ def encode(image):
     output=io.BytesIO();image.save(output,format='PNG');return output.getvalue()
 
 
-def directory(data):
-    image,scale,bands=detect(data)
+def directory(data,relaxed=False):
+    image,scale,bands=(relaxed_detect if relaxed else detect)(data)
     canvas=Image.new('RGB',(450,50*len(bands)),'white');draw=ImageDraw.Draw(canvas)
     for index,(top,bottom) in enumerate(bands):
         draw.text((5,index*50+15),str(index),fill='black')
@@ -63,8 +63,8 @@ def directory(data):
     return encode(canvas),len(bands)
 
 
-def row_image(data,index):
-    image,scale,bands=detect(data)
+def row_image(data,index,relaxed=False):
+    image,scale,bands=(relaxed_detect if relaxed else detect)(data)
     if not 0<=index<len(bands):raise ValueError('Строка отсутствует.')
     top,bottom=bands[index]
     canvas=Image.new('RGB',(650,70*len(COLUMNS)),'white');draw=ImageDraw.Draw(canvas)
@@ -73,3 +73,47 @@ def row_image(data,index):
         crop=image.crop((round(left*scale)+1,top+1,min(image.width,round(right*scale)),bottom))
         canvas.paste(crop.resize(((right-left)*2,40)),(220,i*70+15))
     return encode(canvas)
+
+
+def relaxed_detect(data):
+    """Recover white margins and smaller/soft grids; still verify actual column rules.
+
+    Header geometry may vary. Every retained band gets its own printed index, so
+    skipping a heading/name cannot move the row subsequently sent to the model.
+    """
+    from PIL import ImageChops
+    with Image.open(io.BytesIO(data)) as source:
+        if source.width*source.height>12_000_000:raise ValueError('Слишком большое разрешение.')
+        image=source.convert('RGB')
+    diff=ImageChops.difference(image,Image.new('RGB',image.size,'white')).convert('L')
+    box=diff.point(lambda v:255 if v>35 else 0).getbbox()
+    if not box:raise ValueError('Пустое изображение.')
+    image=image.crop(box);w,h=image.size;scale=w/1280
+    if not 900<=w<=4000 or not .12<h/w<.9:raise ValueError('Не нашёл таблицу отчёта.')
+    px=image.convert('L').load()
+    xs=[min(w-1,round(x*scale)) for x in (250,300,350,640,665,805,825,960,980,1120,1150)]
+    groups=[]
+    for y in range(h):
+        if sum(px[x,y]<175 for x in xs)>=9:
+            if groups and y-groups[-1][-1]<=max(1,round(2*scale)):groups[-1].append(y)
+            else:groups.append([y])
+    ys=[round(sum(g)/len(g)) for g in groups]
+    runs=[];run=[]
+    for a,b in zip(ys,ys[1:]):
+        if 11*scale<=b-a<=25*scale:
+            if not run:run=[a]
+            run.append(b)
+        else:
+            if run:runs.append(run)
+            run=[]
+    if run:runs.append(run)
+    if not runs:raise ValueError('Не нашёл строки отчёта.')
+    grid=max(runs,key=len)
+    if len(grid)<8:raise ValueError('Недостаточно строк для проверки сетки.')
+    if min(b-a for a,b in zip(grid,grid[1:]))<12:raise ValueError('Слишком мелкие строки. Нужен исходный файл.')
+    delta=max(2,round(3*scale))
+    for edge in EDGES:
+        x=round(edge*scale)
+        if max(sum(px[min(w-1,max(0,x+d)),y]<185 for y in range(grid[0],grid[-1]))/(grid[-1]-grid[0]) for d in range(-delta,delta+1))<.6:
+            raise ValueError('Не совпали столбцы отчёта.')
+    return image,scale,list(zip(grid,grid[1:]))[:30]

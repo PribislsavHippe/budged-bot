@@ -34,21 +34,24 @@ async def handle(request):
     action=request.match_info['action']
     stage='identity'
     try:
-        restaurant=await identity.owner_restaurant(uid)
         if action=='access':
-            return response({'available':bool(restaurant or is_admin(uid)),'restaurant':restaurant})
+            restaurants=await identity.owner_restaurants(uid)
+            return response({'available':bool(restaurants or is_admin(uid)),
+                             'can_create':is_admin(uid),'restaurants':restaurants,
+                             'restaurant':restaurants[0] if len(restaurants)==1 else None})
         if action=='create':
             # identity.create checks ADMIN_ID server-side.
             return response({'restaurant':await identity.create(uid,body.get('name',''))})
+        restaurant=await identity.owner_restaurant(uid,body.get('restaurant_id'))
         if not restaurant:return response({'error':'Этот раздел доступен администратору ресторана.'},403)
         if action=='invite':
             username=request.app.get('bot_username')
             if not username:return response({'error':'Приглашение пока можно получить в боте: /invite.'},503)
-            _,token=await identity.invite(uid)
+            _,token=await identity.invite(uid,restaurant['id'])
             return response({'url':f'https://t.me/{username}?start=team_{token}'})
         if action in ('approve','reject','revoke'):
             target=str(UUID(str(body.get('id',''))))
-            await identity.action(uid,action,{'id':target})
+            await identity.action(uid,action,{'id':target,'restaurant_id':restaurant['id']})
             return response({'ok':True})
         if action!='view':return response({'error':'Такой страницы нет.'},404)
         month=month_key(body.get('month',op_today().strftime('%Y-%m')))
@@ -70,7 +73,7 @@ async def handle(request):
         # Recheck membership/ownership after reads so a concurrent revoke cannot
         # deliver newly fetched financial data to an owner who lost access.
         stage='access_recheck'
-        if await identity.owner_restaurant(uid)!=restaurant:return response({'error':'Доступ изменился. Открой приложение заново.'},403)
+        if await identity.owner_restaurant(uid,restaurant['id'])!=restaurant:return response({'error':'Доступ изменился. Открой приложение заново.'},403)
         active=await db._pages(lambda:db.supabase.table('employee_links').select('id,status')
                 .eq('restaurant_id',restaurant['id']).order('id'))
         allowed={(r['id'],r['status']) for r in active}

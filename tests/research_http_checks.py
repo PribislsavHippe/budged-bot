@@ -23,7 +23,7 @@ async def main():
                 # Actual reported production failure, safe diagnostics and personal screens still work.
                 missing=APIError({'code':'PGRST205','message':'SECRET restaurants absent','details':'TOKEN','hint':None})
                 buf=io.StringIO();log=logging.StreamHandler(buf);logging.getLogger().addHandler(log)
-                with patch.object(identity,'owner_restaurant',side_effect=missing):
+                with patch.object(identity,'owner_restaurants',side_effect=missing):
                     d=await post('/api/restaurant/access',expected=503)
                     assert d['code']=='schema' and len(d['reference'])==12
                 logging.getLogger().removeHandler(log)
@@ -34,6 +34,16 @@ async def main():
                     await post('/api/stats');await post('/api/entries');await post('/api/month',year=2026,month=9)
                 with patch.object(db,'get_all_entries',new=AsyncMock(side_effect=RuntimeError('financial SECRET'))):
                     d=await post('/api/stats',expected=503);assert 'SECRET' not in str(d)
+                # Restored expense accepts only validated operations, trusts signed user, and preserves saved success.
+                operation=str(uuid4())
+                with patch.object(db,'get_or_create_user',new=AsyncMock()),patch.object(db.supabase,'rpc',create=True) as rpc,patch.object(db,'_execute',new=AsyncMock(return_value=NS(data={'id':31}))),patch.object(webapp_api,'_stats_payload',new=AsyncMock(side_effect=RuntimeError('SECRET'))):
+                    d=await post('/api/shift_spend',uid=2,user_id=1,operation_id=operation,amount=430,category='Такси')
+                    assert d['saved'] and d['stats'] is None
+                    assert rpc.call_args.args[1]['actor']==2
+                    assert rpc.call_args.args[1]['operation']==operation
+                    for amount in (0,-1,'NaN',1.234):
+                        await post('/api/shift_spend',expected=400,operation_id=str(uuid4()),amount=amount,category='Такси')
+                    await post('/api/shift_spend',expected=400,operation_id='bad',amount=1,category='Такси')
                 # Ownership alone does not grant research access; request body cannot override signed user.
                 for action in ['overview','journey','feedback']:
                     await post('/api/research/'+action,uid=2,expected=403,user_id=1,subject=str(uuid4()))
@@ -47,7 +57,10 @@ async def main():
                     assert d['new_users']==0 and d['retention']['d1']['rate'] is None
                     assert all('user_id' not in call.args[1] for call in pages.await_args_list)
                 await post('/api/research/overview',days=999,expected=400)
-                with patch.dict(os.environ,{'UX_RESEARCH_ENABLED':'0'}):await post('/api/research/overview',expected=404)
+                with patch.dict(os.environ,{'UX_RESEARCH_ENABLED':'0'}):
+                    assert (await post('/api/research/access'))['available']
+                    assert not (await post('/api/research/access',uid=2))['available']
+                    await post('/api/research/overview',expected=404)
         # Persisted entry stays successful even when analytics fails. No financial content in RPC payload.
         message=NS(from_user=NS(id=2,first_name='Tester'),answer=AsyncMock())
         with patch.object(research,'execute',new=AsyncMock(side_effect=RuntimeError('SECRET'))):
@@ -55,9 +68,9 @@ async def main():
         payload=research.payload(2,'tip_added',operation=str(uuid4()))
         assert set(payload)=={'actor','kind','origin','screen_name','step_name','failure_code','release','operation','event_time'}
         # Existing user never forced; skip does not intercept ordinary text.
-        with patch.object(research,'subject',new=AsyncMock(return_value={'cohort':'existing','onboarding_state':'legacy'})):
+        with patch.object(db,'get_or_create_user',new=AsyncMock(return_value={'onboarded':True,'tutorial_step':None})):
             assert not await ux_chat.begin(message)
-        with patch.object(research,'subject',new=AsyncMock(return_value={'cohort':'new','onboarding_state':'not_started'})),patch.object(research,'record',new=AsyncMock(return_value={'state':'started'})),patch.object(research,'track'):
+        with patch.object(db,'get_or_create_user',new=AsyncMock(return_value={'tutorial_step':'new'})),patch.object(research,'record',new=AsyncMock(return_value={'state':'started'})),patch.object(research,'track'):
             assert await ux_chat.begin(message)
         state=NS(clear=AsyncMock(),get_data=AsyncMock(return_value={'feedback_category':'idea','feedback_id':str(uuid4())}))
         message.text='A test idea';store.rows['users']=[{'id':2}]

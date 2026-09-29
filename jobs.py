@@ -39,6 +39,10 @@ async def evening_shift_prompt(bot):
         return
     for user_id in user_ids:
         try:
+            import schedule
+            if schedule.enabled():
+                planned=await schedule.load_shift(user_id,today_iso)
+                if planned and planned.get('ends_at'):continue
             entries = await db.get_entries_since(user_id, since)
             income = sum(
                 float(e["signed_amount"]) for e in entries if e["kind"] == "income"
@@ -66,5 +70,7 @@ def setup_scheduler(bot) -> AsyncIOScheduler:
     scheduler.add_job(evening_shift_prompt, "cron", hour=22, minute=30, args=[bot])
     from google_calendar import retry_pending_shifts
     scheduler.add_job(retry_pending_shifts, "interval", minutes=10, max_instances=1)
+    from schedule_chat import prompt_work_end
+    scheduler.add_job(prompt_work_end,"interval",minutes=5,args=[bot],max_instances=1)
     scheduler.add_job(self_ping, "interval", minutes=10)
     return scheduler
