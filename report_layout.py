@@ -111,9 +111,22 @@ def relaxed_detect(data):
     grid=max(runs,key=len)
     if len(grid)<8:raise ValueError('Недостаточно строк для проверки сетки.')
     if min(b-a for a,b in zip(grid,grid[1:]))<12:raise ValueError('Слишком мелкие строки. Нужен исходный файл.')
-    delta=max(2,round(3*scale))
+    # A screenshot may lose a few pixels on the left before Telegram resizes it.
+    # Fit a single affine alignment to ALL visible column rules, not to text.
+    observed=[];radius=max(4,round(18*scale))
     for edge in EDGES:
-        x=round(edge*scale)
-        if max(sum(px[min(w-1,max(0,x+d)),y]<185 for y in range(grid[0],grid[-1]))/(grid[-1]-grid[0]) for d in range(-delta,delta+1))<.6:
-            raise ValueError('Не совпали столбцы отчёта.')
-    return image,scale,list(zip(grid,grid[1:]))[:30]
+        expected=round(edge*scale)
+        candidates=range(max(0,expected-radius),min(w,expected+radius+1))
+        scores=[(sum(px[x,y]<170 for y in range(grid[0],grid[-1]))/(grid[-1]-grid[0]),x) for x in candidates]
+        score,x=max(scores,key=lambda v:(v[0],-abs(v[1]-expected)))
+        if score<.65:raise ValueError('Не совпали столбцы отчёта.')
+        observed.append(x)
+    mean_x=sum(EDGES)/len(EDGES);mean_y=sum(observed)/len(observed)
+    factor=sum((x-mean_x)*(y-mean_y) for x,y in zip(EDGES,observed))/sum((x-mean_x)**2 for x in EDGES)
+    offset=mean_y-factor*mean_x
+    if not .96*scale<=factor<=1.04*scale or abs(offset)>22*scale or any(abs(factor*x+offset-y)>3*scale for x,y in zip(EDGES,observed)):
+        raise ValueError('Столбцы отчёта прочитались неоднозначно.')
+    # Canonical horizontal coordinates keep existing name/value crops aligned.
+    image=image.transform((1280,h),Image.Transform.AFFINE,(factor,0,offset,0,1,0),
+                          resample=Image.Resampling.BICUBIC,fillcolor='white')
+    return image,1,list(zip(grid,grid[1:]))[:30]

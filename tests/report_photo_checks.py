@@ -79,6 +79,23 @@ class RowVisionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(layout.row_image(raw,6,relaxed=True),layout.row_image(padded,6,relaxed=True))
         with self.assertRaises(ValueError):layout.relaxed_detect(layout.encode(image.resize((640,173))))
 
+    def test_report_cropped_at_top_and_left_keeps_columns_aligned(self):
+        from PIL import Image,ImageDraw
+        import report_layout as layout
+        image=Image.new('RGB',(1280,346),'white');draw=ImageDraw.Draw(image)
+        draw.rectangle((0,0,1279,345),outline='black')
+        for y in range(67,324,16):draw.line((20,y,1279,y),fill='black')
+        for x in layout.EDGES:draw.line((x,67,x,323),fill='black')
+        cropped=image.crop((11,9,1280,346)).resize((1280,340))
+        data=layout.encode(cropped)
+        with self.assertRaises(ValueError):layout.detect(data)
+        normalized,scale,bands=layout.relaxed_detect(data)
+        self.assertEqual(scale,1);self.assertEqual(len(bands),17)
+        pixels=normalized.convert('L').load();y=(bands[6][0]+bands[6][1])//2
+        for edge in layout.EDGES:
+            self.assertLess(min(pixels[edge+d,y] for d in range(-2,3)),170)
+        self.assertTrue(layout.row_image(data,6,relaxed=True).startswith(b'\x89PNG'))
+
     def test_printed_number_rejects_ambiguous_formats(self):
         self.assertEqual(vision.printed_number('73 238,00'),73238)
         for value in ('1 2','1,234,56','NaN','1e6','-1','about 10'):
