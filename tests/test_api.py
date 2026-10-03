@@ -347,9 +347,13 @@ def test_gcal_state_roundtrip():
 
 def test_gcal_state_tamper():
     import google_calendar as gc
+    from unittest.mock import patch
     bad = gc._sign(844587778).replace("844587778", "1")
     assert gc.verify_state(bad) is None
     assert gc.verify_state("garbage") is None
+    state = gc._sign(844587778)
+    with patch.object(gc.time, 'time', return_value=int(state.split('.')[1])+601):
+        assert gc.verify_state(state) is None
 
 
 def test_api_gcal_not_configured():

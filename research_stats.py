@@ -50,6 +50,17 @@ def summarize(subjects,events,days=30,now=None,ux_version=None):
                        'eligible':len(eligible),'pending':len(previous-eligible),'conversion':pct(len(remaining),len(eligible)),
                        'overall':pct(len(remaining),base),'drop_off':len(missing),'with_errors':len(errored)})
     errors=Counter((e['event'],e.get('screen'),e.get('error_code')) for e in window if e['event'] in ERROR_EVENTS)
+    active_window=[e for e in window if e['event'] in ACTIVE]
+    day_events=Counter()
+    day_active=defaultdict(set)
+    for e in window:
+        day=dt(e['occurred_at']).astimezone(TZ).date()
+        day_events[day]+=1
+        if e['event'] in ACTIVE:day_active[day].add(e['subject_id'])
+    daily=[]
+    for offset in range(min(days,7)):
+        day=today-timedelta(days=offset)
+        daily.append({'date':day.isoformat(),'active_users':len(day_active[day]),'events':day_events[day]})
     users=[]
     for sid,rows in by.items():
         recent=[e for e in rows if start<=dt(e['occurred_at']).astimezone(TZ).date()<=today]
@@ -58,9 +69,15 @@ def summarize(subjects,events,days=30,now=None,ux_version=None):
             users.append({'id':sid,'label':f"U-{selected[sid]['label']:04d}",'cohort':selected[sid]['cohort'],
                           'onboarding_version':selected[sid]['onboarding_version'],'last_at':last['occurred_at'],
                           'last_event':last['event'],'errors':sum(e['event'] in ERROR_EVENTS for e in recent)})
-    users.sort(key=lambda u:(-u['errors'],u['label']))
+    # The list is a recent activity feed. Sorting by errors/label hid active
+    # people on later pages even when their actions were counted above.
+    users.sort(key=lambda u:(dt(u['last_at']),u['id']),reverse=True)
     return {'days':days,'from':start.isoformat(),'through':today.isoformat(),'new_users':base,
-            'active_users':len({e['subject_id'] for e in window if e['event'] in ACTIVE}),
+            'active_users':len({e['subject_id'] for e in active_window}),
+            'active_today':len(day_active[today]),
+            'event_count':len(window),
+            'last_observed_at':max(window,key=lambda e:dt(e['occurred_at']))['occurred_at'] if window else None,
+            'daily_activity':daily,
             'onboarding_started':len({e['subject_id'] for e in window if e['event']=='onboarding_started'}),
             'onboarding_skipped':len({e['subject_id'] for e in window if e['event']=='onboarding_skipped'}),
             'first_value_users':sum('first_value_action' in reached[s] for s in cohort),

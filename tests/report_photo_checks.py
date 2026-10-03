@@ -143,7 +143,7 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
             await handlers._greet(message,'<Имя>')
         message.answer_media_group.assert_not_awaited()
         text=message.answer.call_args.args[0]
-        self.assertIn('тестированию',text);self.assertIn('крутой',text)
+        self.assertIn('тестируешь бота',text)
         self.assertIn('&lt;Имя&gt;',text)
 
     def test_preview_does_not_round_large_amounts(self):

@@ -1,10 +1,8 @@
-"""Планировщик: одно вечернее напоминание закрыть смену.
-
-Шлём только тем, у кого сегодня был доход (была смена) — остальных не дёргаем.
-"""
+"""Планировщик смен и напоминаний по московскому времени."""
+import asyncio
 import logging
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import aiohttp
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -40,12 +38,20 @@ async def tomorrow_shift_reminder(bot):
             when=f" с {start[:5]}" if start else ''
             await bot.send_message(uid,f'Завтра у тебя смена{when}. Хорошего вечера!\n\n'
                                        'Напоминания: /reminders')
+            await asyncio.sleep(0.04)
         except Exception as error:
             if claimed:
                 try:await db._execute(db.supabase.table('shifts').update({'start_reminder_sent':False}).eq('id',shift['id']))
                 except Exception:pass
             from diagnostics import failure
             failure(error,area='shift_reminder',stage='send')
+
+
+async def retry_tomorrow_shift_reminder(bot):
+    """Catch up after a restart or a transient failure on the same evening."""
+    from schedule import TZ
+    if datetime.now(TZ).hour >= 19:
+        await tomorrow_shift_reminder(bot)
 
 
 async def self_ping():
@@ -71,7 +77,8 @@ async def evening_shift_prompt(bot):
         user_ids = await db.get_onboarded_user_ids()
         shift_users = set(await db.get_user_ids_with_shift_on(today_iso))
     except Exception as e:
-        logging.error(f"evening prompt: fetch failed: {e}")
+        from diagnostics import failure
+        failure(e,area='evening_prompt',stage='fetch')
         return
     for user_id in user_ids:
         try:
@@ -98,13 +105,16 @@ async def evening_shift_prompt(bot):
                         + "\nЗакроем день — какие были траты?")
             await bot.send_message(user_id, text, reply_markup=shift_spend_kb())
         except Exception as e:
-            logging.warning(f"evening prompt failed for {user_id}: {e}")
+            from diagnostics import failure
+            failure(e,area='evening_prompt',stage='send')
 
 
 def setup_scheduler(bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
     scheduler.add_job(evening_shift_prompt, "cron", hour=22, minute=30, args=[bot])
     scheduler.add_job(tomorrow_shift_reminder, "cron", hour=19, minute=0, args=[bot],max_instances=1)
+    scheduler.add_job(retry_tomorrow_shift_reminder, "interval", minutes=10, args=[bot],max_instances=1)
+    scheduler.add_job(retry_tomorrow_shift_reminder, args=[bot],max_instances=1)
     from google_calendar import retry_pending_shifts
     scheduler.add_job(retry_pending_shifts, "interval", minutes=10, max_instances=1)
     from schedule_chat import prompt_work_end

@@ -257,13 +257,15 @@ async def google_callback(request: web.Request) -> web.Response:
     try:
         await gcal.exchange_code(user_id, code)
     except Exception as e:
-        logging.error(f"google callback error: {e}")
+        from diagnostics import failure
+        failure(e,area='calendar',stage='callback')
         return web.Response(text=page + "<h2>Ошибка</h2><p>Не удалось подключить календарь.</p>",
                             content_type="text/html", status=500)
     try:
         sync = await gcal.sync_pending(user_id)
-    except Exception:
-        logging.exception("Google connected but backfill failed")
+    except Exception as error:
+        from diagnostics import failure
+        failure(error,area='calendar',stage='backfill')
         sync = {"synced": 0, "pending": "неизвестно", "message": "Подключение сохранено. Повторите отправку смен командой /calendar."}
     return web.Response(
         text=page + f"<h2>Подключено ✓</h2><p>Синхронизировано смен: {sync['synced']}. Ожидают: {sync['pending']}.</p><p>{sync['message']}</p><p>Возвращайся в Telegram.</p>",
@@ -292,7 +294,7 @@ async def api_errors(request, handler):
     uid=request.get('verified_uid')
     if uid and screen and response.status==200 and request.path not in {'/api/restaurant/access'}:
         research.track(uid,'cabinet_loaded',source='server',screen=screen)
-    elif uid and screen and response.status>=500 and not request.path.startswith('/api/restaurant/'):
+    elif uid and screen and response.status>=500 and not request.path.startswith('/api/restaurant/') and not request.get('research_error_tracked'):
         research.track(uid,'cabinet_load_error',source='server',screen=screen,error_code='backend')
     return response
 

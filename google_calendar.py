@@ -7,8 +7,9 @@
 """
 import hashlib
 import hmac
-import logging
 import os
+import secrets
+import time
 from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urlencode
 
@@ -42,14 +43,18 @@ def is_configured() -> bool:
 # ─── подпись state (чтобы пользователь мог авторизовать только себя) ──────────
 
 def _sign(user_id: int) -> str:
-    mac = hmac.new(_SECRET, str(user_id).encode(), hashlib.sha256).hexdigest()[:32]
-    return f"{user_id}.{mac}"
+    payload = f"{user_id}.{int(time.time())}.{secrets.token_urlsafe(12)}"
+    mac = hmac.new(_SECRET, payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}.{mac}"
 
 
 def verify_state(state: str) -> int | None:
     try:
-        uid_s, mac = state.split(".", 1)
-        expected = _sign(int(uid_s)).split(".", 1)[1]
+        uid_s, issued_s, nonce, mac = state.split(".")
+        issued = int(issued_s)
+        if int(uid_s) <= 0 or not nonce or not 0 <= time.time() - issued <= 600:
+            return None
+        expected = hmac.new(_SECRET, f"{uid_s}.{issued_s}.{nonce}".encode(), hashlib.sha256).hexdigest()
         if hmac.compare_digest(expected, mac):
             return int(uid_s)
     except Exception:
@@ -243,8 +248,9 @@ async def retry_pending_shifts():
     for uid, dates in grouped.items():
         try:
             if await is_connected(uid): await sync_shifts(uid,dates)
-        except Exception:
-            logging.exception("Calendar retry failed for user %s",uid)
+        except Exception as error:
+            from diagnostics import failure
+            failure(error,area='calendar',stage='retry')
 
 
 async def create_shift_events(user_id: int, dates_iso: list[str]) -> int:

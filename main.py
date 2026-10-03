@@ -22,6 +22,9 @@ from webapp_api import register_webapp_routes
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+# HTTP client INFO logs include full database URLs and Telegram IDs in filters.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")  # пусто → polling

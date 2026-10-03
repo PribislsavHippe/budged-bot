@@ -1,7 +1,6 @@
 """Authenticated mini-app endpoints for plans, sales and cumulative reports."""
 from datetime import date
 from uuid import UUID
-import logging
 
 from aiohttp import web
 from postgrest.exceptions import APIError
@@ -26,6 +25,15 @@ def work_date(value, month):
     if not d.isoformat().startswith(month) or d > op_today():
         raise ValueError("Дата должна быть в выбранном месяце и не в будущем")
     return d.isoformat()
+
+
+def track_failure(request, user_id, action, code):
+    import research
+    if action == 'view':
+        research.track(user_id,'cabinet_load_error',source='server',screen='sales',error_code=code)
+        request['research_error_tracked']=True
+    elif action == 'report':
+        research.track(user_id,'sales_report_error',source='server',screen='sales',error_code=code)
 
 
 async def payload(user_id, month):
@@ -94,7 +102,9 @@ async def handle(request):
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
     except APIError as e:
-        logging.error("Sales request failed: %s (database code=%s)", action, e.code)
+        from diagnostics import failure
+        code,_=failure(e,area='sales',stage=action)
+        track_failure(request,user_id,action,code)
         if e.code == "42501":
             message = "План пока не открывается. Сообщи администратору — он проверит подключение."
             code = "sales_database_permissions"
@@ -105,8 +115,10 @@ async def handle(request):
             message = "Не удалось загрузить план. Повтори загрузку." if action == "view" else "Ответ о сохранении не пришёл. Нажми «Сохранить ещё раз»."
             code = "sales_database_unavailable"
         return web.json_response({"error": message, "code": code}, status=503, headers=NO_CACHE)
-    except Exception:
-        logging.exception("Sales request failed: %s", action)
+    except Exception as error:
+        from diagnostics import failure
+        code,_=failure(error,area='sales',stage=action)
+        track_failure(request,user_id,action,code)
         message = "Не удалось загрузить план. Повтори загрузку." if action == "view" else "Ответ о сохранении не пришёл. Нажми «Сохранить ещё раз»."
         return web.json_response({"error": message}, status=503, headers=NO_CACHE)
 

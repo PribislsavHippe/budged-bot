@@ -41,3 +41,14 @@ class ResearchMetricsTests(unittest.TestCase):
         self.assertEqual(d['first_value_users'],1)
         self.assertEqual(d['funnel'][2]['users'],0)
         self.assertEqual(d['onboarding_skipped'],1)
+    def test_recent_activity_is_visible_first(self):
+        events=[event('1','activity',27),event('2','activity',28),
+                event('3','cabinet_load_error',28,error_code='backend'),
+                event('4','activity',28,11)]
+        d=summarize(self.subjects(),events,now=NOW)
+        self.assertEqual([u['id'] for u in d['users']],['4','3','2','1'])
+        self.assertEqual(d['active_users'],3)
+        self.assertEqual(d['active_today'],2)
+        self.assertEqual(d['event_count'],4)
+        self.assertEqual(d['last_observed_at'],events[-1]['occurred_at'])
+        self.assertEqual(d['daily_activity'][0],{'date':'2026-09-28','active_users':2,'events':3})

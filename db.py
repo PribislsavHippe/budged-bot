@@ -164,8 +164,8 @@ async def set_shift_goal(user_id: int, goal: float | None) -> None:
 
 
 async def get_onboarded_user_ids() -> list[int]:
-    res = await _execute(supabase.table("users").select("id").eq("onboarded", True))
-    return [row["id"] for row in res.data]
+    rows = await _pages(lambda: supabase.table("users").select("id").eq("onboarded", True).order("id"))
+    return [row["id"] for row in rows]
 
 
 # ─── агрегаты для админки ────────────────────────────────────────────────────
@@ -197,8 +197,9 @@ async def count_entries_since(since_iso: str) -> int:
 
 async def active_user_ids_since(since_iso: str) -> set[int]:
     """Кто вообще что-то записал за период — только id, без сумм."""
-    res = await _execute(supabase.table("entries").select("user_id").gte("created_at", since_iso))
-    return {row["user_id"] for row in res.data}
+    rows = await _pages(lambda: supabase.table("entries").select("id,user_id")
+                        .gte("created_at", since_iso).order("id"))
+    return {row["user_id"] for row in rows}
 
 
 async def count_shifts_on(date_iso: str) -> int:
@@ -242,8 +243,9 @@ async def delete_shift(user_id: int, date_iso: str) -> bool:
 
 
 async def get_user_ids_with_shift_on(date_iso: str) -> list[int]:
-    res = await _execute(supabase.table("shifts").select("user_id").eq("shift_date", date_iso))
-    return [row["user_id"] for row in res.data]
+    rows = await _pages(lambda: supabase.table("shifts").select("id,user_id")
+                        .eq("shift_date", date_iso).order("id"))
+    return [row["user_id"] for row in rows]
 
 
 # ─── Google Календарь (OAuth-токены) ─────────────────────────────────────────

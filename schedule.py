@@ -22,7 +22,7 @@ def cell(value):
     parts=text.split('-')
     if len(parts)>2:raise ValueError('Не понял часы в ячейке.')
     start=clock(parts[0]);end=clock(parts[1]) if len(parts)==2 else time(min(start.hour+12,23),start.minute if start.hour<11 else 0)
-    if not start<end or end>time(23):raise ValueError('Проверь плановое время смены.')
+    if not start<end:raise ValueError('Проверь плановое время смены.')
     return start.strftime('%H:%M'),end.strftime('%H:%M')
 
 def month(text):

@@ -10,11 +10,18 @@ with patch.dict(os.environ,{'SUPABASE_URL':'https://example.invalid','SUPABASE_K
     import db,schedule,schedule_chat as chat,report_photo as photo,jobs
 
 class Times(unittest.TestCase):
+    def test_scheduler_has_evening_retry_and_startup_catchup(self):
+        scheduler=jobs.setup_scheduler(NS())
+        names=[job.func.__name__ for job in scheduler.get_jobs()]
+        self.assertEqual(names.count('retry_tomorrow_shift_reminder'),2)
+        self.assertIn('tomorrow_shift_reminder',names)
+        self.assertEqual(str(scheduler.timezone),'Europe/Moscow')
+
     def test_cells_and_dates(self):
-        for text,want in [('10',('10:00','22:00')),('11',('11:00','23:00')),('14',('14:00','23:00')),('9–17',('09:00','17:00')),('10-23',('10:00','23:00'))]:
+        for text,want in [('10',('10:00','22:00')),('11',('11:00','23:00')),('14',('14:00','23:00')),('9–17',('09:00','17:00')),('10-23',('10:00','23:00')),('10-23:30',('10:00','23:30'))]:
             self.assertEqual(schedule.cell(text),want)
         for text in ('','в','-'):self.assertIsNone(schedule.cell(text))
-        for bad in ('?','24','10-9','11-24','10-23:30'):
+        for bad in ('?','24','10-9','11-24','10-00:00'):
             with self.assertRaises(ValueError):schedule.cell(bad)
         self.assertEqual(schedule.month('Октябрь 2026'),'2026-10')
         with self.assertRaises(ValueError):schedule.month('октябрь')
@@ -109,5 +116,16 @@ class Flow(unittest.IsolatedAsyncioTestCase):
         with patch.object(schedule,'enabled',return_value=True),patch.object(jobs,'op_today',return_value=date(2026,10,4)):
             await jobs.tomorrow_shift_reminder(bot)
         self.assertFalse(store.rows['shifts'][0]['start_reminder_sent'])
+
+    async def test_evening_retry_sends_after_temporary_failure(self):
+        store.rows={'users':[{'id':7,'shift_reminders_enabled':True}],
+                    'shifts':[{'id':1,'user_id':7,'shift_date':'2026-10-05','starts_at':'10:00:00','ends_at':'22:00:00','start_reminder_sent':False}]}
+        bot=NS(send_message=AsyncMock(side_effect=[RuntimeError('temporary'),None]))
+        with patch.object(schedule,'enabled',return_value=True),patch.object(jobs,'op_today',return_value=date(2026,10,4)),patch.object(jobs,'datetime') as clock:
+            clock.now.return_value=datetime(2026,10,4,19,10,tzinfo=schedule.TZ)
+            await jobs.retry_tomorrow_shift_reminder(bot)
+            await jobs.retry_tomorrow_shift_reminder(bot)
+        self.assertEqual(bot.send_message.await_count,2)
+        self.assertTrue(store.rows['shifts'][0]['start_reminder_sent'])
 
 if __name__=='__main__':unittest.main()

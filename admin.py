@@ -36,7 +36,7 @@ def _read_admin_id() -> int:
     try:
         return int(raw)
     except ValueError:
-        logging.warning(f"ADMIN_ID={raw!r} — не число, админские команды выключены")
+        logging.warning("ADMIN_ID is invalid; admin commands are disabled")
         return 0
 
 
@@ -209,10 +209,12 @@ async def broadcast_yes(callback: CallbackQuery, state: FSMContext):
                 sent += 1
             except Exception as ex:
                 failed += 1
-                logging.warning(f"broadcast to {user_id} failed after retry: {ex}")
+                from diagnostics import failure
+                failure(ex,area='broadcast',stage='retry')
         except Exception as e:
             failed += 1
-            logging.warning(f"broadcast to {user_id} failed: {e}")
+            from diagnostics import failure
+            failure(e,area='broadcast',stage='send')
 
         if i % 25 == 0:
             try:
