@@ -24,6 +24,13 @@ def skip_button():
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Пропустить',callback_data='ux:skip')]])
 
 
+def first_action_buttons():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='💸 Записать чаевые',callback_data='ux:tip')],
+        [InlineKeyboardButton(text='🗓 Как добавить график',callback_data='ux:schedule')],
+        [InlineKeyboardButton(text='Не сейчас',callback_data='ux:skip')]])
+
+
 async def begin(message, *, uid=None, repeat=False):
     import db
     uid=uid or message.from_user.id
@@ -32,10 +39,30 @@ async def begin(message, *, uid=None, repeat=False):
     await db._execute(db.supabase.table('users').update({'tutorial_step':'tip','onboarded':True}).eq('id',uid))
     await research.record(uid,'onboarding_started')
     research.track(uid,'onboarding_step',step='tip')
-    await message.answer('Здесь можно считать, сколько ты реально зарабатываешь на сменах.\n\n'
-                         'Запишем чаевые? Отправь, например: <b>чай 1500</b>. '
-                         'Укажи свою сумму — это будет настоящая запись.',reply_markup=skip_button())
+    await message.answer('<b>Твои смены — в одном месте</b>\n\n'
+                         '💸 Чаевые и расходы → сколько осталось чистыми\n'
+                         '🗓 График → напоминание накануне\n'
+                         '📊 Статистика → итоги по неделям и месяцам\n\n'
+                         'С чего начнём? Можно сразу написать боту — это будет настоящая запись.',
+                         reply_markup=first_action_buttons())
     return True
+
+
+@router.callback_query(F.data=='ux:tip')
+async def choose_tip(callback):
+    await callback.answer()
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer('Напиши свою сумму, например: <b>чай 1500</b>. '
+                                  'Запись появится в статистике.',reply_markup=skip_button())
+
+
+@router.callback_query(F.data=='ux:schedule')
+async def choose_schedule(callback):
+    await callback.answer()
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer('Пришли фото графика. Я помогу выбрать твою строку и покажу смены перед сохранением.\n\n'
+                                  'Когда захочешь, можно записать чаевые сообщением <b>чай 1500</b>.',
+                                  reply_markup=skip_button())
 
 
 async def value_saved(message,entry):
@@ -58,8 +85,9 @@ async def value_saved(message,entry):
         return
     if following:
         research.track(uid,'onboarding_step',step='expense')
-        await message.answer('Чаевые записаны. Расход можно добавить так: <b>такси 430</b>. '
-                             'Укажи свою настоящую трату. Если трат не было — пропусти.',reply_markup=skip_button())
+        await message.answer('Готово, чаевые записаны.\n\nБыли расходы на смене? '
+                             'Напиши, например, <b>такси 430</b> — посчитаю, сколько осталось чистыми. '
+                             'Если расходов не было, пропусти.',reply_markup=skip_button())
     else:
         await message.answer('Готово! В «Статистике» уже виден результат. '
                              'Продолжай присылать записи, а за подсказками приходи в /help.',reply_markup=help_buttons())

@@ -1,13 +1,13 @@
 """Isolated time, schedule import, confirmations and private persistence checks."""
 import sys,os,unittest
-from datetime import datetime,timedelta
+from datetime import date,datetime,timedelta
 from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock,patch
 sys.path.insert(0,os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sales_http_checks import Store
 store=Store()
 with patch.dict(os.environ,{'SUPABASE_URL':'https://example.invalid','SUPABASE_KEY':'test'}),patch('supabase.create_client',return_value=store):
-    import db,schedule,schedule_chat as chat,report_photo as photo
+    import db,schedule,schedule_chat as chat,report_photo as photo,jobs
 
 class Times(unittest.TestCase):
     def test_cells_and_dates(self):
@@ -79,5 +79,35 @@ class Flow(unittest.IsolatedAsyncioTestCase):
             clock.now.return_value=now;clock.fromisoformat=datetime.fromisoformat;clock.combine=datetime.combine
             await chat.prompt_work_end(bot);await chat.prompt_work_end(bot)
         bot.send_message.assert_awaited_once();self.assertEqual(bot.send_message.await_args.args[0],7)
+
+    async def test_evening_reminder_respects_opt_out_and_sends_once(self):
+        store.rows={'users':[{'id':7,'shift_reminders_enabled':True},
+                             {'id':8,'shift_reminders_enabled':False}],
+                    'shifts':[{'id':1,'user_id':7,'shift_date':'2026-10-05','starts_at':'10:00:00','ends_at':'22:00:00','start_reminder_sent':False},
+                              {'id':2,'user_id':8,'shift_date':'2026-10-05','starts_at':None,'ends_at':None,'start_reminder_sent':False}]}
+        bot=NS(send_message=AsyncMock())
+        with patch.object(schedule,'enabled',return_value=True),patch.object(jobs,'op_today',return_value=date(2026,10,4)):
+            await jobs.tomorrow_shift_reminder(bot)
+            await jobs.tomorrow_shift_reminder(bot)
+        bot.send_message.assert_awaited_once()
+        self.assertEqual(bot.send_message.await_args.args[0],7)
+        self.assertIn('10:00',bot.send_message.await_args.args[1])
+        self.assertTrue(store.rows['shifts'][0]['start_reminder_sent'])
+        self.assertFalse(store.rows['shifts'][1]['start_reminder_sent'])
+
+    async def test_reminder_setting_changes_only_own_profile(self):
+        store.rows={'users':[{'id':7,'shift_reminders_enabled':True},{'id':8,'shift_reminders_enabled':True}]}
+        self.message.edit_text=AsyncMock()
+        await chat.set_reminder_settings(self.cb('work:reminders:off'))
+        self.assertFalse(store.rows['users'][0]['shift_reminders_enabled'])
+        self.assertTrue(store.rows['users'][1]['shift_reminders_enabled'])
+
+    async def test_failed_delivery_releases_reminder_claim(self):
+        store.rows={'users':[{'id':7,'shift_reminders_enabled':True}],
+                    'shifts':[{'id':1,'user_id':7,'shift_date':'2026-10-05','starts_at':'10:00:00','ends_at':'22:00:00','start_reminder_sent':False}]}
+        bot=NS(send_message=AsyncMock(side_effect=RuntimeError('blocked')))
+        with patch.object(schedule,'enabled',return_value=True),patch.object(jobs,'op_today',return_value=date(2026,10,4)):
+            await jobs.tomorrow_shift_reminder(bot)
+        self.assertFalse(store.rows['shifts'][0]['start_reminder_sent'])
 
 if __name__=='__main__':unittest.main()

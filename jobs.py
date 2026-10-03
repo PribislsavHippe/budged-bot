@@ -4,12 +4,48 @@
 """
 import logging
 import os
+from datetime import timedelta
 
 import aiohttp
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import db
 from workday import op_day_start_utc_iso, op_today
+
+
+async def tomorrow_shift_reminder(bot):
+    """One evening notice for tomorrow's planned shift, with an atomic claim."""
+    import schedule
+    if not schedule.enabled():return
+    day=(op_today()+timedelta(days=1)).isoformat()
+    try:
+        shifts=await db._pages(lambda:db.supabase.table('shifts')
+                               .select('id,user_id,starts_at,ends_at')
+                               .eq('shift_date',day).eq('start_reminder_sent',False).order('id'))
+    except Exception as error:
+        from diagnostics import failure
+        failure(error,area='shift_reminder',stage='fetch')
+        return
+    for shift in shifts:
+        uid=shift['user_id']
+        claimed=None
+        try:
+            user=await db.get_or_create_user(uid)
+            if not user.get('shift_reminders_enabled',True):continue
+            claimed=(await db._execute(db.supabase.table('shifts')
+                     .update({'start_reminder_sent':True}).eq('id',shift['id'])
+                     .eq('start_reminder_sent',False))).data
+            if not claimed:continue
+            start=shift.get('starts_at')
+            when=f" с {start[:5]}" if start else ''
+            await bot.send_message(uid,f'Завтра у тебя смена{when}. Хорошего вечера!\n\n'
+                                       'Напоминания: /reminders')
+        except Exception as error:
+            if claimed:
+                try:await db._execute(db.supabase.table('shifts').update({'start_reminder_sent':False}).eq('id',shift['id']))
+                except Exception:pass
+            from diagnostics import failure
+            failure(error,area='shift_reminder',stage='send')
 
 
 async def self_ping():
@@ -68,6 +104,7 @@ async def evening_shift_prompt(bot):
 def setup_scheduler(bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
     scheduler.add_job(evening_shift_prompt, "cron", hour=22, minute=30, args=[bot])
+    scheduler.add_job(tomorrow_shift_reminder, "cron", hour=19, minute=0, args=[bot],max_instances=1)
     from google_calendar import retry_pending_shifts
     scheduler.add_job(retry_pending_shifts, "interval", minutes=10, max_instances=1)
     from schedule_chat import prompt_work_end

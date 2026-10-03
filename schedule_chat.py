@@ -24,6 +24,33 @@ class Work(StatesGroup):
 def buttons(rows):return Markup(inline_keyboard=[[Button(text=label,callback_data=key)] for label,key in rows])
 def photo_buttons(draft,rows):return buttons([(label,f'sch:{draft.nonce}:{key}') for label,key in rows])
 
+
+@router.message(Command('reminders'))
+async def reminder_settings(message):
+    try:
+        user=await db.get_or_create_user(message.from_user.id)
+        on=user.get('shift_reminders_enabled',True)
+        await message.answer('Напомню о смене накануне в 19:00.\nСейчас: '+('включено.' if on else 'выключено.'),
+                             reply_markup=buttons([('Выключить' if on else 'Включить','work:reminders:'+('off' if on else 'on'))]))
+    except Exception as error:
+        from diagnostics import failure
+        failure(error,area='shift_reminder',stage='settings')
+        await message.answer('Не удалось открыть настройки напоминаний. Попробуй позже.')
+
+
+@router.callback_query(F.data.startswith('work:reminders:'))
+async def set_reminder_settings(callback):
+    value=callback.data.rsplit(':',1)[-1]
+    if value not in {'on','off'}:return
+    try:
+        await db._execute(db.supabase.table('users').update({'shift_reminders_enabled':value=='on'}).eq('id',callback.from_user.id))
+        await callback.answer('Готово')
+        await callback.message.edit_text('Напоминания о смене '+('включены.' if value=='on' else 'выключены.')+'\nИзменить: /reminders')
+    except Exception as error:
+        from diagnostics import failure
+        failure(error,area='shift_reminder',stage='settings_save')
+        await callback.answer('Не удалось сохранить. Попробуй позже.',show_alert=True)
+
 async def start_photo(callback,draft):
     from report_photo import LimitedImage,_recognition_slots
     if not schedule.enabled():
