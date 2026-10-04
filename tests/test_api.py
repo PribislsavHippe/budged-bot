@@ -30,6 +30,9 @@ class _Resp:
         self.data = data
         self.status = status
         self.headers = headers
+        self.text = kw.get('text')
+        self.body = kw.get('body')
+        self.content_type = kw.get('content_type')
 
 
 def _json_response(data=None, status=200, headers=None):
@@ -86,6 +89,7 @@ _db.store = []      # list of entry dicts
 _db.next_id = [1]
 _db.private_ids = set()
 _db.shifts = []
+_db.calendar_subscriptions = {}
 
 
 def _seed(user_id, kind, account, signed_amount, category="Чаевые"):
@@ -176,6 +180,32 @@ async def _get_shift_details(uid, since, until):
     return [s for s in _db.shifts if s['user_id']==uid and since<=s['shift_date']<=until]
 
 
+async def _get_calendar_shift_details(uid):
+    return [s for s in _db.shifts if s['user_id']==uid]
+
+
+async def _get_calendar_subscription(uid):
+    return _db.calendar_subscriptions.get(uid)
+
+
+async def _get_calendar_subscription_by_feed(feed_id):
+    return next((s for s in _db.calendar_subscriptions.values() if s['feed_id']==feed_id),None)
+
+
+async def _create_calendar_subscription(uid, feed_id, salt):
+    return _db.calendar_subscriptions.setdefault(uid,{'user_id':uid,'feed_id':feed_id,'secret_salt':salt})
+
+
+async def _rotate_calendar_subscription(uid, feed_id, salt):
+    if uid not in _db.calendar_subscriptions:return None
+    _db.calendar_subscriptions[uid].update(feed_id=feed_id,secret_salt=salt)
+    return _db.calendar_subscriptions[uid]
+
+
+async def _revoke_calendar_subscription(uid):
+    _db.calendar_subscriptions.pop(uid,None)
+
+
 async def _get_worked_shift_details(uid, since, until):
     return []
 
@@ -207,6 +237,12 @@ _db.get_shift_goal = _get_shift_goal
 _db.get_shift_dates = _get_shift_dates
 _db.get_or_create_user = _get_or_create_user
 _db.get_shift_details = _get_shift_details
+_db.get_calendar_shift_details = _get_calendar_shift_details
+_db.get_calendar_subscription = _get_calendar_subscription
+_db.get_calendar_subscription_by_feed = _get_calendar_subscription_by_feed
+_db.create_calendar_subscription = _create_calendar_subscription
+_db.rotate_calendar_subscription = _rotate_calendar_subscription
+_db.revoke_calendar_subscription = _revoke_calendar_subscription
 _db.get_worked_shift_details = _get_worked_shift_details
 _db.save_shift = _save_shift
 _db.delete_shift = _delete_shift
@@ -508,6 +544,68 @@ def test_api_gcal_not_configured():
 def test_api_gcal_unauthorized():
     r = run(webapp_api.api_gcal(Req({"initData": ""})))
     assert r.status == 401
+
+
+def _iphone_request(uid=42, action='status'):
+    request = Req({'initData':init_data(TOKEN,uid),'action':action})
+    request.app['public_base_url'] = 'https://example.test'
+    return request
+
+
+def _iphone_feed_request(url):
+    from urllib.parse import urlsplit
+    parts = urlsplit(url).path.split('/')
+    request = Req({})
+    request.app['public_base_url'] = 'https://example.test'
+    request.match_info = {'feed_id':parts[-2], 'token':parts[-1].removesuffix('.ics')}
+    return request
+
+
+def test_iphone_calendar_creates_private_read_only_feed_and_revokes_it():
+    _db.calendar_subscriptions.clear(); _db.shifts.clear()
+    _db.shifts.append({'user_id':42,'shift_date':'2026-10-05','starts_at':'14:00',
+                       'ends_at':'23:30','calendar_updated_at':'2026-10-04T12:00:00Z'})
+    _db.shifts.append({'user_id':99,'shift_date':'2026-10-06','starts_at':'10:00',
+                       'ends_at':'22:00','calendar_updated_at':'2026-10-04T12:00:00Z'})
+    created = run(webapp_api.api_iphone_calendar(_iphone_request(action='create')))
+    assert created.status == 200 and created.data['enabled']
+    assert created.data['feed_url'].startswith('https://example.test/calendar/iphone/')
+    assert run(webapp_api.api_iphone_calendar(_iphone_request())).data['feed_url'] == created.data['feed_url']
+    feed_request = _iphone_feed_request(created.data['feed_url'])
+    feed = run(webapp_api.iphone_calendar_feed(feed_request))
+    assert feed.status == 200 and feed.content_type == 'text/calendar'
+    assert feed.body.count(b'BEGIN:VEVENT') == 1
+    assert b'DTSTART:20261005T110000Z' in feed.body
+    assert b'20261006' not in feed.body
+    assert feed.headers['Cache-Control'].startswith('no-store')
+    setup = run(webapp_api.iphone_calendar_setup(_iphone_feed_request(created.data['setup_url'])))
+    assert setup.status == 200 and created.data['feed_url'] in setup.text
+    revoked = run(webapp_api.api_iphone_calendar(_iphone_request(action='revoke')))
+    assert revoked.data['enabled'] is False
+    assert run(webapp_api.iphone_calendar_feed(feed_request)).status == 404
+
+
+def test_iphone_calendar_rotation_invalidates_old_link_and_rejects_bad_token():
+    _db.calendar_subscriptions.clear()
+    old = run(webapp_api.api_iphone_calendar(_iphone_request(action='create'))).data['feed_url']
+    changed = run(webapp_api.api_iphone_calendar(_iphone_request(action='rotate')))
+    assert changed.status == 200 and changed.data['feed_url'] != old
+    assert run(webapp_api.iphone_calendar_feed(_iphone_feed_request(old))).status == 404
+    assert run(webapp_api.iphone_calendar_feed(_iphone_feed_request(changed.data['feed_url']))).status == 200
+    malformed = _iphone_feed_request(changed.data['feed_url'])
+    malformed.match_info['token'] = '0' * 64
+    assert run(webapp_api.iphone_calendar_feed(malformed)).status == 404
+
+
+def test_iphone_calendar_requires_signed_user_and_trusted_public_host():
+    unsigned = _iphone_request(action='create')
+    unsigned._body['initData'] = ''
+    assert run(webapp_api.api_iphone_calendar(unsigned)).status == 401
+    wrong_host = _iphone_request(action='create')
+    wrong_host.app['public_base_url'] = 'https://evil.test/path'
+    result = run(webapp_api.api_iphone_calendar(wrong_host))
+    assert result.data == {'available':False,'enabled':False}
+    assert run(webapp_api.api_iphone_calendar(_iphone_request(action='surprise'))).status == 400
 
 
 # ─── доступ к чужим записям (IDOR) ───────────────────────────────────────────

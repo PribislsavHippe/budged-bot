@@ -5,6 +5,7 @@ signed_amount по журналу. Это гарантирует, что бал�
 """
 import os
 import asyncio
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from supabase import Client, create_client
@@ -281,6 +282,46 @@ async def get_shift_details(user_id: int, since: str, until: str) -> list[dict]:
                         .select("shift_date,starts_at,ends_at")
                         .eq("user_id", user_id).gte("shift_date", since)
                         .lte("shift_date", until).order("shift_date"))
+
+
+async def get_calendar_shift_details(user_id: int) -> list[dict]:
+    """Only planned dates and times: a calendar feed never reads financial data."""
+    return await _pages(lambda: supabase.table("shifts")
+                        .select("shift_date,starts_at,ends_at,created_at,calendar_updated_at")
+                        .eq("user_id", user_id).order("shift_date"))
+
+
+async def get_calendar_subscription(user_id: int) -> dict | None:
+    res = await _execute(supabase.table("calendar_subscriptions").select("*")
+                         .eq("user_id", user_id).limit(1))
+    return res.data[0] if res.data else None
+
+
+async def get_calendar_subscription_by_feed(feed_id: str) -> dict | None:
+    res = await _execute(supabase.table("calendar_subscriptions")
+                         .select("user_id,feed_id,secret_salt")
+                         .eq("feed_id", feed_id).limit(1))
+    return res.data[0] if res.data else None
+
+
+async def create_calendar_subscription(user_id: int, feed_id: str, salt: str) -> dict:
+    await get_or_create_user(user_id)
+    await _execute(supabase.table("calendar_subscriptions").upsert(
+        {"user_id": user_id, "feed_id": feed_id, "secret_salt": salt},
+        on_conflict="user_id", ignore_duplicates=True))
+    return await get_calendar_subscription(user_id)
+
+
+async def rotate_calendar_subscription(user_id: int, feed_id: str, salt: str) -> dict | None:
+    res = await _execute(supabase.table("calendar_subscriptions").update({
+        "feed_id": feed_id, "secret_salt": salt,
+        "rotated_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("user_id", user_id))
+    return res.data[0] if res.data else None
+
+
+async def revoke_calendar_subscription(user_id: int) -> None:
+    await _execute(supabase.table("calendar_subscriptions").delete().eq("user_id", user_id))
 
 
 async def get_worked_shift_details(user_id: int, since: str, until: str) -> list[dict]:

@@ -4,18 +4,22 @@ initData подписан ботовским токеном — подделат
 """
 import hashlib
 import hmac
+import html
 import json
 import logging
 import os
+import secrets
 import time
+import uuid
 from calendar import monthrange
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, urlsplit
 
 from aiohttp import web
 
 import db
+import calendar_feed
 import google_calendar as gcal
 import private_payload
 from stats import _entry_date, compute_month, compute_stats, month_bounds
@@ -493,6 +497,115 @@ async def api_gcal(request: web.Request) -> web.Response:
     }, headers=NO_CACHE)
 
 
+def _calendar_base_url(request: web.Request) -> str | None:
+    """Never build a bearer URL from an untrusted Host or Forwarded header."""
+    raw = (request.app.get('public_base_url') or os.getenv('WEBHOOK_HOST') or '').rstrip('/')
+    try:
+        parsed = urlsplit(raw)
+    except ValueError:
+        return None
+    if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password \
+            or parsed.path or parsed.query or parsed.fragment:
+        return None
+    return raw
+
+
+def _calendar_urls(base: str, row: dict, bot_token: str) -> tuple[str, str]:
+    feed_id = str(uuid.UUID(str(row['feed_id'])))
+    token = calendar_feed.feed_token(bot_token, feed_id, row['secret_salt'])
+    root = f'{base}/calendar/iphone/{feed_id}/{token}'
+    return root + '.ics', root
+
+
+async def api_iphone_calendar(request: web.Request) -> web.Response:
+    """Manage a revocable schedule-only feed from signed Telegram initData."""
+    user_id, body = await _auth(request)
+    if user_id is None:
+        return body
+    base = _calendar_base_url(request)
+    if not base:
+        return web.json_response({'available': False, 'enabled': False}, headers=NO_CACHE)
+    action = body.get('action', 'status')
+    if action not in {'status', 'create', 'rotate', 'revoke'}:
+        return web.json_response({'error': 'Неизвестное действие.'}, status=400, headers=NO_CACHE)
+    if action == 'create':
+        row = await db.create_calendar_subscription(user_id, str(uuid.uuid4()), secrets.token_urlsafe(32))
+    elif action == 'rotate':
+        row = await db.rotate_calendar_subscription(user_id, str(uuid.uuid4()), secrets.token_urlsafe(32))
+        if not row:
+            return web.json_response({'error': 'Подключение не найдено.'}, status=404, headers=NO_CACHE)
+    elif action == 'revoke':
+        await db.revoke_calendar_subscription(user_id)
+        return web.json_response({'available': True, 'enabled': False}, headers=NO_CACHE)
+    else:
+        row = await db.get_calendar_subscription(user_id)
+    if not row:
+        return web.json_response({'available': True, 'enabled': False}, headers=NO_CACHE)
+    feed_url, setup_url = _calendar_urls(base, row, request.app['bot_token'])
+    return web.json_response({'available': True, 'enabled': True,
+                              'feed_url': feed_url, 'setup_url': setup_url}, headers=NO_CACHE)
+
+
+async def _verified_calendar_feed(request: web.Request) -> dict | None:
+    try:
+        feed_id = str(uuid.UUID(request.match_info['feed_id']))
+        token = request.match_info['token']
+        if len(token) != 64 or any(c not in '0123456789abcdef' for c in token):
+            return None
+    except (KeyError, ValueError):
+        return None
+    row = await db.get_calendar_subscription_by_feed(feed_id)
+    if not row:
+        return None
+    expected = calendar_feed.feed_token(request.app['bot_token'], feed_id, row['secret_salt'])
+    return row if hmac.compare_digest(expected, token) else None
+
+
+CALENDAR_HEADERS = {**NO_CACHE, 'Referrer-Policy': 'no-referrer',
+                    'X-Robots-Tag': 'noindex, nofollow',
+                    'X-Content-Type-Options': 'nosniff'}
+
+
+async def iphone_calendar_feed(request: web.Request) -> web.Response:
+    row = await _verified_calendar_feed(request)
+    if not row:
+        return web.Response(status=404, headers=CALENDAR_HEADERS)
+    shifts = await db.get_calendar_shift_details(row['user_id'])
+    body = calendar_feed.render_shifts(shifts, row['user_id'], request.app['bot_token'])
+    return web.Response(body=body, content_type='text/calendar', charset='utf-8',
+                        headers=CALENDAR_HEADERS)
+
+
+async def iphone_calendar_setup(request: web.Request) -> web.Response:
+    row = await _verified_calendar_feed(request)
+    if not row:
+        return web.Response(status=404, headers=CALENDAR_HEADERS)
+    base = _calendar_base_url(request)
+    if not base:
+        return web.Response(status=503, headers=CALENDAR_HEADERS)
+    feed_url, _ = _calendar_urls(base, row, request.app['bot_token'])
+    safe = html.escape(feed_url, quote=True)
+    page = ("<!doctype html><html lang='ru'><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>Календарь смен</title><style>body{max-width:36rem;margin:3rem auto;"
+            "padding:0 1.25rem;background:#fde9eb;color:#181617;font:1rem/1.5 -apple-system,"
+            "BlinkMacSystemFont,sans-serif}h1{font-weight:400}input{box-sizing:border-box;"
+            "width:100%;padding:.8rem;border:1px solid #aaa;border-radius:.5rem;font:inherit}"
+            "li{margin:.8rem 0}</style><h1>Календарь смен</h1>"
+            "<p>Скопируй личную ссылку. В приложении «Календарь» открой «Календари» → "
+            "«Добавить календарь» → «Добавить календарь подписки» и вставь её.</p>"
+            f"<input aria-label='Личная ссылка на календарь' readonly value='{safe}'>"
+            f"<p><a href='{safe}'>Открыть ссылку на iPhone</a>. Если откроется импорт файла, "
+            "используй подписку по шагам выше.</p>"
+            "<p>Подписка обновляет смены автоматически. Открытие файла .ics как обычного "
+            "файла создаст разовый импорт. Ссылка даёт доступ только к датам и времени смен; "
+            "не передавай её другим людям.</p></html>")
+    return web.Response(text=page, content_type='text/html', charset='utf-8',
+                        headers={**CALENDAR_HEADERS,
+                                 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; "
+                                                            "script-src 'none'; form-action 'none'"})
+
+
 async def google_callback(request: web.Request) -> web.Response:
     """Редирект от Google после согласия. Меняем код на токен, сохраняем."""
     code = request.query.get("code")
@@ -579,4 +692,7 @@ def register_webapp_routes(app: web.Application, bot_token: str, bot_username: s
     app.router.add_post("/api/entries", api_entries)
     app.router.add_post("/api/entry_edit", api_entry_edit)
     app.router.add_post("/api/gcal", api_gcal)
+    app.router.add_post("/api/iphone_calendar", api_iphone_calendar)
+    app.router.add_get("/calendar/iphone/{feed_id}/{token}.ics", iphone_calendar_feed)
+    app.router.add_get("/calendar/iphone/{feed_id}/{token}", iphone_calendar_setup)
     app.router.add_get("/google/callback", google_callback)
