@@ -14,6 +14,8 @@ import os
 import sys
 import types
 import time
+from datetime import date
+from unittest.mock import patch
 from urllib.parse import urlencode
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -147,6 +149,15 @@ async def _update_entry_amount(eid, uid, signed_amount):
     return e
 
 
+async def _update_tip_details(eid, uid, amount, account):
+    e = await _get_entry(eid, uid)
+    if e and e['kind'] == 'income' and e['category'] == 'Чаевые':
+        e['signed_amount'] = amount
+        e['account'] = account
+        return e
+    return None
+
+
 async def _get_shift_goal(uid):
     return None
 
@@ -191,6 +202,7 @@ _db.get_entry = _get_entry
 _db.delete_entry = _delete_entry
 _db.update_entry_account = _update_entry_account
 _db.update_entry_amount = _update_entry_amount
+_db.update_tip_details = _update_tip_details
 _db.get_shift_goal = _get_shift_goal
 _db.get_shift_dates = _get_shift_dates
 _db.get_or_create_user = _get_or_create_user
@@ -282,6 +294,59 @@ def test_api_stats_ok():
     assert "today_net" in r.data and r.data["bot_username"] == "b"
 
 
+def test_tips_range_scopes_user_and_dates():
+    _db.store.clear()
+    first = _db.seed(42, 'income', 'card', 1000)
+    first['work_date'] = '2026-07-18'
+    spent = _db.seed(42, 'expense', 'cash', -200, category='Такси')
+    spent['work_date'] = '2026-07-18'
+    outside = _db.seed(42, 'income', 'card', 500)
+    outside['work_date'] = '2026-07-19'
+    foreign = _db.seed(99, 'income', 'card', 9000)
+    foreign['work_date'] = '2026-07-18'
+    with patch.object(webapp_api, 'op_today', return_value=date(2026, 7, 20)):
+        r = run(webapp_api.api_tips_range(Req({'initData': init_data(TOKEN, 42),
+            'start': '2026-07-18', 'end': '2026-07-18'})))
+    assert r.status == 200
+    assert (r.data['period']['gross'], r.data['period']['expenses'], r.data['period']['net']) == (1000, 200, 800)
+
+
+def test_tips_range_rejects_future_and_unauthorized():
+    with patch.object(webapp_api, 'op_today', return_value=date(2026, 7, 20)):
+        r = run(webapp_api.api_tips_range(Req({'initData': init_data(TOKEN, 42),
+            'start': '2026-07-18', 'end': '2026-07-21'})))
+    assert r.status == 400
+    assert run(webapp_api.api_tips_range(Req({'initData': ''}))).status == 401
+
+
+def test_tips_range_defaults_to_shift_today_even_without_tips():
+    _db.store.clear(); _db.shifts.clear()
+    old = _db.seed(42, 'income', 'cash', 600)
+    old['work_date'] = '2026-10-02'
+    _db.shifts.append({'user_id':42,'shift_date':'2026-10-04','starts_at':'14:00','ends_at':'23:30'})
+    with patch.object(webapp_api, 'op_today', return_value=date(2026, 10, 4)):
+        r = run(webapp_api.api_tips_range(Req({'initData':init_data(TOKEN,42)})))
+    assert r.status == 200
+    assert r.data['period']['start'] == '2026-10-04'
+    assert r.data['custom'] is False and r.data['entries'] == []
+
+
+def test_tips_range_defaults_to_last_tip_date_without_today_shift():
+    _db.store.clear(); _db.shifts.clear()
+    old = _db.seed(42, 'income', 'cash', 600)
+    old['work_date'] = '2026-10-02'
+    expense = _db.seed(42, 'expense', 'cash', -150, category='Такси')
+    expense['work_date'] = '2026-10-02'
+    foreign = _db.seed(99, 'income', 'card', 9000)
+    foreign['work_date'] = '2026-10-03'
+    with patch.object(webapp_api, 'op_today', return_value=date(2026, 10, 4)):
+        r = run(webapp_api.api_tips_range(Req({'initData':init_data(TOKEN,42)})))
+    assert r.status == 200
+    assert r.data['period']['start'] == '2026-10-02'
+    assert {e['id'] for e in r.data['entries']} == {old['id'], expense['id']}
+    assert (r.data['period']['gross'], r.data['period']['expenses']) == (600,150)
+
+
 # ─── /api/entries и /api/entry_edit ──────────────────────────────────────────
 
 def test_entries_list():
@@ -326,6 +391,36 @@ def test_entry_account_change():
         "initData": init_data(TOKEN, 42), "entry_id": e["id"], "action": "account", "account": "cash",
     })))
     assert run(_db.get_entry(e["id"], 42))["account"] == "cash"
+
+
+def test_tip_details_update_amount_and_account_only_for_own_tip():
+    _db.store.clear()
+    tip = _db.seed(42, 'income', 'card', 500)
+    expense = _db.seed(42, 'expense', 'cash', -100, category='Бар')
+    foreign = _db.seed(99, 'income', 'card', 900)
+    signed = init_data(TOKEN,42)
+    result = run(webapp_api.api_entry_edit(Req({
+        'initData':signed,'entry_id':tip['id'],'action':'tip_details',
+        'amount':'650.25','account':'cash'})))
+    assert result.status == 200
+    assert (tip['signed_amount'],tip['account']) == (650.25,'cash')
+    for entry in (expense,foreign):
+        rejected = run(webapp_api.api_entry_edit(Req({
+            'initData':signed,'entry_id':entry['id'],'action':'tip_details',
+            'amount':20,'account':'card'})))
+        assert rejected.status in (400,404)
+    assert expense['signed_amount'] == -100 and foreign['signed_amount'] == 900
+
+
+def test_tip_details_rejects_bad_amount_and_account():
+    _db.store.clear()
+    tip = _db.seed(42,'income','card',500)
+    for amount,account in ((0,'cash'),('1.234','cash'),(True,'cash'),(20,'other')):
+        r = run(webapp_api.api_entry_edit(Req({
+            'initData':init_data(TOKEN,42),'entry_id':tip['id'],
+            'action':'tip_details','amount':amount,'account':account})))
+        assert r.status == 400
+    assert (tip['signed_amount'],tip['account']) == (500,'card')
 
 
 def test_entry_bad_amount():
@@ -529,6 +624,22 @@ def test_calendar_tip_edits_are_user_scoped_and_private_mode_stays_local():
         assert rejected.status == 409
     finally:
         _db.private_ids.remove(42)
+
+
+def test_historical_expense_add_uses_selected_day_and_rejects_future():
+    from uuid import uuid4
+    _db.store.clear()
+    signed = init_data(TOKEN,42)
+    with patch.object(webapp_api,'op_today',return_value=date(2026,10,4)):
+        r = run(webapp_api.api_calendar_edit(Req({
+            'initData':signed,'date':'2026-10-02','action':'expense_add',
+            'amount':'180.50','category':'Такси','operation_id':str(uuid4())})))
+        future = run(webapp_api.api_calendar_edit(Req({
+            'initData':signed,'date':'2026-10-05','action':'expense_add',
+            'amount':20,'category':'Такси','operation_id':str(uuid4())})))
+    assert r.status == 200 and future.status == 400
+    entry = run(_db.get_entry(r.data['id'],42))
+    assert entry['work_date'] == '2026-10-02' and entry['signed_amount'] == -180.5
 
 
 def test_private_stats_use_only_device_entries():

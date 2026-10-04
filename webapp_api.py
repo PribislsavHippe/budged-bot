@@ -245,6 +245,37 @@ async def api_tips_compare(request: web.Request) -> web.Response:
     return web.json_response(result, headers=NO_CACHE)
 
 
+async def api_tips_range(request: web.Request) -> web.Response:
+    """Home day or a selected period, with the entries needed for its detail sheet."""
+    from tips_stats import summarize
+    user_id, body = await _auth(request)
+    if user_id is None:
+        return body
+    try:
+        today = op_today()
+        entries, _ = await _entries_for_view(user_id, body)
+        custom = 'start' in body or 'end' in body
+        if custom:
+            start = date.fromisoformat(body['start'])
+            end = date.fromisoformat(body['end'])
+        else:
+            shifts = await db.get_shift_dates(user_id, since=today.isoformat(), until=today.isoformat())
+            tip_days = [_entry_date(e) for e in entries if e['kind'] == 'income'
+                        and e['category'] == 'Чаевые' and _entry_date(e) <= today]
+            start = end = today if today.isoformat() in shifts or not tip_days else max(tip_days)
+        if start.year < 2000 or end.year > 2100 or start > end or end > today:
+            raise ValueError()
+    except (ValueError, TypeError, InvalidOperation):
+        return web.json_response({'error': 'Проверь начало и конец периода.'}, status=400, headers=NO_CACHE)
+    rows = [{'id':e['id'], 'date':_entry_date(e).isoformat(), 'kind':e['kind'],
+             'account':e['account'], 'category':e['category'], 'amount':float(e['signed_amount'])}
+            for e in entries if start <= _entry_date(e) <= end and
+            (e['kind'] == 'expense' or e['kind'] == 'income' and e['category'] == 'Чаевые')]
+    rows.sort(key=lambda e:(e['date'],str(e['id'])),reverse=True)
+    return web.json_response({'period':summarize(entries,start,end,today),
+                              'today':today.isoformat(),'custom':custom,'entries':rows},headers=NO_CACHE)
+
+
 async def api_month(request: web.Request) -> web.Response:
     """Календарь произвольного месяца — для листания стрелками."""
     user_id, body = await _auth(request)
@@ -285,12 +316,12 @@ async def api_calendar_edit(request: web.Request) -> web.Response:
         day=date.fromisoformat(body.get('date',''))
         if not 2000<=day.year<=2100:raise ValueError()
         action=body.get('action')
-        if action not in {'shift_save','shift_delete','tip_add','tip_delete'}:raise ValueError()
+        if action not in {'shift_save','shift_delete','tip_add','tip_delete','expense_add'}:raise ValueError()
     except (TypeError,ValueError):
         return web.json_response({'error':'Проверь дату и действие.'},status=400,headers=NO_CACHE)
     day_iso=day.isoformat()
-    if action.startswith('tip_') and (await db.get_or_create_user(user_id)).get('private_money_mode'):
-        return web.json_response({'error':'Чаевые в приватном режиме хранятся на устройстве.'},status=409,headers=NO_CACHE)
+    if (action.startswith('tip_') or action=='expense_add') and (await db.get_or_create_user(user_id)).get('private_money_mode'):
+        return web.json_response({'error':'Деньги в приватном режиме хранятся на устройстве.'},status=409,headers=NO_CACHE)
     if action=='shift_save':
         try:
             raw_start=body.get('start');raw_end=body.get('end')
@@ -334,6 +365,26 @@ async def api_calendar_edit(request: web.Request) -> web.Response:
                                      note='из календаря',work_date=day_iso,source_key='calendar:'+operation)
         except ValueError:
             return web.json_response({'error':'Эта попытка уже сохранила другую сумму. Обнови календарь.'},status=409,headers=NO_CACHE)
+        return web.json_response({'saved':True,'id':entry['id']},headers=NO_CACHE)
+    if action=='expense_add':
+        try:
+            if day > op_today():raise ValueError()
+            raw=body.get('amount')
+            if isinstance(raw,bool):raise ValueError()
+            amount=Decimal(str(raw).replace(',','.'))
+            if not amount.is_finite() or not 0<amount<=10000000 or amount!=amount.quantize(Decimal('.01')):raise ValueError()
+            category=body.get('category','Прочее')
+            if not isinstance(category,str):raise ValueError()
+            category=category.strip()
+            if not 1<=len(category)<=60 or any(ord(c)<32 for c in category):raise ValueError()
+            operation=str(UUID(str(body.get('operation_id',''))))
+        except (ValueError,TypeError,InvalidOperation):
+            return web.json_response({'error':'Проверь дату, сумму и название расхода.'},status=400,headers=NO_CACHE)
+        try:
+            entry=await db.add_entry(user_id,'expense','cash',-float(amount),category=category,
+                                     note='из миниаппа',work_date=day_iso,source_key='calendar-expense:'+operation)
+        except ValueError:
+            return web.json_response({'error':'Эта попытка уже сохранила другой расход. Обнови календарь.'},status=409,headers=NO_CACHE)
         return web.json_response({'saved':True,'id':entry['id']},headers=NO_CACHE)
     try:
         entry_id=int(body.get('entry_id'))
@@ -379,6 +430,15 @@ async def api_entry_edit(request: web.Request) -> web.Response:
     action = body.get("action")
     if action == "delete":
         await db.delete_entry(entry_id, user_id)
+    elif action == "tip_details":
+        try:
+            if entry['kind'] != 'income' or entry['category'] != 'Чаевые':raise ValueError()
+            if body.get('account') not in ('cash','card') or isinstance(body.get('amount'),bool):raise ValueError()
+            amount=Decimal(str(body.get('amount')).replace(',','.'))
+            if not amount.is_finite() or not 0<amount<=10000000 or amount!=amount.quantize(Decimal('.01')):raise ValueError()
+        except (ValueError,TypeError,InvalidOperation):
+            return web.json_response({'error':'Проверь чаевые и счёт.'},status=400,headers=NO_CACHE)
+        await db.update_tip_details(entry_id,user_id,float(amount),body['account'])
     elif action == "account":
         account = body.get("account")
         if account not in ("cash", "card"):
@@ -504,6 +564,7 @@ def register_webapp_routes(app: web.Application, bot_token: str, bot_username: s
     app.router.add_get("/app/sales.css", lambda _: web.FileResponse(os.path.join(WEBAPP_DIR, "sales.css"), headers=NO_CACHE))
     app.router.add_post("/api/stats", api_stats)
     app.router.add_post("/api/tips_compare", api_tips_compare)
+    app.router.add_post("/api/tips_range", api_tips_range)
     for asset in ("tips.js", "tips.css", "private.js", "restaurant.js", "restaurant.css", "ux.js", "research.js", "research.css"):
         async def serve_asset(request, asset=asset):
             return web.FileResponse(os.path.join(WEBAPP_DIR, asset), headers=NO_CACHE)

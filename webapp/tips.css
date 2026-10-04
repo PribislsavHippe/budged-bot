@@ -1,60 +1,61 @@
-/* Three levels: result, supporting figures, actions. */
-[hidden] {display:none!important}
-.app-tabs {display:flex;gap:24px;border-bottom:1px solid #e1e5e7;margin-bottom:22px;background:none;border-radius:0;padding:0}
-.app-tabs button {flex:0 0 auto;border:0;border-radius:0;background:none;padding:12px 0;font:600 16px Inter,sans-serif;color:#52616b;cursor:pointer}
-.app-tabs button[aria-selected=true] {background:none;color:#172126;border-bottom:2px solid #203c49;box-shadow:none}
-#tips-dashboard {color:#172126}
-.tips-top {display:flex;align-items:center;justify-content:space-between;min-height:38px}
-.tips-types {display:flex;gap:2px;margin-left:auto;background:#f1f3f4;border-radius:7px;padding:3px}
-.tips-types button {border:0;border-radius:5px;background:none;padding:8px 13px;font:13px Inter,sans-serif;min-height:34px;color:#33444e;cursor:pointer}
-.tips-types button[aria-pressed=true] {background:#fff;color:#172126;box-shadow:0 1px 3px #0001}
-.text-action {border:0;background:none;color:#203c49;font:13px Inter,sans-serif;padding:10px 0;cursor:pointer;min-height:40px}
-.tips-period-nav {display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px}
-.tips-period-nav button {border:0;background:none;font:28px Inter,sans-serif;color:#203c49;cursor:pointer;min-width:42px;min-height:42px;border-radius:6px}
-.tips-period-nav button:disabled {color:#b2bac0;cursor:default}
-#tips-dashboard input[type=month],#tips-dashboard input[type=date] {font:500 15px Inter,sans-serif;color:#172126;border:1px solid #d5dadd;border-radius:6px;background:#fff;padding:9px 10px;min-width:0;min-height:42px;width:100%}
-.tips-period-nav>input {text-align:center}
-.tips-hero {padding:22px 0 24px}
-.tips-period-label {font-size:12px;color:#52616b;line-height:1.5;margin:0}
-#tips-dashboard h1 {font-size:15px;font-weight:500;letter-spacing:0;margin:17px 0 4px}
-.tips-total {font:600 clamp(34px,10vw,46px) Inter,sans-serif;letter-spacing:-1.4px;font-variant-numeric:tabular-nums;margin:4px 0 22px;overflow-wrap:anywhere}
-.tips-breakdown,.tips-average {display:grid;grid-template-columns:1fr 1fr;gap:18px}
-.tips-breakdown span,.tips-average span {display:block;color:#52616b;font-size:12px;line-height:1.4}
-.tips-breakdown strong,.tips-average strong {display:block;font:500 21px Inter,sans-serif;font-variant-numeric:tabular-nums;margin-top:5px;letter-spacing:-.3px}
-.tips-average {border-top:1px solid #e1e5e7;padding:20px 0 24px}
-.tips-shifts {display:flex;flex-direction:column;justify-content:center;align-items:flex-start}
-.tips-shifts strong {order:1}.tips-shifts span {order:0}
-.tips-link-row {display:flex;align-items:center;justify-content:space-between;width:100%;border:0;border-top:1px solid #e1e5e7;background:none;padding:17px 0;color:#203c49;font:14px Inter,sans-serif;cursor:pointer}
-.tips-disclosure {border-top:1px solid #e1e5e7}
-#tips-dashboard summary,.tips-disclosure>summary {cursor:pointer;font-size:14px;color:#203c49;padding:17px 0;line-height:1.4}
-.tips-disclosure[open] {padding-bottom:20px}
-.tips-actions {display:flex;gap:20px;border-top:1px solid #e1e5e7;padding-top:10px}
-.tips-actions .btn {width:auto;padding:12px 0;border:0;background:none;margin:0;font-size:13px;color:#203c49;box-shadow:none}
-.is-comparing>.calendar-disclosure,.is-comparing>.tips-actions {display:none}
-.compare-periods {display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:20px}
-.compare-periods label {font-size:12px;color:#52616b;min-width:0}
-.compare-periods input {display:block;margin-top:6px}
-.compare-periods .tips-period-nav {margin:0;display:block}
-.compare-periods .tips-period-nav button {display:none}
-.compare-options {display:flex;justify-content:space-between;align-items:center;gap:10px;min-height:48px;margin-top:5px}
-.compare-align {display:flex;align-items:center;gap:7px;font-size:12px;color:#52616b;cursor:pointer}
-.compare-align input {accent-color:#355e72}
-.compare-delta {font-size:24px;letter-spacing:-.5px;font-weight:500;margin:20px 0}
-.compare-delta span {display:block;font-size:12px;font-weight:400;letter-spacing:0;color:#52616b;margin-top:5px}
-.tips-table {width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px;font-variant-numeric:tabular-nums}
-.tips-table th {text-align:right;font-weight:400;color:#52616b;padding:10px 3px;vertical-align:bottom;line-height:1.45}
-.tips-table th:first-child {text-align:left}
-.tips-table td {text-align:right;padding:13px 3px;border-top:1px solid #e1e5e7;white-space:nowrap}
-.tips-table td:first-child {text-align:left}
-.compare-table tbody th {border-top:1px solid #e1e5e7;vertical-align:middle;padding:13px 3px;color:#172126}
-.compare-table td:first-child {text-align:right}
-.compare-table .compare-main td,.compare-table .compare-main th {font-weight:600;font-size:14px;color:#172126}
-.tips-chart {display:block;width:100%;height:auto;margin:12px 0}
-.tips-legend {display:flex;gap:20px;flex-wrap:wrap;font-size:12px;margin:10px 0}
-.tips-legend span:before {content:'';display:inline-block;width:10px;height:7px;margin-right:6px;background:#355e72}
-.tips-legend .expense:before {background:#b96b4c}
-.tips-note,.tips-empty {color:#52616b;font-size:12px;line-height:1.5;margin:12px 0}
-.tips-error {color:#8b2929;font-size:13px;margin:12px 0}.tips-error:empty {display:none}
-#tips-dashboard :focus-visible,.tips-disclosure :focus-visible,.app-tabs :focus-visible {outline:2px solid #355e72;outline-offset:3px}
-#tips-dashboard[aria-busy=true]:after {content:'Загрузка…';display:block;padding:20px 0;color:#52616b;font-size:13px}
-@media(max-width:360px){.tips-period-nav{gap:4px}.tips-table{font-size:11px}.compare-table .compare-main td,.compare-table .compare-main th{font-size:12px}.tips-breakdown strong,.tips-average strong{font-size:19px}.compare-periods{gap:8px}#tips-dashboard input[type=date]{font-size:13px;padding:9px 5px}}
+[hidden] { display:none!important; }
+.app-tabs { display:flex; align-items:baseline; gap:22px; border:0; margin:0 0 22px; padding:0; background:none; overflow-x:auto; scrollbar-width:none; }
+.app-tabs::-webkit-scrollbar { display:none; }
+.app-tabs button { flex:0 0 auto; border:0; background:none; color:var(--ink); padding:12px 0 0; font:400 12px 'Onest',sans-serif; cursor:pointer; white-space:nowrap; }
+.app-tabs button[aria-selected=true] { order:-1; color:var(--ink); border:0; box-shadow:none; font:400 25px 'Onest',sans-serif; font-size:25px!important; letter-spacing:-.035em; }
+#tips-dashboard { color:var(--ink); }
+.dashboard-controls { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.period-link,.privacy-link { border:0; background:none; padding:8px 0; color:var(--ink); font:400 14px 'Onest',sans-serif; cursor:pointer; text-align:left; }
+.privacy-link { text-align:right; white-space:nowrap; }
+.range-backdrop { position:fixed; inset:0; z-index:85; display:flex; align-items:end; background:rgba(0,0,0,.38); }
+.range-picker { width:100%; max-width:480px; margin:0 auto; padding:20px 20px calc(20px + env(safe-area-inset-bottom)); border-radius:18px 18px 0 0; background:#fff; box-shadow:0 -6px 28px #0001; }
+.range-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
+.range-head h2 { font:400 21px 'Onest',sans-serif; }
+.range-head button { border:0; background:none; color:var(--ink); font:22px 'Onest',sans-serif; min-width:40px; min-height:40px; }
+.range-picker label { display:block; margin:11px 0; font:400 14px 'Onest',sans-serif; }
+.range-picker input { display:block; width:100%; min-width:0; min-height:48px; margin-top:6px; padding:9px 12px; background:#f5f5f7; color:var(--ink); border:0; border-radius:10px; font:400 16px 'Onest',sans-serif; color-scheme:light; }
+.range-hint { color:var(--ink-soft); font:12px 'Onest',sans-serif; margin:10px 0; }
+.range-apply { width:100%; min-height:48px; margin-top:12px; border:0; border-radius:10px; background:var(--ink); color:white; font:400 15px 'Onest',sans-serif; }
+.range-home { width:100%; min-height:44px; margin-top:8px; border:0; background:none; color:var(--accent); font:400 14px 'Onest',sans-serif; }
+#tips-range-error { color:#8d2b39; font-size:12px; }
+#tips-range-error:empty { display:none; }
+#tips-error { color:#8d2b39; font-size:13px; margin-top:12px; }
+#tips-error:empty { display:none; }
+.tips-hero { padding:16px 0 0; }
+.tips-field { font:400 14px 'Onest',sans-serif; }
+.tips-gross { display:block; width:100%; margin:4px 0 26px; padding:0; border:0; background:none; color:var(--ink); text-align:left; cursor:pointer; }
+.tips-gross span { display:block; color:var(--accent); font:400 14px 'Onest',sans-serif; }
+.tips-gross strong { display:block; font:400 clamp(57px,17vw,82px)/1.2 'Prata',Georgia,serif; letter-spacing:-.06em; font-variant-numeric:lining-nums; overflow-wrap:anywhere; }
+.tips-secondary { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+.tips-secondary span { display:block; font:400 14px 'Onest',sans-serif; color:var(--ink); }
+.tips-secondary strong { display:block; font:400 clamp(31px,9vw,42px)/1.3 'Prata',Georgia,serif; letter-spacing:-.06em; margin-top:2px; overflow-wrap:anywhere; }
+.expense-link { display:block; width:100%; padding:0; border:0; background:none; color:var(--ink); text-align:left; cursor:pointer; }
+.tips-secondary .expense-link span { color:var(--accent); }
+.detail-backdrop { position:fixed; inset:0; z-index:88; display:flex; align-items:end; background:rgba(0,0,0,.38); }
+.detail-sheet { box-sizing:border-box; width:100%; max-width:480px; max-height:88vh; margin:0 auto; padding:20px 20px calc(20px + env(safe-area-inset-bottom)); overflow:auto; border-radius:18px 18px 0 0; background:#fff; color:var(--ink); box-shadow:0 -6px 28px #0001; }
+.detail-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.detail-head h2 { margin:0; font:400 20px 'Onest',sans-serif; }
+.detail-head button { flex:0 0 40px; min-height:40px; border:0; background:none; color:var(--ink); font:22px 'Onest',sans-serif; }
+#tips-detail-status { min-height:1em; color:#8d2b39; font:400 13px 'Onest',sans-serif; }
+.detail-totals { display:grid; grid-template-columns:1fr 1fr; gap:14px; padding:12px 0 16px; border-bottom:1px solid #e9e9e9; font:400 13px 'Onest',sans-serif; }
+.detail-totals strong { display:block; margin-top:4px; font:400 23px 'Prata',Georgia,serif; }
+.detail-row { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:13px 0; border-bottom:1px solid #eee; }
+.detail-row span { display:block; color:#64646a; font:400 13px 'Onest',sans-serif; }
+.detail-row strong { display:block; margin-top:3px; font:400 18px 'Onest',sans-serif; }
+.detail-row button { flex:0 0 auto; border:0; background:none; color:var(--accent); font:400 13px 'Onest',sans-serif; }
+.detail-empty { color:#64646a; font:400 14px 'Onest',sans-serif; }
+.detail-form { display:grid; gap:12px; padding-top:18px; }
+.detail-form label { display:block; font:400 13px 'Onest',sans-serif; }
+.detail-form input,.detail-form select { box-sizing:border-box; display:block; width:100%; min-height:46px; margin-top:6px; padding:8px 12px; border:1px solid #ddd; border-radius:9px; background:#f7f7f8; color:var(--ink); font:400 16px 'Onest',sans-serif; }
+.detail-form button,.detail-primary { min-height:46px; padding:9px 14px; border:0; border-radius:9px; background:var(--ink); color:white; font:400 14px 'Onest',sans-serif; }
+.detail-primary { width:100%; margin-top:18px; }
+.detail-edit-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.detail-edit-actions #tips-delete { background:#f2eded; color:#8d2b39; }
+.tips-disclosure { border:0; }
+.tips-disclosure>summary { cursor:pointer; }
+.tips-actions { display:flex; gap:25px; border:0; padding:0; margin-top:54px; }
+.tips-actions .btn { width:auto; margin:0; padding:8px 0; border:0; background:none; box-shadow:none; color:var(--ink); font:400 14px 'Onest',sans-serif; }
+.text-action { border:0; background:none; padding:10px 0; font:14px 'Onest',sans-serif; color:var(--ink); }
+#tips-dashboard[aria-busy=true]:after { content:'Загружаю…'; font:13px 'Onest',sans-serif; display:block; margin-top:15px; }
+.app-tabs :focus-visible,#tips-dashboard :focus-visible,.calendar-disclosure :focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+@media(max-width:370px) { .app-tabs {gap:16px} .app-tabs button[aria-selected=true] {font-size:23px!important} .privacy-link,.period-link {font-size:12px} }

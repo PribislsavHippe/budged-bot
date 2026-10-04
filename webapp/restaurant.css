@@ -1,4 +1,4 @@
-#restaurant-panel {font-family:Inter,sans-serif;color:#172126;padding-bottom:32px}
+#restaurant-panel {font-family:Onest,sans-serif;color:#172126;padding-bottom:32px}
 #restaurant-panel [hidden],.app-tabs [hidden]{display:none!important}
 .restaurant-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .restaurant-head h1{font-size:24px;margin:8px 0 20px;overflow-wrap:anywhere}
@@ -8,11 +8,11 @@
 #restaurant-panel label{display:block;margin-bottom:14px}
 #restaurant-panel label input{display:block;width:100%;margin-top:8px}
 .restaurant-filters{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid #dbe1e4;margin-top:12px}
-.restaurant-filters button[aria-pressed=true]{font-weight:600;border-bottom:2px solid #203c49}
+.restaurant-filters button[aria-pressed=true]{font-weight:400;border-bottom:2px solid #203c49}
 .restaurant-scope,.restaurant-id{font-size:12px;color:#52616b;line-height:1.5}
 .restaurant-member{border-bottom:1px solid #dbe1e4;padding:16px 0}
 .restaurant-member summary{display:flex;justify-content:space-between;align-items:center;gap:12px;cursor:pointer;list-style:none}
-.restaurant-member strong{font-size:15px;font-weight:600}
+.restaurant-member strong{font-size:15px;font-weight:400}
 .restaurant-member small{display:block;font-size:12px;font-weight:400;color:#52616b;margin-top:5px}
 .restaurant-turnover{text-align:right;font-size:20px;white-space:nowrap;font-variant-numeric:tabular-nums}
 .restaurant-member table{width:100%;border-collapse:collapse;font-size:13px;margin:12px 0;font-variant-numeric:tabular-nums}

@@ -153,6 +153,16 @@ async def update_entry_amount(entry_id: int, user_id: int, signed_amount: float)
     return res.data[0] if res.data else None
 
 
+async def update_tip_details(entry_id: int, user_id: int, amount: float, account: str) -> dict | None:
+    """Save both tip fields in one scoped database update."""
+    assert account in ACCOUNTS, account
+    res = await _execute(supabase.table("entries").update(
+        {"signed_amount": round(amount, 2), "account": account})
+        .eq("id", entry_id).eq("user_id", user_id)
+        .eq("kind", "income").eq("category", "Чаевые"))
+    return res.data[0] if res.data else None
+
+
 async def delete_entry(entry_id: int, user_id: int) -> bool:
     """Возвращает True, если запись существовала и была удалена."""
     res = await _execute(supabase.table("entries").delete() \
