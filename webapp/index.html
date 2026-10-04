@@ -137,12 +137,16 @@
   .gcal-hint { font-size: 12px; line-height: 1.45; color: var(--ink-soft); margin-top: 8px; display: none; }
   .gcal-hint.on { display: block; }
   .iphone-calendar { margin-top:22px; }
-  .iphone-calendar-toggle { border:0; background:none; color:var(--accent); padding:8px 0; font:400 14px 'Onest',sans-serif; text-align:left; cursor:pointer; }
+  .iphone-calendar-toggle { width:100%; min-height:48px; border:1px solid var(--accent); border-radius:10px; background:transparent; color:var(--accent); padding:10px 14px; font:400 14px 'Onest',sans-serif; text-align:center; cursor:pointer; }
+  .iphone-calendar-toggle:disabled { opacity:.55; cursor:default; }
   .iphone-calendar-panel { padding:14px 0 4px; font:400 13px/1.5 'Onest',sans-serif; }
   .iphone-calendar-panel p { margin:0 0 12px; }
   .iphone-calendar-panel input { box-sizing:border-box; width:100%; min-height:44px; padding:9px 11px; border:1px solid var(--ink-soft); border-radius:9px; background:var(--tile); color:var(--ink); font:400 13px 'Onest',sans-serif; }
   .iphone-calendar-actions { display:flex; flex-wrap:wrap; gap:8px 18px; margin:12px 0; }
   .iphone-calendar-actions button { border:0; background:none; color:var(--accent); padding:8px 0; font:400 13px 'Onest',sans-serif; cursor:pointer; }
+  .iphone-calendar-help { margin-top:10px; color:var(--ink-soft); font-size:12px; }
+  .iphone-calendar-help summary { cursor:pointer; }
+  .iphone-calendar-manage { margin-top:8px; }
   .iphone-calendar-panel .iphone-calendar-note { color:var(--ink-soft); font-size:12px; }
   #iphone-calendar-status { color:var(--ink-soft); font-size:12px; }
   .cal-grid.loading { opacity: .45; }
@@ -225,20 +229,23 @@
   <p class="cal-sum" id="cal-sum"></p>
   <p class="gcal-hint on" id="cal-hint">Нажми на день, чтобы добавить или исправить смену и чаевые.</p>
   <div class="iphone-calendar" id="iphone-calendar" hidden>
-    <button class="iphone-calendar-toggle" id="iphone-calendar-toggle" type="button">Подключить календарь iPhone ›</button>
-    <div class="iphone-calendar-panel" id="iphone-calendar-panel" hidden>
-      <p>Добавь подписку на график в системном «Календаре». Она показывает только даты и время смен, без чаевых.</p>
+    <button class="iphone-calendar-toggle" id="iphone-calendar-toggle" type="button">Подключить iPhone ›</button>
+    <p id="iphone-calendar-status" role="status" hidden></p>
+    <details class="iphone-calendar-help" id="iphone-calendar-help" hidden><summary>Не открылось?</summary>
+      <p>Скопируй ссылку и добавь её на iPhone как подписной календарь.</p>
       <input id="iphone-calendar-link" aria-label="Личная ссылка на календарь" readonly>
       <div class="iphone-calendar-actions">
-        <button id="iphone-calendar-open" type="button">Открыть на iPhone ›</button>
         <button id="iphone-calendar-copy" type="button">Скопировать ссылку ›</button>
-        <button id="iphone-calendar-guide" type="button">Как добавить на iPhone ›</button>
+        <button id="iphone-calendar-guide" type="button">Открыть инструкцию ›</button>
+      </div>
+      <details class="iphone-calendar-manage"><summary>Управление подпиской</summary>
+      <div class="iphone-calendar-actions">
         <button id="iphone-calendar-rotate" type="button">Заменить ссылку ›</button>
         <button id="iphone-calendar-revoke" type="button">Отключить ссылку ›</button>
       </div>
-      <p class="iphone-calendar-note">Если iPhone предлагает только импорт файла, используй «Скопировать ссылку» и добавь её как подписку. Ссылку может открыть любой, у кого она есть. При замене старую подписку нужно удалить и добавить новую. Обновления могут появляться с задержкой.</p>
-      <p id="iphone-calendar-status" role="status"></p>
-    </div>
+      </details>
+      <p class="iphone-calendar-note">Ссылка личная: тот, у кого она есть, увидит твой график.</p>
+    </details>
   </div>
   <button class="btn btn-ghost" id="gcal-btn" style="display:none; margin-top:14px">Подключить Google Календарь</button>
   <p class="gcal-hint" id="gcal-hint"></p>
@@ -765,10 +772,19 @@ function paintIphoneCalendar(data){
   const box=document.getElementById('iphone-calendar');
   box.hidden=!data?.available;
   if(!data?.available)return;
-  document.getElementById('iphone-calendar-toggle').textContent=data.enabled
-    ? 'Ссылка для iPhone готова ›':'Подключить календарь iPhone ›';
+  document.getElementById('iphone-calendar-toggle').textContent='Подключить iPhone ›';
   document.getElementById('iphone-calendar-link').value=data.feed_url||'';
-  if(!data.enabled)document.getElementById('iphone-calendar-panel').hidden=true;
+  if(!data.enabled){document.getElementById('iphone-calendar-help').hidden=true;document.getElementById('iphone-calendar-help').open=false;}
+}
+function iphoneCalendarStatus(message){
+  const status=document.getElementById('iphone-calendar-status');
+  status.textContent=message;status.hidden=!message;
+}
+function openIphoneCalendar(){
+  const url=iphoneCalendarData?.feed_url;
+  document.getElementById('iphone-calendar-help').hidden=false;
+  if(url&&tg?.openLink)tg.openLink(url);
+  else if(url)window.open(url,'_blank','noopener');
 }
 async function iphoneCalendarRefresh(){
   if(iphoneCalendarBusy)return;
@@ -777,26 +793,21 @@ async function iphoneCalendarRefresh(){
 }
 document.getElementById('iphone-calendar-toggle').onclick=async function(){
   if(iphoneCalendarBusy)return;
-  const panel=document.getElementById('iphone-calendar-panel');
-  if(iphoneCalendarData?.enabled){panel.hidden=!panel.hidden;return;}
+  if(iphoneCalendarData?.enabled){openIphoneCalendar();return;}
   iphoneCalendarBusy=true;
-  try{paintIphoneCalendar(await iphoneCalendarRequest('create'));panel.hidden=false;
-    document.getElementById('iphone-calendar-status').textContent='Ссылка готова. Добавь её как подписку в «Календаре».';}
-  catch(e){document.getElementById('iphone-calendar-status').textContent=e.message;panel.hidden=false;}
-  finally{iphoneCalendarBusy=false;}
+  this.disabled=true;iphoneCalendarStatus('Подготавливаю календарь…');
+  try{paintIphoneCalendar(await iphoneCalendarRequest('create'));
+    iphoneCalendarStatus('Готово. Нажми ещё раз, чтобы открыть календарь.');}
+  catch(e){iphoneCalendarStatus(e.message);}
+  finally{iphoneCalendarBusy=false;this.disabled=false;}
 };
 document.getElementById('iphone-calendar-copy').onclick=async function(){
   const url=iphoneCalendarData?.feed_url;if(!url)return;
   const input=document.getElementById('iphone-calendar-link');
   try{await navigator.clipboard.writeText(url);}
   catch(e){input.focus();input.select();if(!document.execCommand('copy')){
-    document.getElementById('iphone-calendar-status').textContent='Выдели и скопируй ссылку вручную.';return;}}
-  document.getElementById('iphone-calendar-status').textContent='Ссылка скопирована.';
-};
-document.getElementById('iphone-calendar-open').onclick=function(){
-  const url=iphoneCalendarData?.feed_url;
-  if(url&&tg?.openLink)tg.openLink(url);
-  else if(url)window.open(url,'_blank','noopener');
+    iphoneCalendarStatus('Выдели и скопируй ссылку вручную.');return;}}
+  iphoneCalendarStatus('Ссылка скопирована.');
 };
 document.getElementById('iphone-calendar-guide').onclick=function(){
   const url=iphoneCalendarData?.setup_url;
@@ -807,16 +818,16 @@ document.getElementById('iphone-calendar-rotate').onclick=async function(){
   if(iphoneCalendarBusy||!confirm('Старая ссылка перестанет работать. После замены подключи новый календарь на iPhone. Заменить?'))return;
   iphoneCalendarBusy=true;
   try{paintIphoneCalendar(await iphoneCalendarRequest('rotate'));
-    document.getElementById('iphone-calendar-status').textContent='Новая ссылка готова. Старую подписку на iPhone удали.';}
-  catch(e){document.getElementById('iphone-calendar-status').textContent=e.message;}
+    iphoneCalendarStatus('Новая ссылка готова. Старую подписку на iPhone удали.');}
+  catch(e){iphoneCalendarStatus(e.message);}
   finally{iphoneCalendarBusy=false;}
 };
 document.getElementById('iphone-calendar-revoke').onclick=async function(){
   if(iphoneCalendarBusy||!confirm('Отключить ссылку? Удали подписку и в «Календаре» iPhone: сохранённые там события могут исчезнуть не сразу.'))return;
   iphoneCalendarBusy=true;
   try{paintIphoneCalendar(await iphoneCalendarRequest('revoke'));
-    document.getElementById('iphone-calendar-status').textContent='Ссылка отключена.';}
-  catch(e){document.getElementById('iphone-calendar-status').textContent=e.message;}
+    iphoneCalendarStatus('Ссылка отключена.');}
+  catch(e){iphoneCalendarStatus(e.message);}
   finally{iphoneCalendarBusy=false;}
 };
 function gcalRefresh() {
