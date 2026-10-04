@@ -8,7 +8,7 @@ import os
 from collections import deque
 from datetime import datetime, timezone
 
-EVENTS = frozenset('user_started activity onboarding_started onboarding_step onboarding_skipped onboarding_completed tip_added expense_added first_tip_added first_expense_added first_value_action cabinet_opened cabinet_loaded cabinet_load_error tab_opened shift_closed first_shift_closed shift_planned sales_report_started sales_report_completed sales_report_error vision_started vision_completed vision_failed help_opened problem_reported'.split())
+EVENTS = frozenset('user_started activity onboarding_started onboarding_step onboarding_skipped onboarding_completed tip_added expense_added first_tip_added first_expense_added first_value_action cabinet_opened cabinet_loaded cabinet_load_error tab_opened shift_closed first_shift_closed shift_planned hours_recorded sales_report_started sales_report_completed sales_report_error vision_started vision_completed vision_failed help_opened problem_reported'.split())
 SCREENS = frozenset('chat earnings sales restaurant research history help calendar'.split())
 ERRORS = frozenset('schema permissions backend network timeout auth invalid vision save'.split())
 _queue = deque(maxlen=500)

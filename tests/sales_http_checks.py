@@ -26,6 +26,7 @@ class Query:
     def select(self,*a,**kw): return self
     def eq(self,k,v): self.filters.append(lambda r,k=k,v=v:r.get(k)==v);return self
     def gte(self,k,v): self.filters.append(lambda r,k=k,v=v:r[k]>=v);return self
+    def lte(self,k,v): self.filters.append(lambda r,k=k,v=v:r[k]<=v);return self
     def order(self,k,desc=False):self.orders.append((k,desc));return self
     def limit(self,n):self.end=n;return self
     def range(self,a,b):self.start=a;self.end=b+1;return self

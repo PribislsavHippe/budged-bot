@@ -18,10 +18,10 @@ class Times(unittest.TestCase):
         self.assertEqual(str(scheduler.timezone),'Europe/Moscow')
 
     def test_cells_and_dates(self):
-        for text,want in [('10',('10:00','22:00')),('11',('11:00','23:00')),('14',('14:00','23:00')),('9–17',('09:00','17:00')),('10-23',('10:00','23:00')),('10-23:30',('10:00','23:30'))]:
+        for text,want in [('10',('10:00','22:00')),('11',('11:00','23:00')),('14',('14:00','23:30')),('9–17',('09:00','17:00')),('10-23',('10:00','23:00')),('10-23:30',('10:00','23:30')),('23-02',('23:00','02:00'))]:
             self.assertEqual(schedule.cell(text),want)
         for text in ('','в','-'):self.assertIsNone(schedule.cell(text))
-        for bad in ('?','24','10-9','11-24','10-00:00'):
+        for bad in ('?','24','11-24','10-10','23:45'):
             with self.assertRaises(ValueError):schedule.cell(bad)
         self.assertEqual(schedule.month('Октябрь 2026'),'2026-10')
         with self.assertRaises(ValueError):schedule.month('октябрь')
@@ -87,7 +87,7 @@ class Flow(unittest.IsolatedAsyncioTestCase):
             await chat.prompt_work_end(bot);await chat.prompt_work_end(bot)
         bot.send_message.assert_awaited_once();self.assertEqual(bot.send_message.await_args.args[0],7)
 
-    async def test_evening_reminder_respects_opt_out_and_sends_once(self):
+    async def test_evening_reminder_sends_to_every_scheduled_user_once(self):
         store.rows={'users':[{'id':7,'shift_reminders_enabled':True},
                              {'id':8,'shift_reminders_enabled':False}],
                     'shifts':[{'id':1,'user_id':7,'shift_date':'2026-10-05','starts_at':'10:00:00','ends_at':'22:00:00','start_reminder_sent':False},
@@ -96,17 +96,17 @@ class Flow(unittest.IsolatedAsyncioTestCase):
         with patch.object(schedule,'enabled',return_value=True),patch.object(jobs,'op_today',return_value=date(2026,10,4)):
             await jobs.tomorrow_shift_reminder(bot)
             await jobs.tomorrow_shift_reminder(bot)
-        bot.send_message.assert_awaited_once()
-        self.assertEqual(bot.send_message.await_args.args[0],7)
-        self.assertIn('10:00',bot.send_message.await_args.args[1])
+        self.assertEqual(bot.send_message.await_count,2)
+        self.assertEqual({call.args[0] for call in bot.send_message.await_args_list},{7,8})
+        self.assertIn('10:00',bot.send_message.await_args_list[0].args[1])
         self.assertTrue(store.rows['shifts'][0]['start_reminder_sent'])
-        self.assertFalse(store.rows['shifts'][1]['start_reminder_sent'])
+        self.assertTrue(store.rows['shifts'][1]['start_reminder_sent'])
 
-    async def test_reminder_setting_changes_only_own_profile(self):
+    async def test_old_reminder_setting_button_cannot_opt_out(self):
         store.rows={'users':[{'id':7,'shift_reminders_enabled':True},{'id':8,'shift_reminders_enabled':True}]}
         self.message.edit_text=AsyncMock()
         await chat.set_reminder_settings(self.cb('work:reminders:off'))
-        self.assertFalse(store.rows['users'][0]['shift_reminders_enabled'])
+        self.assertTrue(store.rows['users'][0]['shift_reminders_enabled'])
         self.assertTrue(store.rows['users'][1]['shift_reminders_enabled'])
 
     async def test_failed_delivery_releases_reminder_claim(self):

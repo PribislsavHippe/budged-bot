@@ -1,0 +1,112 @@
+/* Cross-language handoff and migration safety: run with node tests/private_device_check.js. */
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const {webcrypto,createHmac}=require('node:crypto');
+const {execFileSync}=require('node:child_process');
+
+const server={active:false,entries:[
+  {id:1,user_id:7,kind:'income',account:'card',signed_amount:500,category:'Чаевые',
+   note:'из банка',work_date:'2026-10-04',created_at:'2026-10-04T20:00:00+03:00'},
+  {id:2,user_id:7,kind:'expense',account:'cash',signed_amount:-100,category:'Такси',
+   note:'трата смены',work_date:'2026-10-04',created_at:'2026-10-04T20:01:00+03:00'}],publicKey:null,
+   injectBeforeActivate:false};
+const token='test-bot-token';
+function device() {
+  const local=new Map(),secure=new Map();
+  const storage=map=>({getItem:(key,cb)=>cb(null,map.get(key)||null),
+                       setItem:(key,value,cb)=>{map.set(key,value);cb(null,true);}});
+  return {DeviceStorage:storage(local),SecureStorage:storage(secure),_local:local,_secure:secure};
+}
+function client(storage,url='https://example.com/app') {
+  const tg={...storage,initData:'signed-test',initDataUnsafe:{user:{id:7}}};
+  const location={href:url};
+  const window={Telegram:{WebApp:tg},crypto:webcrypto};
+  const context=vm.createContext({window,crypto:webcrypto,location,URL,TextEncoder,TextDecoder,
+    btoa:s=>Buffer.from(s,'binary').toString('base64'),
+    atob:s=>Buffer.from(s,'base64').toString('binary'),
+    history:{replaceState:(_a,_b,next)=>{location.href='https://example.com'+next;}},
+    fetch:async(path,options)=>{
+      const body=JSON.parse(options.body);
+      let status=200,response;
+      if(path==='/api/private/prepare') response={active:server.active,entries:server.active?[]:server.entries};
+      else if(path==='/api/private/activate') {
+        if(server.injectBeforeActivate) {
+          server.injectBeforeActivate=false;
+          server.entries.push({id:3,user_id:7,kind:'expense',account:'cash',signed_amount:-50,
+            category:'Кофе',work_date:'2026-10-04',created_at:'2026-10-04T20:02:00+03:00'});
+        }
+        if(JSON.stringify(body.entry_ids)!==JSON.stringify(server.entries.map(e=>e.id))) {
+          status=409;response={error:'Записи изменились во время переноса.'};
+        } else {
+        assert.equal(storage.DeviceStorage.getItem instanceof Function,true);
+        server.publicKey=body.public_key;server.entries=[];server.active=true;response={active:true};
+        }
+      } else if(path==='/api/private/verify') {
+        const sig=createHmac('sha256',token).update('7:'+body.payload).digest('hex');
+        response={valid:sig===body.signature};if(!response.valid)status=400;
+      } else if(path==='/api/private/rotate') {server.publicKey=body.public_key;response={active:true};}
+      else throw new Error(path);
+      return {ok:status===200,status,json:async()=>response};
+    }});
+  vm.runInContext(fs.readFileSync('webapp/private.js','utf8'),context);
+  return {pm:window.privateMoney,location};
+}
+(async()=>{
+  const oldTelegram=device();oldTelegram.isVersionAtLeast=()=>false;
+  const oldClient=client(oldTelegram);
+  await oldClient.pm.init();
+  assert.equal(oldClient.pm.state.lost,false);
+  await assert.rejects(oldClient.pm.activate());
+
+  const failing=device();
+  failing.DeviceStorage.setItem=(_key,_value,callback)=>callback(null,false);
+  const failedClient=client(failing);
+  await failedClient.pm.init();
+  await assert.rejects(failedClient.pm.activate());
+  assert.equal(server.active,false);
+  assert.equal(server.entries.length,2);
+
+  const phone=device(),first=client(phone);
+  await first.pm.init();
+  assert.equal(first.pm.active,false);
+  server.injectBeforeActivate=true;
+  await assert.rejects(first.pm.activate());
+  assert.equal(server.active,false);
+  assert.equal(server.entries.length,3);
+  assert.equal(first.pm.entries.length,2);
+  assert.equal(await first.pm.activate(),3);
+  assert.equal(server.active,true);
+  assert.deepEqual(server.entries,[]);
+  assert.equal(first.pm.entries.length,3);
+  const reopened=client(phone);
+  await reopened.pm.init();
+  assert.equal(reopened.pm.active,true);
+  assert.equal(reopened.pm.entries.length,3);
+
+  const python=`import json,sys,private_payload\nrequest=json.load(sys.stdin)\np,s=private_payload.seal(7,request['key'],{'id':'telegram:7:99:0','kind':'income','account':'card','signed_amount':650,'category':'Чаевые','work_date':'2026-10-04','created_at':'2026-10-04T20:03:00+03:00'},'test-bot-token')\nprint(json.dumps({'payload':p,'signature':s}))`;
+  const sealed=JSON.parse(execFileSync('.venv/bin/python',['-c',python],{input:JSON.stringify({key:server.publicKey})}));
+  reopened.location.href='https://example.com/app?private_entry='+sealed.payload+'&private_sig='+sealed.signature;
+  assert.equal(await reopened.pm.importUrl(),'Запись сохранена на этом устройстве.');
+  assert.equal(reopened.pm.entries.length,4);
+  reopened.location.href='https://example.com/app?private_entry='+sealed.payload+'&private_sig='+sealed.signature;
+  assert.equal(await reopened.pm.importUrl(),'Эта запись уже есть на устройстве.');
+  assert.equal(reopened.pm.entries.length,4);
+  assert.equal(server.entries.length,0);
+
+  const second=client(device());
+  await second.pm.init();
+  assert.equal(second.pm.state.lost,true);
+  assert.equal(second.pm.state.lostReason,'missing');
+  assert.equal(second.pm.active,false);
+  await second.pm.rotate();
+  assert.equal(second.pm.active,true);
+  assert.equal(second.pm.entries.length,0);
+  assert.equal(server.active,true);
+  phone._local.set('money_ledger_v1','corrupted');
+  const damaged=client(phone);
+  await damaged.pm.init();
+  assert.equal(damaged.pm.state.lostReason,'unreadable');
+  await assert.rejects(damaged.pm.rotate());
+  console.log('private device migration, encrypted handoff and device loss: OK');
+})().catch(error=>{console.error(error);process.exitCode=1;});

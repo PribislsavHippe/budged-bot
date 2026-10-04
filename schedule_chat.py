@@ -27,29 +27,13 @@ def photo_buttons(draft,rows):return buttons([(label,f'sch:{draft.nonce}:{key}')
 
 @router.message(Command('reminders'))
 async def reminder_settings(message):
-    try:
-        user=await db.get_or_create_user(message.from_user.id)
-        on=user.get('shift_reminders_enabled',True)
-        await message.answer('Напомню о смене накануне в 19:00.\nСейчас: '+('включено.' if on else 'выключено.'),
-                             reply_markup=buttons([('Выключить' if on else 'Включить','work:reminders:'+('off' if on else 'on'))]))
-    except Exception as error:
-        from diagnostics import failure
-        failure(error,area='shift_reminder',stage='settings')
-        await message.answer('Не удалось открыть настройки напоминаний. Попробуй позже.')
+    await message.answer('Напомню о каждой смене накануне в 19:00 и после её окончания. '
+                         'О чаевых отдельно напоминать не буду.')
 
 
 @router.callback_query(F.data.startswith('work:reminders:'))
 async def set_reminder_settings(callback):
-    value=callback.data.rsplit(':',1)[-1]
-    if value not in {'on','off'}:return
-    try:
-        await db._execute(db.supabase.table('users').update({'shift_reminders_enabled':value=='on'}).eq('id',callback.from_user.id))
-        await callback.answer('Готово')
-        await callback.message.edit_text('Напоминания о смене '+('включены.' if value=='on' else 'выключены.')+'\nИзменить: /reminders')
-    except Exception as error:
-        from diagnostics import failure
-        failure(error,area='shift_reminder',stage='settings_save')
-        await callback.answer('Не удалось сохранить. Попробуй позже.',show_alert=True)
+    await callback.answer('Напоминания сейчас приходят для каждой смены.',show_alert=True)
 
 async def start_photo(callback,draft):
     from report_photo import LimitedImage,_recognition_slots
@@ -120,7 +104,9 @@ async def photo_action(callback):
                 failure(error,area='schedule',stage='save')
                 await callback.message.answer('Не получил подтверждение. Нажми «Сохранить» ещё раз — повтор не добавит вторые смены.');return
             cells=draft.report['cells'];expire(callback.from_user.id,draft)
-            research.track(callback.from_user.id,'shift_planned',screen='calendar')
+            await research.record(callback.from_user.id,'shift_planned',screen='calendar')
+            from ux_chat import schedule_saved
+            await schedule_saved(callback.from_user.id)
             await callback.message.edit_text(f'Сохранил смены: {len(cells)}. В конце каждой спрошу, во сколько ты ушёл. '
                                              'Свою ставку можно указать командой /rate 350.')
             import google_calendar as gcal
@@ -262,7 +248,7 @@ async def save_actual(callback,state):
         failure(error,area='work_time',stage='save')
         await callback.message.answer('Не получил подтверждение. Нажми «Да, записать» ещё раз — вторая запись не появится.')
         return
-    await state.clear();research.track(callback.from_user.id,'shift_closed')
+    await state.clear();research.track(callback.from_user.id,'hours_recorded',screen='calendar')
     text=f"Записал {result['hours']:g} ч."
     if result['income'] is not None:text+=f" Заработок по ставке: {result['income']:g} ₽. Чаевые считаются отдельно."
     await callback.message.edit_text(text,reply_markup=buttons([('Указать ставку',f"work:rate:{data['work_day']}")]) if result['income'] is None else None)
@@ -326,15 +312,7 @@ async def stop_work(message,state):
 
 @router.callback_query(F.data.startswith('work:later:'))
 async def later(callback):
-    from datetime import date,timedelta
-    try:day=date.fromisoformat(callback.data.rsplit(':',1)[-1])
-    except ValueError:return
-    now=datetime.now(schedule.TZ)
-    if day>now.date() or (now.date()-day).days>1:
-        await callback.answer('Эта смена уже закрылась.');return
-    await db._execute(db.supabase.table('shifts').update({'time_prompt_sent':False,'time_prompt_at':(now+timedelta(minutes=30)).isoformat()})
-                      .eq('user_id',callback.from_user.id).eq('shift_date',day.isoformat()))
-    await callback.answer('Спрошу через полчаса.')
+    await callback.answer('Когда закончишь, открой смену в календаре.')
 
 
 async def prompt_work_end(bot):
@@ -343,21 +321,24 @@ async def prompt_work_end(bot):
     now=datetime.now(schedule.TZ)
     try:
         rows=await db._pages(lambda:db.supabase.table('shifts').select('id,user_id,shift_date,starts_at,ends_at,time_prompt_at')
-                            .eq('time_prompt_sent',False).gte('shift_date',(now.date()-timedelta(days=1)).isoformat()).order('shift_date').order('id'))
+                            .eq('time_prompt_sent',False)
+                            .gte('shift_date',(now.date()-timedelta(days=1)).isoformat())
+                            .lte('shift_date',now.date().isoformat()).order('shift_date').order('id'))
         for row in rows:
-            if not row.get('ends_at'):continue
-            end=datetime.combine(datetime.fromisoformat(row['shift_date']).date(),schedule.clock(row['ends_at']),schedule.TZ)
+            end=datetime.combine(datetime.fromisoformat(row['shift_date']).date(),
+                                 schedule.clock(row.get('ends_at') or '23:30'),schedule.TZ)
+            if row.get('starts_at') and schedule.clock(row['ends_at'])<=schedule.clock(row['starts_at']):
+                end+=timedelta(days=1)
             if not end<=now<=end+timedelta(hours=12):continue
             if row.get('time_prompt_at') and datetime.fromisoformat(row['time_prompt_at'].replace('Z','+00:00'))>now:continue
             uid=row['user_id'];day=row['shift_date']
-            completed=(await db._execute(db.supabase.table('worked_shifts').select('shift_date').eq('user_id',uid).eq('shift_date',day))).data
-            if completed:continue
             claimed=(await db._execute(db.supabase.table('shifts').update({'time_prompt_sent':True,'time_prompt_at':now.isoformat()})
                                        .eq('id',row['id']).eq('time_prompt_sent',False))).data
             if not claimed:continue
             try:
-                await bot.send_message(uid,'Смена по графику закончилась. Ты уже ушёл?',reply_markup=buttons([
-                    ('Да, записать время',f'work:close:{day}'),('Ещё работаю · через 30 минут',f'work:later:{day}')]))
+                await bot.send_message(uid,'Смена по графику подошла к концу. Хорошего отдыха! '
+                                       'Если хочешь записать фактическое время, открой смену.',
+                                       reply_markup=buttons([('Открыть смену',f'work:close:{day}')]))
             except Exception as error:
                 await db._execute(db.supabase.table('shifts').update({'time_prompt_sent':False}).eq('id',row['id']))
                 from diagnostics import failure

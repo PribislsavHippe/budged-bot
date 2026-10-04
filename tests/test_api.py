@@ -82,6 +82,8 @@ _db.CARD = "card"
 _db.added = []
 _db.store = []      # list of entry dicts
 _db.next_id = [1]
+_db.private_ids = set()
+_db.shifts = []
 
 
 def _seed(user_id, kind, account, signed_amount, category="Чаевые"):
@@ -99,13 +101,14 @@ _db.seed = _seed
 
 
 async def _add_entry(user_id, kind, account, signed_amount, category="Прочее",
-                     note=None, order_amount=None, tip_percent=None):
+                     note=None, order_amount=None, tip_percent=None, work_date=None, source_key=None):
     _db.added.append({
         "user_id": user_id, "kind": kind, "account": account,
         "signed_amount": signed_amount, "category": category, "note": note,
     })
     e = _seed(user_id, kind, account, signed_amount, category)
     e["note"] = note
+    if work_date:e['work_date']=work_date
     return e
 
 
@@ -149,7 +152,32 @@ async def _get_shift_goal(uid):
 
 
 async def _get_shift_dates(uid, since=None, until=None):
+    return sorted(s['shift_date'] for s in _db.shifts if s['user_id']==uid
+                  and (since is None or s['shift_date']>=since)
+                  and (until is None or s['shift_date']<=until))
+
+
+async def _get_or_create_user(uid):
+    return {"id":uid,"private_money_mode":uid in _db.private_ids}
+
+
+async def _get_shift_details(uid, since, until):
+    return [s for s in _db.shifts if s['user_id']==uid and since<=s['shift_date']<=until]
+
+
+async def _get_worked_shift_details(uid, since, until):
     return []
+
+
+async def _save_shift(uid, day, start, end):
+    _db.shifts[:]=[s for s in _db.shifts if not (s['user_id']==uid and s['shift_date']==day)]
+    _db.shifts.append({'user_id':uid,'shift_date':day,'starts_at':start,'ends_at':end})
+
+
+async def _delete_shift(uid, day):
+    before=len(_db.shifts)
+    _db.shifts[:]=[s for s in _db.shifts if not (s['user_id']==uid and s['shift_date']==day)]
+    return len(_db.shifts)<before
 
 
 async def _get_google_token(uid):
@@ -165,6 +193,11 @@ _db.update_entry_account = _update_entry_account
 _db.update_entry_amount = _update_entry_amount
 _db.get_shift_goal = _get_shift_goal
 _db.get_shift_dates = _get_shift_dates
+_db.get_or_create_user = _get_or_create_user
+_db.get_shift_details = _get_shift_details
+_db.get_worked_shift_details = _get_worked_shift_details
+_db.save_shift = _save_shift
+_db.delete_shift = _delete_shift
 _db.get_google_token = _get_google_token
 sys.modules["db"] = _db
 
@@ -449,6 +482,74 @@ def test_idor_forged_signature_gets_nothing():
     forged = init_data(TOKEN, 42).replace("%22id%22%3A+42", "%22id%22%3A+99")
     r = run(webapp_api.api_entries(Req({"initData": forged})))
     assert r.status == 401
+
+
+def test_calendar_shift_can_be_added_changed_and_removed():
+    from unittest.mock import AsyncMock, patch
+    _db.shifts.clear()
+    signed = init_data(TOKEN, 42)
+    with patch.object(webapp_api.gcal, 'is_connected', new=AsyncMock(return_value=False)):
+        created = run(webapp_api.api_calendar_edit(Req({
+            'initData': signed, 'date': '2026-10-05', 'action': 'shift_save',
+            'start': '14:00', 'end': '23:30'})))
+        assert created.status == 200
+        assert _db.shifts == [{'user_id': 42, 'shift_date': '2026-10-05',
+                               'starts_at': '14:00', 'ends_at': '23:30'}]
+        changed = run(webapp_api.api_calendar_edit(Req({
+            'initData': signed, 'date': '2026-10-05', 'action': 'shift_save',
+            'start': '10:00', 'end': '22:00'})))
+        assert changed.status == 200 and len(_db.shifts) == 1
+        assert _db.shifts[0]['ends_at'] == '22:00'
+        removed = run(webapp_api.api_calendar_edit(Req({
+            'initData': signed, 'date': '2026-10-05', 'action': 'shift_delete'})))
+        assert removed.status == 200 and not _db.shifts
+
+
+def test_calendar_tip_edits_are_user_scoped_and_private_mode_stays_local():
+    from uuid import uuid4
+    _db.store.clear()
+    victim = _db.seed(99, 'income', 'card', 700)
+    victim['work_date'] = '2026-10-05'
+    signed = init_data(TOKEN, 42)
+    foreign = run(webapp_api.api_calendar_edit(Req({
+        'initData': signed, 'date': '2026-10-05', 'action': 'tip_delete',
+        'entry_id': victim['id']})))
+    assert foreign.status == 404 and victim in _db.store
+    added = run(webapp_api.api_calendar_edit(Req({
+        'initData': signed, 'date': '2026-10-05', 'action': 'tip_add',
+        'amount': '350.50', 'account': 'cash', 'operation_id': str(uuid4())})))
+    assert added.status == 200
+    entry = run(_db.get_entry(added.data['id'], 42))
+    assert entry['work_date'] == '2026-10-05' and entry['signed_amount'] == 350.5
+    _db.private_ids.add(42)
+    try:
+        rejected = run(webapp_api.api_calendar_edit(Req({
+            'initData': signed, 'date': '2026-10-05', 'action': 'tip_add',
+            'amount': '10', 'account': 'cash', 'operation_id': str(uuid4())})))
+        assert rejected.status == 409
+    finally:
+        _db.private_ids.remove(42)
+
+
+def test_private_stats_use_only_device_entries():
+    _db.store.clear()
+    _db.seed(42, 'income', 'card', 999999)
+    _db.private_ids.add(42)
+    try:
+        entry = {'id': 'local:1', 'kind': 'income', 'account': 'card',
+                 'signed_amount': 500, 'category': 'Чаевые',
+                 'work_date': '2026-10-04', 'created_at': '2026-10-04T15:00:00+03:00'}
+        result = run(webapp_api.api_stats(Req({
+            'initData': init_data(TOKEN, 42), 'private_entries': [entry]})))
+        assert result.status == 200
+        assert result.data['total_net'] == 500
+        assert result.data['private_money_mode'] is True
+        assert result.data['tip_entries'][0]['id'] == 'local:1'
+        invalid = run(webapp_api.api_stats(Req({
+            'initData': init_data(TOKEN, 42), 'private_entries': [{**entry, 'work_date': 'bad'}]})))
+        assert invalid.status == 400
+    finally:
+        _db.private_ids.remove(42)
 
 
 if __name__ == "__main__":

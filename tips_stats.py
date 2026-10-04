@@ -16,7 +16,7 @@ def bounds(kind, anchor):
 def summarize(entries, start, end, today):
     days={}
     for e in entries:
-        d=entry_op_date(e['created_at'])
+        d=date.fromisoformat(e['work_date']) if e.get('work_date') else entry_op_date(e['created_at'])
         if not start<=d<=min(end,today):continue
         is_tip=e['kind']=='income' and e['category']=='Чаевые'
         if not is_tip and e['kind']!='expense':continue

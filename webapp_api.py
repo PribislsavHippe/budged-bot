@@ -8,6 +8,8 @@ import json
 import logging
 import os
 import time
+from calendar import monthrange
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from urllib.parse import parse_qsl
 
@@ -15,7 +17,8 @@ from aiohttp import web
 
 import db
 import google_calendar as gcal
-from stats import compute_month, compute_stats, month_bounds
+import private_payload
+from stats import _entry_date, compute_month, compute_stats, month_bounds
 from workday import op_today
 
 WEBAPP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webapp")
@@ -51,8 +54,29 @@ async def serve_app(request: web.Request) -> web.Response:
     return web.FileResponse(os.path.join(WEBAPP_DIR, "index.html"), headers=NO_CACHE)
 
 
-async def _stats_payload(app: web.Application, user_id: int) -> dict:
-    entries = await db.get_all_entries(user_id)
+def _private_entries(body: dict) -> list[dict]:
+    entries=body.get('private_entries',[])
+    if not isinstance(entries,list) or len(entries)>5000:raise ValueError('private_entries_invalid')
+    for e in entries:
+        if not isinstance(e,dict) or e.get('kind') not in {'income','expense','adjustment'} \
+                or e.get('account') not in {'cash','card'} or not isinstance(e.get('category'),str) \
+                or not 1<=len(e['category'])<=100 \
+                or type(e.get('id')) not in {str,int} or not str(e['id']):
+            raise ValueError('private_entries_invalid')
+        amount=Decimal(str(e.get('signed_amount')))
+        if not amount.is_finite() or abs(amount)>10000000:raise ValueError('private_entries_invalid')
+        date.fromisoformat(e.get('work_date',''))
+    return entries
+
+
+async def _entries_for_view(user_id: int, body: dict) -> tuple[list[dict],bool]:
+    user=await db.get_or_create_user(user_id)
+    private=bool(user.get('private_money_mode'))
+    return (_private_entries(body) if private else await db.get_all_entries(user_id)),private
+
+
+async def _stats_payload(app: web.Application, user_id: int, body: dict | None = None) -> dict:
+    entries,private=await _entries_for_view(user_id,body or {})
     goal = await db.get_shift_goal(user_id)
     payload = compute_stats(entries, shift_goal=goal)
     payload["bot_username"] = app.get("bot_username")
@@ -60,6 +84,7 @@ async def _stats_payload(app: web.Application, user_id: int) -> dict:
     today = op_today()
     payload["tip_month"] = summarize(entries, today.replace(day=1), today, today)
     payload["operational_today"] = today.isoformat()
+    payload["private_money_mode"] = private
     # Смены берём все разом: из них и календарь текущего месяца, и понимание,
     # есть ли соседние месяцы, куда листать.
     today = op_today()
@@ -67,7 +92,72 @@ async def _stats_payload(app: web.Application, user_id: int) -> dict:
     prefix = today.strftime("%Y-%m")
     payload["scheduled_shifts"] = [s for s in shifts if s.startswith(prefix)]
     payload.update(month_bounds(entries, shifts, today.year, today.month, today))
+    first=today.replace(day=1).isoformat()
+    last=today.replace(day=monthrange(today.year,today.month)[1]).isoformat()
+    payload['planned_times']=await db.get_shift_details(user_id,first,last)
+    payload['worked_times']=await db.get_worked_shift_details(user_id,first,last)
+    payload['tip_entries']=[{'id':e['id'],'date':_entry_date(e).isoformat(),
+                             'amount':float(e['signed_amount']),'account':e['account']}
+                            for e in entries if e['kind']=='income' and e['category']=='Чаевые'
+                            and first<=_entry_date(e).isoformat()<=last]
     return payload
+
+
+async def api_private_prepare(request: web.Request) -> web.Response:
+    user_id, body=await _auth(request)
+    if user_id is None:return body
+    user=await db.get_or_create_user(user_id)
+    if user.get('private_money_mode'):
+        return web.json_response({'active':True,'entries':[],
+                                  'public_key':user.get('private_money_public_key')},headers=NO_CACHE)
+    entries=await db.get_all_entries(user_id)
+    return web.json_response({'active':False,'entries':entries},headers=NO_CACHE)
+
+
+async def api_private_activate(request: web.Request) -> web.Response:
+    user_id, body=await _auth(request)
+    if user_id is None:return body
+    try:
+        public_key=body['public_key']
+        private_payload.validate_public_key(public_key)
+        ids=body['entry_ids']
+        if not isinstance(ids,list) or len(ids)>100000 or any(type(i) is not int or i<=0 for i in ids):raise ValueError()
+        ids=sorted(ids)
+        if len(ids)!=len(set(ids)):raise ValueError()
+    except (KeyError,ValueError,TypeError):
+        return web.json_response({'error':'Не получилось подготовить приватный режим.'},status=400,headers=NO_CACHE)
+    try:
+        await db._execute(db.supabase.rpc('activate_private_money',
+            {'actor':user_id,'expected_ids':ids,'public_key':public_key}))
+    except Exception as error:
+        from diagnostics import failure
+        failure(error,area='private_money',stage='activate')
+        if (await db.get_or_create_user(user_id)).get('private_money_mode'):
+            return web.json_response({'active':True},headers=NO_CACHE)
+        return web.json_response({'error':'Не получил подтверждение переноса. Проверь режим и повтори попытку.'},status=409,headers=NO_CACHE)
+    return web.json_response({'active':True},headers=NO_CACHE)
+
+
+async def api_private_rotate(request: web.Request) -> web.Response:
+    user_id, body=await _auth(request)
+    if user_id is None:return body
+    try:
+        public_key=body['public_key']
+        private_payload.validate_public_key(public_key)
+    except (KeyError,ValueError,TypeError):
+        return web.json_response({'error':'Ключ устройства не подходит.'},status=400,headers=NO_CACHE)
+    await db._execute(db.supabase.rpc('rotate_private_money_device',
+        {'actor':user_id,'public_key':public_key}))
+    return web.json_response({'active':True},headers=NO_CACHE)
+
+
+async def api_private_verify(request: web.Request) -> web.Response:
+    user_id, body=await _auth(request)
+    if user_id is None:return body
+    if not (await db.get_or_create_user(user_id)).get('private_money_mode'):
+        return web.json_response({'valid':False},status=409,headers=NO_CACHE)
+    valid=private_payload.verify(user_id,body.get('payload'),body.get('signature'),request.app['bot_token'])
+    return web.json_response({'valid':valid},status=200 if valid else 400,headers=NO_CACHE)
 
 
 async def _auth(request: web.Request):
@@ -89,7 +179,10 @@ async def api_stats(request: web.Request) -> web.Response:
     user_id, body = await _auth(request)
     if user_id is None:
         return body
-    return web.json_response(await _stats_payload(request.app, user_id), headers=NO_CACHE)
+    try:result=await _stats_payload(request.app, user_id, body)
+    except (ValueError,TypeError,InvalidOperation):
+        return web.json_response({'error':'private data invalid'},status=400,headers=NO_CACHE)
+    return web.json_response(result, headers=NO_CACHE)
 
 
 async def api_shift_spend(request: web.Request) -> web.Response:
@@ -97,6 +190,8 @@ async def api_shift_spend(request: web.Request) -> web.Response:
     from uuid import UUID,uuid5,NAMESPACE_URL
     user_id, body = await _auth(request)
     if user_id is None:return body
+    if (await db.get_or_create_user(user_id)).get('private_money_mode'):
+        return web.json_response({'error':'В приватном режиме сохраняй расход на устройстве.'},status=409,headers=NO_CACHE)
     try:
         operation=str(UUID(str(body.get('operation_id',''))))
         raw=body.get('amount')
@@ -143,9 +238,9 @@ async def api_tips_compare(request: web.Request) -> web.Response:
         aligned = body.get("aligned", True)
         if not isinstance(aligned, bool):
             raise ValueError("Недопустимый режим сравнения")
-        entries = await db.get_all_entries(user_id)
+        entries,_ = await _entries_for_view(user_id,body)
         result = compare_tips(entries, kind, anchor, other, aligned)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, InvalidOperation):
         return web.json_response({"error": "Проверь даты и тип периода"}, status=400)
     return web.json_response(result, headers=NO_CACHE)
 
@@ -163,11 +258,93 @@ async def api_month(request: web.Request) -> web.Response:
     if not 1 <= month <= 12 or not 2000 <= year <= 2100:
         return web.json_response({"error": "bad month"}, status=400)
 
-    entries = await db.get_all_entries(user_id)
+    try:entries,private = await _entries_for_view(user_id,body)
+    except (ValueError,TypeError,InvalidOperation):
+        return web.json_response({'error':'private data invalid'},status=400,headers=NO_CACHE)
     shifts = await db.get_shift_dates(user_id)
-    return web.json_response(
-        compute_month(entries, shifts, year, month), headers=NO_CACHE
-    )
+    result=compute_month(entries, shifts, year, month)
+    result['private_money_mode']=private
+    first=f'{year:04d}-{month:02d}-01'
+    last=f'{year:04d}-{month:02d}-{monthrange(year,month)[1]:02d}'
+    result['planned_times']=await db.get_shift_details(user_id,first,last)
+    result['worked_times']=await db.get_worked_shift_details(user_id,first,last)
+    result['tip_entries']=[{'id':e['id'],'date':_entry_date(e).isoformat(),
+                            'amount':float(e['signed_amount']),'account':e['account']}
+                           for e in entries if e['kind']=='income' and e['category']=='Чаевые'
+                           and first<=_entry_date(e).isoformat()<=last]
+    return web.json_response(result, headers=NO_CACHE)
+
+
+async def api_calendar_edit(request: web.Request) -> web.Response:
+    """Edit a single date from the calendar. Every operation is scoped to the signed user."""
+    from uuid import UUID
+    import schedule
+    user_id, body = await _auth(request)
+    if user_id is None:return body
+    try:
+        day=date.fromisoformat(body.get('date',''))
+        if not 2000<=day.year<=2100:raise ValueError()
+        action=body.get('action')
+        if action not in {'shift_save','shift_delete','tip_add','tip_delete'}:raise ValueError()
+    except (TypeError,ValueError):
+        return web.json_response({'error':'Проверь дату и действие.'},status=400,headers=NO_CACHE)
+    day_iso=day.isoformat()
+    if action.startswith('tip_') and (await db.get_or_create_user(user_id)).get('private_money_mode'):
+        return web.json_response({'error':'Чаевые в приватном режиме хранятся на устройстве.'},status=409,headers=NO_CACHE)
+    if action=='shift_save':
+        try:
+            raw_start=body.get('start');raw_end=body.get('end')
+            if bool(raw_start)!=bool(raw_end):raise ValueError()
+            start=schedule.clock(raw_start).strftime('%H:%M') if raw_start else None
+            end=schedule.clock(raw_end).strftime('%H:%M') if raw_end else None
+            if start==end and start is not None:raise ValueError()
+        except (TypeError,ValueError):
+            return web.json_response({'error':'Укажи оба времени или оставь оба пустыми.'},status=400,headers=NO_CACHE)
+        await db.save_shift(user_id,day_iso,start,end)
+        warning=None
+        try:
+            if await gcal.is_connected(user_id):
+                synced=await gcal.sync_shifts(user_id,[day_iso])
+                if not synced.get('synced'):warning='Смена сохранена, но Google Календарь не обновился.'
+        except Exception:
+            warning='Смена сохранена, но Google Календарь не обновился.'
+        return web.json_response({'saved':True,'warning':warning},headers=NO_CACHE)
+    if action=='shift_delete':
+        removed=await db.delete_shift(user_id,day_iso)
+        warning=None
+        if removed:
+            try:
+                if await gcal.is_connected(user_id):await gcal.delete_shift_event(user_id,day_iso)
+            except Exception:
+                warning='Смена удалена здесь. Проверь её в Google Календаре.'
+        return web.json_response({'saved':True,'warning':warning},headers=NO_CACHE)
+    if action=='tip_add':
+        try:
+            raw=body.get('amount')
+            if isinstance(raw,bool):raise ValueError()
+            amount=Decimal(str(raw).replace(',','.'))
+            if not amount.is_finite() or not 0<amount<=10000000 or amount!=amount.quantize(Decimal('.01')):raise ValueError()
+            account=body.get('account')
+            if account not in {'cash','card'}:raise ValueError()
+            operation=str(UUID(str(body.get('operation_id',''))))
+        except (ValueError,TypeError,InvalidOperation):
+            return web.json_response({'error':'Проверь сумму и счёт.'},status=400,headers=NO_CACHE)
+        try:
+            entry=await db.add_entry(user_id,'income',account,float(amount),category='Чаевые',
+                                     note='из календаря',work_date=day_iso,source_key='calendar:'+operation)
+        except ValueError:
+            return web.json_response({'error':'Эта попытка уже сохранила другую сумму. Обнови календарь.'},status=409,headers=NO_CACHE)
+        return web.json_response({'saved':True,'id':entry['id']},headers=NO_CACHE)
+    try:
+        entry_id=int(body.get('entry_id'))
+        if isinstance(body.get('entry_id'),bool):raise ValueError()
+    except (ValueError,TypeError):
+        return web.json_response({'error':'Не нашёл запись.'},status=400,headers=NO_CACHE)
+    entry=await db.get_entry(entry_id,user_id)
+    if not entry or entry['kind']!='income' or entry['category']!='Чаевые' or _entry_date(entry)!=day:
+        return web.json_response({'error':'Не нашёл чаевые за этот день.'},status=404,headers=NO_CACHE)
+    await db.delete_entry(entry_id,user_id)
+    return web.json_response({'saved':True},headers=NO_CACHE)
 
 
 async def api_entries(request: web.Request) -> web.Response:
@@ -327,12 +504,17 @@ def register_webapp_routes(app: web.Application, bot_token: str, bot_username: s
     app.router.add_get("/app/sales.css", lambda _: web.FileResponse(os.path.join(WEBAPP_DIR, "sales.css"), headers=NO_CACHE))
     app.router.add_post("/api/stats", api_stats)
     app.router.add_post("/api/tips_compare", api_tips_compare)
-    for asset in ("tips.js", "tips.css", "restaurant.js", "restaurant.css", "ux.js", "research.js", "research.css"):
+    for asset in ("tips.js", "tips.css", "private.js", "restaurant.js", "restaurant.css", "ux.js", "research.js", "research.css"):
         async def serve_asset(request, asset=asset):
             return web.FileResponse(os.path.join(WEBAPP_DIR, asset), headers=NO_CACHE)
         app.router.add_get("/app/" + asset, serve_asset)
     app.router.add_post("/api/shift_spend", api_shift_spend)
     app.router.add_post("/api/month", api_month)
+    app.router.add_post("/api/calendar_edit", api_calendar_edit)
+    app.router.add_post("/api/private/prepare", api_private_prepare)
+    app.router.add_post("/api/private/activate", api_private_activate)
+    app.router.add_post("/api/private/rotate", api_private_rotate)
+    app.router.add_post("/api/private/verify", api_private_verify)
     app.router.add_post("/api/entries", api_entries)
     app.router.add_post("/api/entry_edit", api_entry_edit)
     app.router.add_post("/api/gcal", api_gcal)

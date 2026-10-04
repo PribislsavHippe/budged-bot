@@ -21,8 +21,15 @@ def cell(value):
     if text in {'','-','в','вых','выходной','отпуск','off'}:return None
     parts=text.split('-')
     if len(parts)>2:raise ValueError('Не понял часы в ячейке.')
-    start=clock(parts[0]);end=clock(parts[1]) if len(parts)==2 else time(min(start.hour+12,23),start.minute if start.hour<11 else 0)
-    if not start<end:raise ValueError('Проверь плановое время смены.')
+    start=clock(parts[0])
+    if len(parts)==2:
+        end=clock(parts[1])
+    else:
+        end_minutes=min(start.hour*60+start.minute+12*60,23*60+30)
+        if end_minutes<=start.hour*60+start.minute:
+            raise ValueError('Начало смены должно быть раньше 23:30.')
+        end=time(end_minutes//60,end_minutes%60)
+    if start==end:raise ValueError('Проверь плановое время смены.')
     return start.strftime('%H:%M'),end.strftime('%H:%M')
 
 def month(text):

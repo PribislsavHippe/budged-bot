@@ -93,6 +93,14 @@ async def value_saved(message,entry):
                              'Продолжай присылать записи, а за подсказками приходи в /help.',reply_markup=help_buttons())
 
 
+async def schedule_saved(uid):
+    """A saved schedule completes the schedule branch of first-use guidance."""
+    import db
+    user=await db.get_or_create_user(uid)
+    if user.get('tutorial_step')=='tip':
+        await db._execute(db.supabase.table('users').update({'tutorial_step':None}).eq('id',uid))
+
+
 @router.callback_query(F.data=='ux:skip')
 async def skip(callback):
     import db

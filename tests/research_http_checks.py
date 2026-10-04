@@ -30,13 +30,13 @@ async def main():
                 assert 'PGRST205' in buf.getvalue() and 'identity' in buf.getvalue()
                 assert 'SECRET' not in buf.getvalue() and 'TOKEN' not in buf.getvalue()
                 assert any(a[1]=='cabinet_load_error' and kw['error_code']=='schema' for a,kw in events)
-                with patch.object(db,'get_all_entries',new=AsyncMock(return_value=[])),patch.object(db,'get_shift_goal',new=AsyncMock(return_value=None)),patch.object(db,'get_shift_dates',new=AsyncMock(return_value=[])),patch.object(db,'get_recent_entries',new=AsyncMock(return_value=[])):
+                with patch.object(db,'get_all_entries',new=AsyncMock(return_value=[])),patch.object(db,'get_shift_goal',new=AsyncMock(return_value=None)),patch.object(db,'get_shift_dates',new=AsyncMock(return_value=[])),patch.object(db,'get_recent_entries',new=AsyncMock(return_value=[])),patch.object(db,'get_shift_details',new=AsyncMock(return_value=[])),patch.object(db,'get_worked_shift_details',new=AsyncMock(return_value=[])):
                     await post('/api/stats');await post('/api/entries');await post('/api/month',year=2026,month=9)
                 with patch.object(db,'get_all_entries',new=AsyncMock(side_effect=RuntimeError('financial SECRET'))):
                     d=await post('/api/stats',expected=503);assert 'SECRET' not in str(d)
                 # Restored expense accepts only validated operations, trusts signed user, and preserves saved success.
                 operation=str(uuid4())
-                with patch.object(db,'get_or_create_user',new=AsyncMock()),patch.object(db.supabase,'rpc',create=True) as rpc,patch.object(db,'_execute',new=AsyncMock(return_value=NS(data={'id':31}))),patch.object(webapp_api,'_stats_payload',new=AsyncMock(side_effect=RuntimeError('SECRET'))):
+                with patch.object(db,'get_or_create_user',new=AsyncMock(return_value={'id':2,'private_money_mode':False})),patch.object(db.supabase,'rpc',create=True) as rpc,patch.object(db,'_execute',new=AsyncMock(return_value=NS(data={'id':31}))),patch.object(webapp_api,'_stats_payload',new=AsyncMock(side_effect=RuntimeError('SECRET'))):
                     d=await post('/api/shift_spend',uid=2,user_id=1,operation_id=operation,amount=430,category='Такси')
                     assert d['saved'] and d['stats'] is None
                     assert rpc.call_args.args[1]['actor']==2

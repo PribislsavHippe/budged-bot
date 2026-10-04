@@ -183,6 +183,13 @@ async def _patch_timed(user_id, event_id, payload):
     if response.status_code!=200:raise CalendarError('temporary')
 
 
+async def _patch_all_day(user_id, event_id, payload):
+    body={**payload,'start':{**payload['start'],'dateTime':None,'timeZone':None},
+          'end':{**payload['end'],'dateTime':None,'timeZone':None}}
+    response=await _request(user_id,'patch',event_id=event_id,json=body)
+    if response.status_code!=200:raise CalendarError('temporary')
+
+
 async def create_shift_event(user_id: int, date_iso: str) -> bool:
     if not is_configured(): raise CalendarError("not_configured")
     d = date.fromisoformat(date_iso)
@@ -193,7 +200,9 @@ async def create_shift_event(user_id: int, date_iso: str) -> bool:
              'transparency':'transparent','extendedProperties':{'private':{'budgetbot':'shift'}}}
     if timed:
         payload['start']={'dateTime':datetime.combine(d,schedule.clock(planned['starts_at']),schedule.TZ).isoformat(),'timeZone':'Europe/Moscow'}
-        payload['end']={'dateTime':datetime.combine(d,schedule.clock(planned['ends_at']),schedule.TZ).isoformat(),'timeZone':'Europe/Moscow'}
+        end=datetime.combine(d,schedule.clock(planned['ends_at']),schedule.TZ)
+        if end<=datetime.combine(d,schedule.clock(planned['starts_at']),schedule.TZ):end+=timedelta(days=1)
+        payload['end']={'dateTime':end.isoformat(),'timeZone':'Europe/Moscow'}
     # Detect events created by older versions with random IDs before retrying.
     params = {"privateExtendedProperty":"budgetbot=shift",
         "timeMin":(d-timedelta(days=1)).isoformat()+"T00:00:00Z",
@@ -208,6 +217,8 @@ async def create_shift_event(user_id: int, date_iso: str) -> bool:
             if day==date_iso and event.get('status')!='cancelled':
                 if timed:
                     await _patch_timed(user_id,event['id'],payload)
+                elif start.get('dateTime'):
+                    await _patch_all_day(user_id,event['id'],payload)
                 return True
         if not existing.get("nextPageToken"): break
         params["pageToken"] = existing["nextPageToken"]
@@ -217,6 +228,29 @@ async def create_shift_event(user_id: int, date_iso: str) -> bool:
     if r.status_code==409 and timed:
         await _patch_timed(user_id,event_id,payload)
     return r.status_code in (200,201,409)
+
+
+async def delete_shift_event(user_id: int, date_iso: str) -> int:
+    """Remove only events previously created by this bot for this shift date."""
+    import schedule
+    d=date.fromisoformat(date_iso)
+    params={"privateExtendedProperty":"budgetbot=shift",
+            "timeMin":(d-timedelta(days=1)).isoformat()+"T00:00:00Z",
+            "timeMax":(d+timedelta(days=2)).isoformat()+"T00:00:00Z", "maxResults":250}
+    removed=0
+    while True:
+        existing=(await _request(user_id,"get",params=params)).json()
+        for event in existing.get('items',[]):
+            start=event.get('start',{})
+            day=start.get('date')
+            if start.get('dateTime'):
+                day=datetime.fromisoformat(start['dateTime'].replace('Z','+00:00')).astimezone(schedule.TZ).date().isoformat()
+            if day==date_iso and event.get('status')!='cancelled':
+                await _request(user_id,'delete',event_id=event['id'])
+                removed+=1
+        if not existing.get('nextPageToken'):break
+        params['pageToken']=existing['nextPageToken']
+    return removed
 
 
 

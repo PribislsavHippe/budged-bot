@@ -28,7 +28,7 @@ from aiogram.types import (
 import db
 import parser as p
 from chat_dates import human_date
-from workday import MSK, entry_op_date, op_day_start_utc_iso, op_today
+from workday import MSK, entry_op_date, op_today
 
 router = Router()
 
@@ -63,7 +63,7 @@ def today_line(income: float, spent: float) -> str:
 
 async def today_totals(user_id: int):
     """Итоги текущей смены. Сутки операционные: ночь принадлежит вчерашнему дню."""
-    entries = await db.get_entries_since(user_id, op_day_start_utc_iso(op_today()))
+    entries = await db.get_entries_for_work_date(user_id, op_today().isoformat())
     income = sum(float(e["signed_amount"]) for e in entries if e["kind"] == "income" and e.get("category") == "Чаевые")
     spent = -sum(float(e["signed_amount"]) for e in entries if e["kind"] == "expense")
     return income, spent
@@ -75,7 +75,7 @@ async def today_block(user_id: int) -> str:
 
 
 def main_menu() -> ReplyKeyboardMarkup:
-    row1 = [KeyboardButton(text="📋 История"), KeyboardButton(text="🧾 Закрыть смену")]
+    row1 = [KeyboardButton(text="📋 История"), KeyboardButton(text="🧾 Записать расход")]
     rows = [row1]
     if WEBHOOK_HOST:
         rows.append([KeyboardButton(
@@ -141,7 +141,10 @@ async def cmd_start(message: Message, state: FSMContext):
         await send_shift_close_prompt(message)
         return
     if user.get("onboarded"):
-        await message.answer(await today_block(message.from_user.id), reply_markup=main_menu())
+        if user.get('private_money_mode'):
+            await message.answer('Личные записи и итоги хранятся на твоём устройстве. Открой «Статистику».',reply_markup=main_menu())
+        else:
+            await message.answer(await today_block(message.from_user.id), reply_markup=main_menu())
         return
     await _greet(message, _name(message))
 
@@ -173,8 +176,8 @@ async def cmd_help(message: Message):
     await message.answer(
         "<b>Как я работаю</b>\n\n"
         "Чаевые: <i>чай 500</i>, <i>смена 2500</i>\n"
-        "Перешли сообщение банка о чаевых — запишу сам.\n\n"
-        "🧾 Закрыть смену — внести траты за смену (мойка, бар, еда…), "
+        "Перешли сообщение банка о чаевых — разберу сумму и помогу сохранить.\n\n"
+        "🧾 Записать расход — внести траты за смену (мойка, бар, еда…), "
         "покажу чистыми за смену\n"
         "📋 История — последние записи\n"
         "📊 Статистика — графики и календарь\n\n"
@@ -184,7 +187,7 @@ async def cmd_help(message: Message):
         "<i>цена бокала 850</i> — оценка, не подтвержденная выручка\n"
         "<i>отчёт по 13 сентября, вино 73 238, коктейли 57</i> — итог с начала месяца\n"
         "/calendar — повторить отправку смен в Google\n\n"
-        "<i>работаю 22 24 26</i> — поставить смены на эти дни; вечером спрошу про чай\n"
+        "<i>работаю 22 24 26</i> — поставить смены на эти дни; напомню о начале и завершении\n"
         "<i>план 2500</i> — цель по чаю на смену\n"
         "/undo — отменить последнюю запись\n"
         "/reset — очистить журнал\n\n"
@@ -211,11 +214,14 @@ async def cmd_help(message: Message):
 async def show_history(message: Message):
     import research
     research.track(message.from_user.id,"tab_opened",screen="history")
+    if (await db.get_or_create_user(message.from_user.id)).get('private_money_mode'):
+        await message.answer('История чаевых и расходов теперь в «Статистике» на твоём устройстве.',reply_markup=main_menu())
+        return
     entries = await db.get_recent_entries(message.from_user.id, limit=15)
     if not entries:
         await message.answer("Пока пусто. Напиши первую: <i>чай 500</i>")
         return
-    from datetime import datetime
+    from datetime import date, datetime
     lines = []
     for e in entries:
         # В истории показываем настоящее время записи, а не операционное.
@@ -228,6 +234,9 @@ async def show_history(message: Message):
 
 @router.message(Command("undo"))
 async def cmd_undo(message: Message):
+    if (await db.get_or_create_user(message.from_user.id)).get('private_money_mode'):
+        await message.answer('Исправить или удалить личную запись можно в «Статистике» на этом устройстве.',reply_markup=main_menu())
+        return
     entries = await db.get_recent_entries(message.from_user.id, limit=1)
     if not entries:
         await message.answer("Отменять нечего — журнал пуст.")
@@ -243,6 +252,9 @@ async def cmd_undo(message: Message):
 
 @router.message(Command("reset"))
 async def cmd_reset(message: Message):
+    if (await db.get_or_create_user(message.from_user.id)).get('private_money_mode'):
+        await message.answer('Личный журнал хранится на твоём устройстве. Очистить его можно в «Статистике» → «Суперконфиденциальность».')
+        return
     await message.answer(
         "Удалить <b>весь</b> журнал и начать заново?\n"
         "<i>Профиль останется. Чтобы стереть вообще всё — /delete</i>",
@@ -255,6 +267,9 @@ async def cmd_reset(message: Message):
 
 @router.callback_query(F.data == "reset:yes")
 async def reset_yes(callback: CallbackQuery, state: FSMContext):
+    if (await db.get_or_create_user(callback.from_user.id)).get('private_money_mode'):
+        await callback.answer('Личный журнал удаляется в приложении на устройстве.',show_alert=True)
+        return
     await db.clear_entries(callback.from_user.id)
     await state.clear()
     await callback.message.edit_text("Журнал очищен.")
@@ -276,6 +291,16 @@ SOURCE_URL = os.getenv("SOURCE_URL")
 @router.message(Command("privacy"))
 async def cmd_privacy(message: Message):
     """Короткий и скучный список того, что лежит в базе. Скучность — это и есть аргумент."""
+    if (await db.get_or_create_user(message.from_user.id)).get('private_money_mode'):
+        await message.answer('<b>🔒 Суперконфиденциальность включена</b>\n\n'
+            'Чаевые и расходы хранятся только на устройстве, где ты включил этот режим. '
+            'Пересланное банковское сообщение видят Telegram и бот при обработке; '
+            'чтобы запись попала на устройство, нажми кнопку в ответе бота. '
+            'Суммы не сохраняются в Supabase.\n\n'
+            'На сервере остаются твой Telegram ID, график и часы работы для напоминаний, '
+            'открытый ключ устройства, а также отдельно созданные продажи, разрешения Google и события использования без сумм. '
+            'При смене телефона личный журнал не восстановится. Удалить его с этого устройства можно в «Статистике».')
+        return
     shifts = await db.get_shift_dates(message.from_user.id)
     lines = [
         "<b>🔒 Что я о тебе знаю</b>",
@@ -322,6 +347,9 @@ async def cmd_privacy(message: Message):
 @router.message(Command("export"))
 async def cmd_export(message: Message):
     """Отдать человеку его собственные данные — сигнал «это твоё, а не моё»."""
+    private=(await db.get_or_create_user(message.from_user.id)).get('private_money_mode')
+    if private:
+        await message.answer('Личные чаевые и расходы хранятся только на этом устройстве и не входят в серверную выгрузку. Остальные данные отправлю ниже.')
     entries = await db.get_all_entries(message.from_user.id)
     shifts = await db.get_shift_dates(message.from_user.id)
     import sales_db
@@ -363,7 +391,7 @@ async def cmd_export(message: Message):
         await message.answer("Пока нет записей, которые можно скачать.")
         return
 
-    from datetime import datetime
+    from datetime import date, datetime
 
     buf = io.StringIO()
     writer = csv.writer(buf, delimiter=";")
@@ -375,7 +403,7 @@ async def cmd_export(message: Message):
         dt = datetime.fromisoformat(e["created_at"].replace("Z", "+00:00")).astimezone(MSK)
         writer.writerow([
             dt.strftime("%d.%m.%Y %H:%M"),
-            entry_op_date(e["created_at"]).strftime("%d.%m.%Y"),
+            (date.fromisoformat(e['work_date']) if e.get('work_date') else entry_op_date(e["created_at"])).strftime("%d.%m.%Y"),
             "доход" if e["kind"] == "income" else "расход",
             db.ACCOUNT_LABELS.get(e["account"], e["account"]),
             e["category"],
@@ -409,11 +437,13 @@ async def cmd_export(message: Message):
 
 @router.message(Command("delete"))
 async def cmd_delete(message: Message):
+    private=(await db.get_or_create_user(message.from_user.id)).get('private_money_mode')
     await message.answer(
         "Стереть <b>всё</b>: записи, смены, планы продаж, отчёты, профиль, привязку сотрудника, Google Календаря, события использования и обращения?\n"
         "Если ты администратор ресторана, ресторан останется без администратора.\n\n"
         "<i>Это навсегда. Восстановить не смогу — у меня не остаётся копии.\n"
-        "Хочешь сначала забрать данные — /export</i>",
+        "Хочешь сначала забрать данные — /export</i>"+
+        ("\n\nЛичный журнал на телефоне эта команда не затронет: очисти его отдельно в «Статистике»." if private else ""),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="Да, удалить мои данные", callback_data="del:yes"),
             InlineKeyboardButton(text="Отмена", callback_data="del:no"),
@@ -518,13 +548,13 @@ def shift_spend_kb() -> InlineKeyboardMarkup:
 
 async def send_shift_close_prompt(message: Message):
     await message.answer(
-        "Закрываем смену. Какие траты за день?\n"
+        "Какие были траты за смену?\n"
         "Выбери категорию и укажи сумму — или сразу «Готово».",
         reply_markup=shift_spend_kb(),
     )
 
 
-@router.message(F.text == "🧾 Закрыть смену")
+@router.message(F.text.in_({"🧾 Записать расход", "🧾 Закрыть смену"}))
 async def shift_close_button(message: Message):
     await send_shift_close_prompt(message)
 
@@ -540,9 +570,10 @@ async def shift_spend_chip(callback: CallbackQuery, state: FSMContext):
     choice = callback.data.split(":", 1)[1]
     if choice == "done":
         await state.clear()
-        await _send_day_summary(callback.message, callback.from_user.id)
-        import research
-        research.track(callback.from_user.id,'shift_closed')
+        if (await db.get_or_create_user(callback.from_user.id)).get('private_money_mode'):
+            await callback.message.answer('Итог личных записей — в приватном журнале на этом устройстве.')
+        else:
+            await _send_day_summary(callback.message, callback.from_user.id)
         await callback.answer()
         return
     await state.set_state(ShiftSpend.waiting_amount)
@@ -559,6 +590,11 @@ async def shift_spend_amount(message: Message, state: FSMContext):
         return
     data = await state.get_data()
     category = data.get("shift_category", "Прочее")
+    if (await db.get_or_create_user(message.from_user.id)).get('private_money_mode'):
+        if await _send_private_record(message,{'kind':'expense','account':'cash',
+            'signed_amount':-amount,'category':category,'note':'трата смены'},0):
+            await state.clear()
+        return
     entry = await db.add_entry(
         message.from_user.id, "expense", db.CASH, -amount,
         category=category, note="трата смены",
@@ -621,14 +657,58 @@ async def undo_sale(callback: CallbackQuery):
 
 # ─── главный обработчик текста ───────────────────────────────────────────────
 
+async def _send_private_record(message: Message, record: dict, index: int,
+                               delete_source: bool = True):
+    """Encrypted one-shot handoff. No financial record is inserted into Supabase."""
+    import private_payload
+    from datetime import datetime, timezone
+    user=await db.get_or_create_user(message.from_user.id)
+    if not WEBHOOK_HOST or not user.get('private_money_public_key'):
+        await message.answer('Открой «Статистику» на своём устройстве и настрой приватный журнал.')
+        return False
+    payload={**record,'id':f'telegram:{message.chat.id}:{message.message_id}:{index}',
+             'work_date':op_today().isoformat(),
+             'created_at':datetime.now(timezone.utc).isoformat()}
+    try:
+        sealed,signature=private_payload.seal(message.from_user.id,
+            user['private_money_public_key'],payload,os.environ['BOT_TOKEN'])
+    except Exception as error:
+        from diagnostics import failure
+        failure(error,area='private_money',stage='handoff')
+        await message.answer('Не удалось подготовить запись. Открой приватный журнал и попробуй ещё раз.')
+        return False
+    url=f'{WEBHOOK_HOST}/app?private_entry={sealed}&private_sig={signature}'
+    markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+        text='🔒 Сохранить на устройстве',web_app=WebAppInfo(url=url))]])
+    reply=await message.answer('Разобрал запись. Сохрани её на этом устройстве:',reply_markup=markup)
+    if delete_source:
+        try:
+            await message.bot.delete_message(message.chat.id,message.message_id)
+        except Exception as error:
+            from diagnostics import failure
+            failure(error,area='private_money',stage='delete_source')
+            try:
+                await reply.edit_text('Разобрал запись. Сохрани её на этом устройстве. '
+                                      'Исходное сообщение осталось в чате — удали его вручную.',reply_markup=markup)
+            except Exception:
+                pass
+    return True
+
+
 async def _save_bank_tips(message: Message, notif: dict):
     """Чаевые из банковского уведомления → на карту, с чеком и процентом."""
     tips = notif["amount"]
+    if (await db.get_or_create_user(message.from_user.id)).get('private_money_mode'):
+        await _send_private_record(message,{'kind':'income','account':'card',
+            'signed_amount':tips,'category':'Чаевые','note':'из банка',
+            'order_amount':notif.get('order_amount'),'tip_percent':notif.get('tip_percent')},0)
+        return
     entry = await db.add_entry(
         message.from_user.id, "income", db.CARD, tips,
         category="Чаевые", note="из банка",
         order_amount=notif.get("order_amount"),
         tip_percent=notif.get("tip_percent"),
+        source_key=f"telegram:{message.chat.id}:{message.message_id}:0",
     )
     details = []
     if notif.get("order_amount"):
@@ -712,7 +792,9 @@ async def handle_text(message: Message, state: FSMContext):
         iso = [d.isoformat() for d in shift_dates]
         await db.add_shifts(message.from_user.id, iso)
         import research
-        research.track(message.from_user.id,'shift_planned')
+        await research.record(message.from_user.id,'shift_planned',screen='chat')
+        from ux_chat import schedule_saved
+        await schedule_saved(message.from_user.id)
         human = ", ".join(d.strftime("%d.%m") for d in shift_dates)
         word = "смену" if len(shift_dates) == 1 else "смены"
         extra = ""
@@ -728,7 +810,7 @@ async def handle_text(message: Message, state: FSMContext):
             extra = "\nВ Google пока не отправлено. Смены сохранены; повтор — /calendar."
         await message.answer(
             f"📅 Поставил {word}: <b>{human}</b>.{extra}\n"
-            "Вечером в эти дни спрошу, сколько вышло чая."
+            "Напомню накануне и в конце смены. Чаевые записывай, когда удобно."
         )
         return
 
@@ -743,14 +825,23 @@ async def handle_text(message: Message, state: FSMContext):
         )
         return
 
+    if user.get('private_money_mode'):
+        all_sent=True
+        for index,item in enumerate(items):
+            sent=await _send_private_record(message,{'kind':item['kind'],'account':item['account'],
+                'signed_amount':item['amount']*KIND_SIGN[item['kind']],
+                'category':item['category'],'note':item['note']},index,
+                delete_source=all_sent and index==len(items)-1)
+            all_sent=all_sent and sent
+        return
     is_first_tx = not await db.get_recent_entries(message.from_user.id, limit=1)
-
     saved = []
-    for item in items:
+    for index, item in enumerate(items):
         signed = item["amount"] * KIND_SIGN[item["kind"]]
         entry = await db.add_entry(
             message.from_user.id, item["kind"], item["account"], signed,
             category=item["category"], note=item["note"],
+            source_key=f"telegram:{message.chat.id}:{message.message_id}:{index}",
         )
         saved.append(entry)
 

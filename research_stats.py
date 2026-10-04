@@ -5,11 +5,11 @@ from zoneinfo import ZoneInfo
 
 TZ=ZoneInfo('Europe/Moscow')
 ACTIVE={'activity','user_started','cabinet_opened','cabinet_loaded','tab_opened','help_opened','tip_added','expense_added',
-        'shift_planned','shift_closed','sales_report_started','vision_started','problem_reported'}
+        'shift_planned','shift_closed','hours_recorded','sales_report_started','vision_started','problem_reported'}
 ERROR_EVENTS={'cabinet_load_error','sales_report_error','vision_failed'}
 STAGES=[('user_started','Пришли'),('onboarding_completed','Завершили знакомство'),
         ('first_value_action','Сделали первую запись'),('cabinet_opened','Открыли кабинет'),
-        ('d1','Вернулись на следующий день'),('first_shift_closed','Закрыли первую смену'),('d7','Вернулись на 7-й день')]
+        ('d1','Вернулись на следующий день'),('shift_planned','Добавили график'),('d7','Вернулись на 7-й день')]
 
 
 def dt(value):return datetime.fromisoformat(value.replace('Z','+00:00'))

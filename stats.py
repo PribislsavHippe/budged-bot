@@ -15,7 +15,7 @@ WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 
 
 def _entry_date(e: dict) -> date:
-    return entry_op_date(e["created_at"])
+    return date.fromisoformat(e["work_date"]) if e.get("work_date") else entry_op_date(e["created_at"])
 
 
 def _net(entries: list[dict]) -> float:

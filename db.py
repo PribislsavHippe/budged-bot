@@ -86,6 +86,8 @@ async def add_entry(
     note: str | None = None,
     order_amount: float | None = None,
     tip_percent: float | None = None,
+    work_date: str | None = None,
+    source_key: str | None = None,
 ) -> dict:
     assert kind in ("income", "expense", "adjustment"), kind
     assert account in ACCOUNTS, account
@@ -101,7 +103,34 @@ async def add_entry(
         data["order_amount"] = order_amount
     if tip_percent is not None:
         data["tip_percent"] = tip_percent
-    res = await _execute(supabase.table("entries").insert(data))
+    if work_date is not None:
+        data["work_date"] = work_date
+    if source_key is not None:
+        data["source_key"] = source_key
+        previous = (await _execute(supabase.table("entries").select("*")
+                    .eq("user_id", user_id).eq("source_key", source_key).limit(1))).data
+        if previous:
+            if (previous[0]["kind"] != kind or previous[0]["account"] != account
+                    or float(previous[0]["signed_amount"]) != round(signed_amount, 2)
+                    or previous[0]["category"] != category
+                    or (work_date is not None and previous[0].get("work_date") != work_date)):
+                raise ValueError("source_conflict")
+            return previous[0]
+    try:
+        res = await _execute(supabase.table("entries").insert(data))
+    except Exception:
+        if source_key is None:
+            raise
+        previous = (await _execute(supabase.table("entries").select("*")
+                    .eq("user_id", user_id).eq("source_key", source_key).limit(1))).data
+        if previous:
+            if (previous[0]["kind"] != kind or previous[0]["account"] != account
+                    or float(previous[0]["signed_amount"]) != round(signed_amount, 2)
+                    or previous[0]["category"] != category
+                    or (work_date is not None and previous[0].get("work_date") != work_date)):
+                raise ValueError("source_conflict")
+            return previous[0]
+        raise
     return res.data[0]
 
 
@@ -142,6 +171,12 @@ async def get_recent_entries(user_id: int, limit: int = 15) -> list[dict]:
 async def get_entries_since(user_id: int, since_iso: str) -> list[dict]:
     return await _pages(lambda: supabase.table("entries").select("*")
                         .eq("user_id", user_id).gte("created_at", since_iso)
+                        .order("created_at").order("id"))
+
+
+async def get_entries_for_work_date(user_id: int, work_date: str) -> list[dict]:
+    return await _pages(lambda: supabase.table("entries").select("*")
+                        .eq("user_id", user_id).eq("work_date", work_date)
                         .order("created_at").order("id"))
 
 
@@ -229,6 +264,29 @@ async def get_shift_dates(user_id: int, since: str | None = None, until: str | N
             q = q.lte("shift_date", until)
         return q.order("shift_date")
     return [row["shift_date"] for row in await _pages(query)]
+
+
+async def get_shift_details(user_id: int, since: str, until: str) -> list[dict]:
+    return await _pages(lambda: supabase.table("shifts")
+                        .select("shift_date,starts_at,ends_at")
+                        .eq("user_id", user_id).gte("shift_date", since)
+                        .lte("shift_date", until).order("shift_date"))
+
+
+async def get_worked_shift_details(user_id: int, since: str, until: str) -> list[dict]:
+    return await _pages(lambda: supabase.table("worked_shifts")
+                        .select("shift_date,actual_start,actual_end,hourly_rate")
+                        .eq("user_id", user_id).gte("shift_date", since)
+                        .lte("shift_date", until).order("shift_date"))
+
+
+async def save_shift(user_id: int, day: str, start: str | None, end: str | None) -> None:
+    await get_or_create_user(user_id)
+    await _execute(supabase.table("shifts").upsert({
+        "user_id": user_id, "shift_date": day,
+        "starts_at": start, "ends_at": end,
+        "google_synced": False,
+    }, on_conflict="user_id,shift_date"))
 
 
 async def has_shift_on(user_id: int, date_iso: str) -> bool:

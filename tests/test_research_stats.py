@@ -41,8 +41,8 @@ class ResearchMetricsTests(unittest.TestCase):
         self.assertEqual(d['first_value_users'],1)
         self.assertEqual(d['funnel'][2]['users'],1)
         self.assertEqual(d['onboarding_skipped'],1)
-    def test_closed_shift_is_visible_without_next_day_return(self):
-        events=[event('1','user_started',19),event('1','first_shift_closed',19)]
+    def test_planned_shift_is_visible_without_next_day_return(self):
+        events=[event('1','user_started',19),event('1','shift_planned',19)]
         d=summarize(self.subjects(),events,now=NOW)
         self.assertEqual(d['retention']['d1']['returned'],0)
         self.assertEqual(d['funnel'][5]['users'],1)

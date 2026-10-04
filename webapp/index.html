@@ -76,6 +76,8 @@
   .chip.sel { background: var(--ink); color: #fff; border-color: var(--ink); }
   .spend-inputs { display: none; gap: 8px; margin-bottom: 6px; }
   .spend-inputs.on { display: flex; }
+  #day .spend-inputs { display: flex; }
+  [hidden] { display: none !important; }
   .spend-inputs input { flex: 1; min-width: 0; font-family: inherit; font-size: 15px; padding: 11px 12px; border: 1px solid var(--faint); border-radius: 10px; background: #fff; }
   #spend-amount { font-family: var(--font-mono); }
   .spend-inputs input:focus { outline: none; border-color: var(--ink); }
@@ -161,7 +163,8 @@
   .cal-wd { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-bottom: 5px; }
   .cal-wd span { font-size: 10px; color: var(--ink-soft); text-align: center; }
   .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
-  .cal-cell { aspect-ratio: 1; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); background: rgba(255,255,255,0.35); }
+  .cal-cell { aspect-ratio: 1; border: 0; padding: 0; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); background: rgba(255,255,255,0.35); cursor: pointer; }
+  .cal-time { font-size: 8px; line-height: 1.1; white-space: nowrap; margin-top: 2px; letter-spacing: -.3px; }
   .cal-cell.empty { background: transparent; }
   /* Кольца поверх тёмной заливки нужно осветлять, иначе их не видно */
   .cal-cell.shift { box-shadow: inset 0 0 0 1.5px var(--card); }
@@ -204,7 +207,7 @@
   </div>
   <p id="err"></p>
 
-  <details class="tips-disclosure calendar-disclosure"><summary>Календарь смен</summary>
+  <details class="tips-disclosure calendar-disclosure" open><summary>Календарь смен</summary>
   <div class="cal-head">
     <button class="cal-nav" id="cal-prev" aria-label="Предыдущий месяц">‹</button>
     <span class="cal-title" id="cal-title">Календарь</span>
@@ -214,16 +217,29 @@
   <div class="cal-grid" id="cal-grid"></div>
   <p class="cal-sum" id="cal-sum"></p>
   <p class="pt-legend" style="margin-top:8px"><span><i style="border:1.5px solid var(--card); background:transparent"></i>смена</span></p>
+  <p class="gcal-hint on">Нажми на день, чтобы добавить или исправить смену и чаевые.</p>
   <button class="btn btn-ghost" id="gcal-btn" style="display:none; margin-top:14px">Подключить Google Календарь</button>
   <p class="gcal-hint" id="gcal-hint"></p>
 
   </details>
   <button class="btn btn-ghost" id="open-spend">+ Записать расход</button>
+  <button class="btn btn-ghost" id="private-open">🔒 Суперконфиденциальность</button>
 
   <div class="tips-actions"><button class="btn btn-ghost" id="open-history">История и правки</button><button class="btn btn-ghost" id="open-poster">Итоги месяца</button></div>
 
 
   </section>
+
+  <div id="private-modal" hidden style="position:fixed;inset:0;background:rgba(0,0,0,.52);z-index:30;display:none;align-items:end">
+    <div class="sheet">
+      <p class="sheet-title">Суперконфиденциальность</p>
+      <p id="private-description">Чаевые и расходы будут храниться только на этом устройстве. При смене телефона данные не восстановятся. Пересланные записи нужно будет сохранить кнопкой в ответе бота.</p>
+      <p id="private-status" role="status"></p>
+      <button class="btn" id="private-confirm">Перенести записи и включить</button>
+      <button class="btn btn-ghost" id="private-clear" hidden>Удалить личные записи с устройства</button>
+      <button class="btn btn-ghost" id="private-cancel">Закрыть</button>
+    </div>
+  </div>
 
   <footer class="app-footer"><button id="ux-help">Помощь и обратная связь</button><button id="ux-access-retry" hidden>Не все разделы загрузились · повторить</button></footer>
 
@@ -248,6 +264,12 @@
     <div class="sheet">
       <p class="sheet-title" id="day-title">—</p>
       <div id="day-body"></div>
+      <p class="sheet-sub" id="day-status" role="status"></p>
+      <div class="spend-inputs"><label>Начало <input id="day-start" type="time"></label><label>Конец <input id="day-end" type="time"></label></div>
+      <div class="tips-actions"><button class="btn btn-ghost" id="day-shift-save">Добавить смену</button><button class="btn btn-ghost" id="day-shift-delete" hidden>Убрать смену</button></div>
+      <div class="spend-inputs" id="day-tip-inputs"><input id="day-tip-amount" type="number" inputmode="decimal" min="0.01" max="10000000" step="0.01" placeholder="Чаевые ₽" aria-label="Сумма чаевых"><select id="day-tip-account" aria-label="Счёт"><option value="card">Карта</option><option value="cash">Наличные</option></select></div>
+      <button class="btn btn-ghost" id="day-tip-add">Добавить чаевые</button>
+      <div id="day-tip-list"></div>
       <button class="btn btn-ghost" id="day-close">Закрыть</button>
     </div>
   </div>
@@ -294,6 +316,7 @@
     </div>
   </div>
 
+<script src="/app/private.js"></script>
 <script>
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 if (tg) { tg.ready(); tg.expand(); }
@@ -389,6 +412,8 @@ function calViewFromStats(s) {
     year: now.getFullYear(), month: now.getMonth() + 1,
     days: s.month_days, days_in_month: s.days_in_month,
     scheduled_shifts: s.scheduled_shifts, today_day: s.today_day,
+    planned_times: s.planned_times, worked_times: s.worked_times,
+    tip_entries: s.tip_entries,
     shifts_count: s.shifts_count, tips_total: s.month_tips,
     has_prev: s.has_prev, has_next: s.has_next,
   };
@@ -400,13 +425,14 @@ function paintCalendar(view) {
 
   document.getElementById("cal-title").textContent =
     MONTHS_UP[view.month - 1] + " " + view.year;
-  document.getElementById("cal-prev").disabled = !view.has_prev;
-  document.getElementById("cal-next").disabled = !view.has_next;
+  document.getElementById("cal-prev").disabled = view.year === 2000 && view.month === 1;
+  document.getElementById("cal-next").disabled = view.year === 2100 && view.month === 12;
 
   const firstDow = (new Date(view.year, view.month - 1, 1).getDay() + 6) % 7; // Пн=0
   const shiftDays = new Set((view.scheduled_shifts || []).map(function (d) {
     return parseInt(d.slice(8, 10), 10);
   }));
+  const plannedByDay = new Map((view.planned_times || []).map(function (s) { return [Number(s.shift_date.slice(8)),s]; }));
   const vmax = Math.max.apply(null, view.days.map(function (d) { return d.tips; }).concat([1]));
 
   document.getElementById("cal-wd").innerHTML =
@@ -419,9 +445,17 @@ function paintCalendar(view) {
     grid.appendChild(b);
   }
   view.days.forEach(function (d) {
-    const cell = document.createElement("div");
+    const cell = document.createElement("button");
+    cell.type = "button";
     cell.className = "cal-cell";
     cell.textContent = d.day;
+    const plannedTime=plannedByDay.get(d.day);
+    if (plannedTime?.starts_at && plannedTime?.ends_at) {
+      const shortTime=function(v) {return v.slice(3,5)==='00'?String(Number(v.slice(0,2))):v.slice(0,5);};
+      const label=document.createElement('span');label.className='cal-time';
+      label.textContent=shortTime(plannedTime.starts_at)+'–'+shortTime(plannedTime.ends_at);
+      cell.appendChild(label);
+    }
     if (d.tips > 0) {
       // Количество кодируем темнотой, а не цветом: цвет в этом приложении
       // занят счётом (нал/карта), и синяя шкала спорила и с рамкой смены,
@@ -437,18 +471,16 @@ function paintCalendar(view) {
     if (shiftDays.has(d.day)) cell.classList.add("shift");
     if (d.day === view.today_day) cell.classList.add("today");   // null в чужих месяцах
 
-    // Кликабельны дни, где есть что показать: был чай, были траты
-    // или смена стоит в графике.
-    if (d.tips > 0 || (d.spent || 0) > 0 || shiftDays.has(d.day)) {
-      cell.style.cursor = "pointer";
-      cell.onclick = function () { openDay(view, d); };
-    }
+    cell.setAttribute("aria-label", d.day + " " + MONTHS_GEN[view.month - 1] + ". Открыть день");
+    cell.onclick = function () { openDay(view, d); };
     grid.appendChild(cell);
   });
 
   const sum = document.getElementById("cal-sum");
   const planned = (view.scheduled_shifts || []).length;
-  if (view.shifts_count) {
+  if (window.privateMoney.state.lost) {
+    sum.textContent=planned ? "Запланировано " + shiftsWord(planned) + ". Чаевые доступны на другом устройстве." : "График пуст. Чаевые доступны на другом устройстве.";
+  } else if (view.shifts_count) {
     sum.innerHTML = shiftsWord(view.shifts_count) +
       ' · <span class="num">' + rub(view.tips_total) + "</span> ₽ чая";
   } else if (planned) {
@@ -456,6 +488,10 @@ function paintCalendar(view) {
     sum.innerHTML = "Запланировано " + shiftsWord(planned);
   } else {
     sum.textContent = "Чаевые за месяц не записаны";
+  }
+  if (selectedDayISO && selectedDayISO.slice(0,7) === view.year + "-" + String(view.month).padStart(2,"0")) {
+    const day = Number(selectedDayISO.slice(8));
+    if (view.days[day-1]) openDay(view, view.days[day-1]);
   }
 }
 
@@ -468,6 +504,9 @@ function dayRow(k, v, total) {
 }
 
 function openDay(view, d) {
+  const nextDay = view.year + "-" + String(view.month).padStart(2,"0") + "-" + String(d.day).padStart(2,"0");
+  if (selectedDayISO !== nextDay) dayTipOperation = null;
+  selectedDayISO = nextDay;
   const dt = new Date(view.year, view.month - 1, d.day);
   const wd = WD_FULL[(dt.getDay() + 6) % 7];
   document.getElementById("day-title").textContent =
@@ -475,6 +514,10 @@ function openDay(view, d) {
 
   const spent = d.spent || 0;
   const rows = [];
+  const planned = (view.planned_times || []).find(function (s) { return s.shift_date === selectedDayISO; });
+  const worked = (view.worked_times || []).find(function (s) { return s.shift_date === selectedDayISO; });
+  if (planned) rows.push(dayRow("По графику", planned.starts_at && planned.ends_at ? planned.starts_at.slice(0,5) + "–" + planned.ends_at.slice(0,5) : "время не указано"));
+  if (worked) rows.push(dayRow("Фактически", worked.actual_start.slice(11,16) + "–" + worked.actual_end.slice(11,16)));
   if (d.tips > 0) {
     rows.push(dayRow("Чаевые до расходов", rub(d.tips) + " ₽"));
     if (d.cash > 0 && d.card > 0) {
@@ -495,9 +538,88 @@ function openDay(view, d) {
 
   document.getElementById("day-body").innerHTML = rows.length
     ? rows.join("")
-    : '<p class="day-note">Смена в графике, записей пока нет.</p>';
+    : '<p class="day-note">Записей пока нет.</p>';
+  document.getElementById("day-start").value = planned && planned.starts_at ? planned.starts_at.slice(0,5) : "";
+  document.getElementById("day-end").value = planned && planned.ends_at ? planned.ends_at.slice(0,5) : "";
+  document.getElementById("day-shift-save").textContent = planned ? "Изменить время смены" : "Добавить смену";
+  document.getElementById("day-shift-delete").hidden = !planned;
+  document.getElementById('day-tip-inputs').hidden=privateMoney.state.lost;
+  document.getElementById('day-tip-add').hidden=privateMoney.state.lost;
+  document.getElementById("day-status").textContent = calendarNotice?.date===selectedDayISO ? calendarNotice.text : "";
+  const tips = (view.tip_entries || []).filter(function (e) { return e.date === selectedDayISO; });
+  const list = document.getElementById("day-tip-list");
+  list.replaceChildren();
+  tips.forEach(function (e) {
+    const row = document.createElement("div");
+    row.className = "day-row";
+    const label = document.createElement("span");
+    label.textContent = "Чаевые " + (e.account === "cash" ? "наличными" : "на карту") + " · " + rub(e.amount) + " ₽";
+    const remove = document.createElement("button");
+    remove.type = "button"; remove.textContent = "Убрать";
+    remove.onclick = function () { calendarEdit({action:"tip_delete",entry_id:e.id}); };
+    row.append(label,remove);list.appendChild(row);
+  });
   document.getElementById("day").classList.add("on");
 }
+
+let selectedDayISO = null;
+let dayTipOperation = null;
+let calendarNotice = null;
+function calendarEdit(payload) {
+  if (!selectedDayISO) return;
+  const editDay=selectedDayISO;
+  const status = document.getElementById("day-status");
+  if (window.privateMoney.active && payload.action.startsWith('tip_')) {
+    const task=payload.action==='tip_add'
+      ? (async function () {
+          const amount=Number(payload.amount);
+          if (!Number.isFinite(amount) || amount<=0 || amount>10000000 || Math.abs(Math.round(amount*100)-amount*100)>1e-8)
+            throw new Error('Проверь сумму чаевых.');
+          await privateMoney.add({id:'local:'+payload.operation_id,kind:'income',account:payload.account,
+            signed_amount:amount,category:'Чаевые',note:'из календаря',work_date:editDay,
+            created_at:new Date().toISOString()});
+          dayTipOperation=null;document.getElementById('day-tip-amount').value='';
+        })()
+      : privateMoney.remove(payload.entry_id);
+    status.textContent='Сохраняю на устройстве…';
+    task.then(function () {calendarNotice={date:editDay,text:'Сохранено на устройстве.'};if(selectedDayISO===editDay)status.textContent=calendarNotice.text;loadMonth(calYear,calMonth);load();})
+      .catch(function (e) {status.textContent=e.message;});
+    return;
+  }
+  status.textContent = "Сохраняю…";
+  fetch("/api/calendar_edit", {method:"POST",headers:{"Content-Type":"application/json"},cache:"no-store",
+    body:JSON.stringify(Object.assign({initData:tg ? tg.initData : "",date:editDay},payload))})
+    .then(function (r) { return r.json().then(function (v) { if (!r.ok) throw new Error(v.error || "Не получилось сохранить"); return v; }); })
+    .then(function (result) {
+      calendarNotice={date:editDay,text:result.warning || "Сохранено."};
+      if(selectedDayISO===editDay)status.textContent = calendarNotice.text;
+      if (payload.action === "tip_add") { dayTipOperation = null; document.getElementById("day-tip-amount").value = ""; }
+      loadMonth(calYear,calMonth);load();
+    })
+    .catch(function (e) { status.textContent = e.message || "Не получилось сохранить. Проверь данные и попробуй ещё раз."; });
+}
+document.getElementById("day-shift-save").onclick = function () {
+  const start=document.getElementById("day-start").value;
+  const end=document.getElementById("day-end").value;
+  calendarEdit({action:"shift_save",start:start || null,end:end || null});
+};
+document.getElementById("day-start").onchange = function () {
+  const end=document.getElementById("day-end");
+  if (!this.value || end.value) return;
+  const parts=this.value.split(":").map(Number);
+  const minutes=Math.min(parts[0]*60+parts[1]+12*60,23*60+30);
+  if (minutes>parts[0]*60+parts[1]) end.value=String(Math.floor(minutes/60)).padStart(2,"0")+":"+String(minutes%60).padStart(2,"0");
+};
+document.getElementById("day-shift-delete").onclick = function () {
+  if (confirm("Убрать смену из графика?")) calendarEdit({action:"shift_delete"});
+};
+document.getElementById("day-tip-add").onclick = function () {
+  if (!dayTipOperation) dayTipOperation = crypto.randomUUID();
+  calendarEdit({action:"tip_add",amount:document.getElementById("day-tip-amount").value,
+    account:document.getElementById("day-tip-account").value,operation_id:dayTipOperation});
+};
+document.getElementById('day-tip-amount').oninput=function () {dayTipOperation=null;};
+document.getElementById('day-tip-account').onchange=function () {dayTipOperation=null;};
 
 document.getElementById("day-close").onclick = function () {
   document.getElementById("day").classList.remove("on");
@@ -511,7 +633,8 @@ function loadMonth(year, month) {
   grid.classList.add("loading");
   fetch("/api/month", {
     method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
-    body: JSON.stringify({ initData: tg ? tg.initData : "", year: year, month: month }),
+    body: JSON.stringify({ initData: tg ? tg.initData : "", year: year, month: month,
+      ...window.privateMoney.payload }),
   })
     .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then(paintCalendar)
@@ -578,14 +701,27 @@ function renderPoster(s) {
 function applyStats(s) {
   const posterMonth = new Date((s.operational_today || new Date().toISOString().slice(0,10)) + "T12:00:00").toLocaleDateString("ru-RU", {month:"long"});
   document.getElementById("open-poster").textContent = "Итоги · " + posterMonth;
-  document.getElementById("err").style.display = "none";
+  const lost=window.privateMoney.state.lost;
+  if (!lost) document.getElementById("err").style.display = "none";
+  document.getElementById('tips-dashboard').style.display=lost?'none':'';
+  document.getElementById('open-spend').hidden=lost;
+  document.getElementById('open-history').hidden=lost;
+  document.getElementById('open-poster').hidden=lost;
   render(s);
   if (document.getElementById("poster").classList.contains("on")) renderPoster(s);
 }
 function load() {
+  if (window.privateMoney.state.lost) {
+    const el=document.getElementById('err');el.style.display='block';
+    el.textContent=window.privateMoney.state.lostReason==='missing'
+      ? 'Личный журнал находится на другом устройстве. Открой его там или настрой новый телефон в «Суперконфиденциальности».'
+      : window.privateMoney.state.lostReason==='unsupported'
+        ? 'На этом устройстве безопасное хранилище Telegram недоступно. Обнови Telegram и открой журнал снова.'
+        : 'Не удалось прочитать личный журнал. Открой «Суперконфиденциальность» для подробностей.';
+  }
   fetch("/api/stats?t=" + Date.now(), {
     method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", signal: AbortSignal.timeout(20000),
-    body: JSON.stringify({ initData: tg ? tg.initData : "" }),
+    body: JSON.stringify({ initData: tg ? tg.initData : "", ...window.privateMoney.payload }),
   })
     .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then(applyStats)
@@ -647,6 +783,15 @@ async function submitSpend() {
   }
   spendBusy=true;lockSpend();document.getElementById('spend-note').textContent='Записываю…';
   try{
+    if (window.privateMoney.active) {
+      await privateMoney.add({id:'local:'+spendPending.operation_id,kind:'expense',account:'cash',
+        signed_amount:-spendPending.amount,category:spendPending.category,note:'трата из миниаппа',
+        work_date:lastStats?.operational_today||new Date().toISOString().slice(0,10),created_at:new Date().toISOString()});
+      document.getElementById('spend-note').textContent='Расход сохранён на этом устройстве.';
+      spendPending=null;document.getElementById('spend-amount').value='';document.getElementById('spend-name').value='';
+      document.getElementById('spend-submit').textContent='Внести';load();if(calYear)loadMonth(calYear,calMonth);
+      return;
+    }
     const r=await fetch('/api/shift_spend',{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',signal:AbortSignal.timeout(20000),body:JSON.stringify({...spendPending,initData:tg?.initData||''})});
     const data=await r.json();
     if(!r.ok){if(r.status===400)spendPending=null;throw new Error(data.error||'Не получил подтверждение. Повтори — дубля не будет.');}
@@ -796,6 +941,18 @@ function renderHistory() {
 }
 
 function editEntry(id, payload, silent) {
+  if (window.privateMoney.active) {
+    const entry=privateMoney.entries.find(e=>String(e.id)===String(id));
+    if (!entry) return Promise.resolve(null);
+    const task=payload.action==='delete' ? privateMoney.remove(id)
+      : privateMoney.edit(id,payload.action==='account' ? {account:payload.account}
+        : {signed_amount:(entry.kind==='income'?1:-1)*Number(payload.amount)});
+    return task.then(function () {
+      const response={saved:true,stats:null,entries:null};
+      if (!silent) {histEntries=privateMoney.entries.slice(-30).reverse();renderHistory();load();if(calYear)loadMonth(calYear,calMonth);}
+      return response;
+    }).catch(function (e) {document.getElementById('hist-status').textContent=e.message;return null;});
+  }
   return fetch("/api/entry_edit", {
     method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
     body: JSON.stringify(Object.assign({ initData: tg ? tg.initData : "", entry_id: id }, payload)),
@@ -815,6 +972,11 @@ function editEntry(id, payload, silent) {
 }
 
 function applyEditResponse(resp) {
+  if (window.privateMoney.active) {
+    histEntries=privateMoney.entries.slice(-30).reverse();renderHistory();load();if(calYear)loadMonth(calYear,calMonth);
+    document.getElementById('hist-status').textContent='Сохранено на устройстве.';
+    return;
+  }
   if (resp.stats && resp.entries) {
     histEntries = resp.entries;
     applyStats(resp.stats);
@@ -846,6 +1008,9 @@ function openHistory(preserveStatus) {
   window.scrollTo(0, 0);
   if (preserveStatus !== true) document.getElementById("hist-status").textContent = "";
   document.getElementById("hist-list").innerHTML = '<p class="hist-empty">Загружаю…</p>';
+  if (window.privateMoney.active) {
+    histEntries=privateMoney.entries.slice(-30).reverse();renderHistory();return;
+  }
   fetch("/api/entries", {
     method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
     body: JSON.stringify({ initData: tg ? tg.initData : "" }),
@@ -915,8 +1080,76 @@ document.getElementById("hist-close").onclick = function () {
   (function frame(now) { paint((now - start) / 1000 * 0.86); requestAnimationFrame(frame); })(start);
 })();
 
-load();
-gcalRefresh();
+const privateModal=document.getElementById('private-modal');
+function privateButtonText() {
+  document.getElementById('private-open').textContent=privateMoney.state.active
+    ? '🔒 Чаевые на этом устройстве' : '🔒 Суперконфиденциальность';
+}
+document.getElementById('private-open').onclick=function () {
+  const state=privateMoney.state;
+  const action=document.getElementById('private-confirm');
+  document.getElementById('private-clear').hidden=!privateMoney.entries.length;
+  document.getElementById('private-status').textContent='';
+  if (!privateMoney.available()) {
+    document.getElementById('private-description').textContent='Для хранения только на устройстве нужен Telegram с поддержкой безопасного хранилища. Обнови приложение Telegram и открой журнал снова.';
+    action.hidden=true;
+  } else if (!state.active && state.lostReason==='unreadable') {
+    document.getElementById('private-description').textContent='Прежний местный журнал не читается. Записи в базе сохранены; перенос остановлен, чтобы не стереть возможные данные на этом устройстве.';
+    action.hidden=true;
+  } else if (state.active && !state.lost) {
+    document.getElementById('private-description').textContent='Чаевые и расходы хранятся только на этом устройстве. Пересланные в чат записи сохраняй кнопкой в ответе бота. При смене телефона данные не восстановятся.';
+    action.hidden=true;
+  } else if (state.active && ['missing','pending'].includes(state.lostReason)) {
+    document.getElementById('private-description').textContent='Этот телефон не содержит прежний личный журнал. Если начать здесь, старые записи останутся только на прежнем устройстве, а новые будут сохраняться здесь.';
+    action.hidden=false;action.textContent='Начать на этом телефоне';
+  } else if (state.active) {
+    document.getElementById('private-description').textContent=state.lostReason==='unsupported'
+      ? 'На этом устройстве безопасное хранилище Telegram недоступно. Обнови Telegram и открой журнал снова.'
+      : 'Не удалось прочитать личный журнал на этом устройстве. Чтобы не потерять записи, бот не создаёт новый журнал поверх него.';
+    action.hidden=true;
+  } else {
+    document.getElementById('private-description').textContent='Перенесу все чаевые и расходы на этот телефон и после проверки удалю их из базы. Другой телефон не увидит эти записи. При потере или смене устройства они не восстановятся. После пересылки банка нажимай «Сохранить на устройстве» в ответе бота.';
+    action.hidden=false;action.textContent='Перенести записи и включить';
+  }
+  privateModal.hidden=false;privateModal.style.display='flex';
+};
+document.getElementById('private-cancel').onclick=function () {privateModal.hidden=true;privateModal.style.display='none';};
+document.getElementById('private-clear').onclick=async function () {
+  if (!confirm('Удалить все личные чаевые и расходы с этого устройства? Восстановить их не получится.')) return;
+  const status=document.getElementById('private-status');
+  try {await privateMoney.clear();status.textContent='Личный журнал на устройстве очищен.';this.hidden=true;load();if(calYear)loadMonth(calYear,calMonth);}
+  catch (error) {status.textContent=error.message;}
+};
+document.getElementById('private-confirm').onclick=async function () {
+  const status=document.getElementById('private-status');
+  this.disabled=true;status.textContent='Переношу и проверяю записи…';
+  try {
+    if (privateMoney.state.active) await privateMoney.rotate();
+    else await privateMoney.activate();
+    status.textContent='Готово. Личные записи теперь на этом устройстве.';
+    privateButtonText();load();if(calYear)loadMonth(calYear,calMonth);
+    this.hidden=true;
+  } catch (error) {status.textContent=error.message;}
+  finally {this.disabled=false;}
+};
+
+async function startApp() {
+  try {
+    await privateMoney.init();
+    privateButtonText();
+    const imported=await privateMoney.importUrl();
+    if (imported) {
+      document.getElementById('private-status').textContent=imported;
+      privateModal.hidden=false;privateModal.style.display='flex';
+      document.getElementById('private-confirm').hidden=true;
+    }
+  } catch (error) {
+    const el=document.getElementById('err');el.style.display='block';el.textContent=error.message;
+    return;
+  }
+  load();gcalRefresh();
+}
+startApp();
 setInterval(load, 60000);
 document.addEventListener("visibilitychange", function () {
   if (document.hidden) return;
