@@ -217,7 +217,7 @@
   <div class="cal-grid" id="cal-grid"></div>
   <p class="cal-sum" id="cal-sum"></p>
   <p class="pt-legend" style="margin-top:8px"><span><i style="border:1.5px solid var(--card); background:transparent"></i>смена</span></p>
-  <p class="gcal-hint on">Нажми на день, чтобы добавить или исправить смену и чаевые.</p>
+  <p class="gcal-hint on" id="cal-hint">Нажми на день, чтобы добавить или исправить смену и чаевые.</p>
   <button class="btn btn-ghost" id="gcal-btn" style="display:none; margin-top:14px">Подключить Google Календарь</button>
   <p class="gcal-hint" id="gcal-hint"></p>
 
@@ -479,7 +479,8 @@ function paintCalendar(view) {
   const sum = document.getElementById("cal-sum");
   const planned = (view.scheduled_shifts || []).length;
   if (window.privateMoney.state.lost) {
-    sum.textContent=planned ? "Запланировано " + shiftsWord(planned) + ". Чаевые доступны на другом устройстве." : "График пуст. Чаевые доступны на другом устройстве.";
+    sum.innerHTML=(planned ? "Запланировано " + shiftsWord(planned) + ". " : "График пуст. ") +
+      "Личный журнал недоступен на этом устройстве.";
   } else if (view.shifts_count) {
     sum.innerHTML = shiftsWord(view.shifts_count) +
       ' · <span class="num">' + rub(view.tips_total) + "</span> ₽ чая";
@@ -546,7 +547,7 @@ function openDay(view, d) {
   document.getElementById('day-tip-inputs').hidden=privateMoney.state.lost;
   document.getElementById('day-tip-add').hidden=privateMoney.state.lost;
   document.getElementById("day-status").textContent = calendarNotice?.date===selectedDayISO ? calendarNotice.text : "";
-  const tips = (view.tip_entries || []).filter(function (e) { return e.date === selectedDayISO; });
+  const tips = privateMoney.state.lost ? [] : (view.tip_entries || []).filter(function (e) { return e.date === selectedDayISO; });
   const list = document.getElementById("day-tip-list");
   list.replaceChildren();
   tips.forEach(function (e) {
@@ -707,6 +708,9 @@ function applyStats(s) {
   document.getElementById('open-spend').hidden=lost;
   document.getElementById('open-history').hidden=lost;
   document.getElementById('open-poster').hidden=lost;
+  document.getElementById('cal-hint').textContent=lost
+    ? 'Нажми на день, чтобы добавить или исправить смену.'
+    : 'Нажми на день, чтобы добавить или исправить смену и чаевые.';
   render(s);
   if (document.getElementById("poster").classList.contains("on")) renderPoster(s);
 }
@@ -1083,7 +1087,8 @@ document.getElementById("hist-close").onclick = function () {
 const privateModal=document.getElementById('private-modal');
 function privateButtonText() {
   document.getElementById('private-open').textContent=privateMoney.state.active
-    ? '🔒 Чаевые на этом устройстве' : '🔒 Суперконфиденциальность';
+    ? (privateMoney.state.lost ? '🔒 Личный журнал недоступен' : '🔒 Чаевые на этом устройстве')
+    : '🔒 Суперконфиденциальность';
 }
 document.getElementById('private-open').onclick=function () {
   const state=privateMoney.state;
