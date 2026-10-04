@@ -134,8 +134,7 @@
   .cal-nav:disabled { color: var(--faint); cursor: default; }
   .cal-nav:active:not(:disabled) { background: rgba(0,0,0,.06); }
   .cal-sum { font-size: 13px; color: var(--ink-soft); margin-top: 10px; min-height: 18px; }
-  .gcal-hint { font-size: 12px; line-height: 1.45; color: var(--ink-soft); margin-top: 8px; display: none; }
-  .gcal-hint.on { display: block; }
+  .cal-hint { font-size: 12px; line-height: 1.45; color: var(--ink-soft); margin-top: 8px; }
   .iphone-calendar { margin-top:22px; }
   .iphone-calendar-toggle { width:100%; min-height:48px; border:1px solid var(--accent); border-radius:10px; background:transparent; color:var(--accent); padding:10px 14px; font:400 14px 'Onest',sans-serif; text-align:center; cursor:pointer; }
   .iphone-calendar-toggle:disabled { opacity:.55; cursor:default; }
@@ -227,7 +226,7 @@
   <div class="cal-wd" id="cal-wd"></div>
   <div class="cal-grid" id="cal-grid"></div>
   <p class="cal-sum" id="cal-sum"></p>
-  <p class="gcal-hint on" id="cal-hint">Нажми на день, чтобы добавить или исправить смену и чаевые.</p>
+  <p class="cal-hint" id="cal-hint">Нажми на день, чтобы добавить или исправить смену и чаевые.</p>
   <div class="iphone-calendar" id="iphone-calendar" hidden>
     <button class="iphone-calendar-toggle" id="iphone-calendar-toggle" type="button">Подключить iPhone ›</button>
     <p id="iphone-calendar-status" role="status" hidden></p>
@@ -247,9 +246,6 @@
       <p class="iphone-calendar-note">Ссылка личная: тот, у кого она есть, увидит твой график.</p>
     </details>
   </div>
-  <button class="btn btn-ghost" id="gcal-btn" style="display:none; margin-top:14px">Подключить Google Календарь</button>
-  <p class="gcal-hint" id="gcal-hint"></p>
-
   </details>
   <button class="btn btn-ghost" id="private-open" hidden>🔒 Суперконфиденциальность</button>
 
@@ -757,7 +753,6 @@ document.getElementById("spend").addEventListener("click", function (e) {
   if (e.target.id === "spend") this.classList.remove("on");
 });
 
-let gcalAuthUrl = null;
 let iphoneCalendarData=null,iphoneCalendarBusy=false;
 async function iphoneCalendarRequest(action){
   const r=await fetch('/api/iphone_calendar',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -830,51 +825,6 @@ document.getElementById('iphone-calendar-revoke').onclick=async function(){
   catch(e){iphoneCalendarStatus(e.message);}
   finally{iphoneCalendarBusy=false;}
 };
-function gcalRefresh() {
-  const btn = document.getElementById("gcal-btn");
-  fetch("/api/gcal", {
-    method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
-    body: JSON.stringify({ initData: tg ? tg.initData : "" }),
-  })
-    .then(function (r) { return r.ok ? r.json() : null; })
-    .then(function (s) {
-      const hint = document.getElementById("gcal-hint");
-      if (!s || !s.configured) { btn.style.display = "none"; hint.classList.remove("on"); return; }
-      btn.style.display = "block";
-      gcalAuthUrl = s.auth_url;
-      btn.disabled = !gcalAuthUrl;
-      if (s.connected) {
-        btn.textContent = "✓ Google Календарь подключён";
-        btn.style.color = "var(--card)";
-        btn.style.borderColor = "var(--card)";
-        hint.textContent = (s.message || "") + " Повтор отправки смен — /calendar в чате.";
-        hint.classList.add("on");
-      } else {
-        btn.textContent = s.error === "temporary" ? "Google временно недоступен" : s.message ? "Переподключить Google Календарь" : "Подключить Google Календарь";
-        btn.style.color = "";
-        btn.style.borderColor = "";
-        // Пока Google не проверил приложение, доступ выдаётся вручную.
-        // Честнее сказать это здесь, чем показать ошибку Google после клика.
-        if (s.message) {
-          hint.textContent = s.message;
-          hint.classList.add("on");
-        } else if (s.invite_only) {
-          hint.textContent = "Google ещё не проверил приложение, поэтому " +
-            "подключение открывается вручную. Напиши" +
-            (s.support ? " " + s.support : " автору бота") +
-            " — добавлю тебя, и кнопка заработает.";
-          hint.classList.add("on");
-        } else {
-          hint.classList.remove("on");
-        }
-      }
-    })
-    .catch(function () {});
-}
-document.getElementById("gcal-btn").onclick = function () {
-  if (gcalAuthUrl && tg) tg.openLink(gcalAuthUrl);  // внешний браузер: Google блокирует OAuth в вебвью
-};
-
 // ── история и правки ──
 let histEntries = [];
 
@@ -1106,14 +1056,13 @@ async function startApp() {
     const el=document.getElementById('err');el.style.display='block';el.textContent=error.message;
     return;
   }
-  load();gcalRefresh();iphoneCalendarRefresh();
+  load();iphoneCalendarRefresh();
 }
 startApp();
 setInterval(load, 60000);
 document.addEventListener("visibilitychange", function () {
   if (document.hidden) return;
   load();
-  gcalRefresh();
   iphoneCalendarRefresh();
 });
 </script>
