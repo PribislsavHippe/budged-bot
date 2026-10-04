@@ -38,17 +38,18 @@ def summarize(subjects,events,days=30,now=None,ux_version=None):
             dt(e['occurred_at']).astimezone(TZ).date()==cohort[sid].astimezone(TZ).date()+timedelta(days=day) for e in by[sid])}
         return eligible,returned
     ret={d:retention_set(d) for d in (1,7)}
-    remaining=set(cohort);funnel=[];base=len(remaining)
+    funnel=[];base=len(cohort)
     for key,label in STAGES:
-        previous=set(remaining);eligible=set(previous)
+        eligible=set(cohort)
         if key in ('d1','d7'):
-            maturity,passed=ret[int(key[1:])];eligible &= maturity;remaining=eligible & passed
-        else:remaining={sid for sid in eligible if key in reached[sid]}
-        missing=eligible-remaining
+            eligible,achieved=ret[int(key[1:])]
+        else:
+            achieved={sid for sid in eligible if key in reached[sid]}
+        missing=eligible-achieved
         errored={sid for sid in missing if reached[sid]&ERROR_EVENTS}
-        funnel.append({'key':key,'label':label,'users':len(remaining),'previous':len(previous),
-                       'eligible':len(eligible),'pending':len(previous-eligible),'conversion':pct(len(remaining),len(eligible)),
-                       'overall':pct(len(remaining),base),'drop_off':len(missing),'with_errors':len(errored)})
+        funnel.append({'key':key,'label':label,'users':len(achieved),
+                       'eligible':len(eligible),'pending':base-len(eligible),'conversion':pct(len(achieved),len(eligible)),
+                       'overall':pct(len(achieved),base),'drop_off':len(missing),'with_errors':len(errored)})
     errors=Counter((e['event'],e.get('screen'),e.get('error_code')) for e in window if e['event'] in ERROR_EVENTS)
     active_window=[e for e in window if e['event'] in ACTIVE]
     day_events=Counter()

@@ -35,12 +35,17 @@ class ResearchMetricsTests(unittest.TestCase):
         d=summarize(self.subjects(),events,now=NOW)
         self.assertEqual(d['retention']['d1']['returned'],1)
         self.assertEqual(d['new_users'],1)
-    def test_skip_useful_action_is_visible_outside_guided_funnel(self):
+    def test_skip_useful_action_is_counted_independently(self):
         d=summarize(self.subjects(),[event('1','user_started',19),event('1','onboarding_skipped',19),
                                    event('1','first_value_action',19)],now=NOW)
         self.assertEqual(d['first_value_users'],1)
-        self.assertEqual(d['funnel'][2]['users'],0)
+        self.assertEqual(d['funnel'][2]['users'],1)
         self.assertEqual(d['onboarding_skipped'],1)
+    def test_closed_shift_is_visible_without_next_day_return(self):
+        events=[event('1','user_started',19),event('1','first_shift_closed',19)]
+        d=summarize(self.subjects(),events,now=NOW)
+        self.assertEqual(d['retention']['d1']['returned'],0)
+        self.assertEqual(d['funnel'][5]['users'],1)
     def test_recent_activity_is_visible_first(self):
         events=[event('1','activity',27),event('2','activity',28),
                 event('3','cabinet_load_error',28,error_code='backend'),
