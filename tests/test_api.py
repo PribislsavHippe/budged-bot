@@ -298,12 +298,27 @@ def test_entry_account_change():
 def test_entry_bad_amount():
     _db.store.clear()
     e = _db.seed(42, "income", "card", 500)
-    for bad in [0, -5, "x", 20_000_000]:
+    for bad in [0, -5, "x", 20_000_000, True, "NaN", "Infinity", 1.234]:
         r = run(webapp_api.api_entry_edit(Req({
             "initData": init_data(TOKEN, 42), "entry_id": e["id"], "action": "amount", "amount": bad,
         })))
         assert r.status == 400, f"amount={bad!r}"
     assert run(_db.get_entry(e["id"], 42))["signed_amount"] == 500
+
+
+def test_entry_saved_even_when_refresh_fails():
+    from unittest.mock import patch
+    _db.store.clear()
+    e = _db.seed(42, "income", "card", 500)
+    async def fail_refresh(*_):
+        raise RuntimeError("temporary read failure")
+    with patch.object(webapp_api, "_stats_payload", fail_refresh):
+        r = run(webapp_api.api_entry_edit(Req({
+            "initData": init_data(TOKEN, 42), "entry_id": e["id"],
+            "action": "amount", "amount": 700,
+        })))
+    assert r.status == 200 and r.data == {"saved": True, "stats": None, "entries": None}
+    assert run(_db.get_entry(e["id"], 42))["signed_amount"] == 700
 
 
 def test_entry_not_found():

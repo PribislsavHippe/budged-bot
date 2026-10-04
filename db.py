@@ -221,13 +221,14 @@ async def add_shifts(user_id: int, dates: list[str]) -> None:
 
 
 async def get_shift_dates(user_id: int, since: str | None = None, until: str | None = None) -> list[str]:
-    q = supabase.table("shifts").select("shift_date").eq("user_id", user_id)
-    if since:
-        q = q.gte("shift_date", since)
-    if until:
-        q = q.lte("shift_date", until)
-    res = await _execute(q.order("shift_date"))
-    return [row["shift_date"] for row in res.data]
+    def query():
+        q = supabase.table("shifts").select("shift_date").eq("user_id", user_id)
+        if since:
+            q = q.gte("shift_date", since)
+        if until:
+            q = q.lte("shift_date", until)
+        return q.order("shift_date")
+    return [row["shift_date"] for row in await _pages(query)]
 
 
 async def has_shift_on(user_id: int, date_iso: str) -> bool:

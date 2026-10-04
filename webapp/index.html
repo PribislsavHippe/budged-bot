@@ -259,6 +259,7 @@
         <span class="hist-title">История</span>
         <button class="hist-x" id="hist-close">Готово</button>
       </div>
+      <p id="hist-status" role="status"></p>
       <div id="hist-list"></div>
     </div>
   </div>
@@ -774,7 +775,14 @@ function renderHistory() {
     [].forEach.call(accBtns, function (b) { b.onclick = function () { selAcc = b.dataset.acc; paintAcc(); }; });
 
     item.querySelector(".hist-save").onclick = function () {
-      const newAmt = parseFloat(item.querySelector(".hist-amt-input").value);
+      const input = item.querySelector(".hist-amt-input");
+      const newAmt = Number(input.value);
+      if (!input.value.trim() || !Number.isFinite(newAmt) || newAmt <= 0 ||
+          newAmt > 10000000 || Math.abs(Math.round(newAmt * 100) - newAmt * 100) > 1e-8) {
+        document.getElementById("hist-status").textContent = "Проверь сумму: не больше двух знаков после запятой.";
+        input.focus();
+        return;
+      }
       const tasks = [];
       if (newAmt > 0 && newAmt !== amt) tasks.push({ action: "amount", amount: newAmt });
       if (selAcc !== e.account) tasks.push({ action: "account", account: selAcc });
@@ -794,27 +802,49 @@ function editEntry(id, payload, silent) {
   })
     .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then(function (resp) {
-      if (!silent) { histEntries = resp.entries; applyStats(resp.stats); renderHistory(); }
+      if (!silent) applyEditResponse(resp);
       return resp;
     })
     .catch(function (err) {
-      document.getElementById("hist-list").insertAdjacentHTML("afterbegin",
-        '<p class="hist-empty">Не получилось сохранить. Обнови историю и проверь запись.</p>');
+      document.getElementById("hist-status").textContent =
+        "Не получилось подтвердить изменение. Обновляю историю — проверь запись перед повтором.";
+      openHistory(true);
+      load();
       return null;
     });
 }
 
+function applyEditResponse(resp) {
+  if (resp.stats && resp.entries) {
+    histEntries = resp.entries;
+    applyStats(resp.stats);
+    renderHistory();
+    document.getElementById("hist-status").textContent = "Сохранено.";
+  } else {
+    document.getElementById("hist-status").textContent =
+      "Сохранено. Обновляю историю и статистику.";
+    openHistory(true);
+    load();
+  }
+}
+
 function chainEdits(id, tasks) {
   let p = Promise.resolve(null);
-  tasks.forEach(function (t) { p = p.then(function () { return editEntry(id, t, true); }); });
+  tasks.forEach(function (t, index) {
+    p = p.then(function (previous) {
+      if (index > 0 && !previous) return null;
+      return editEntry(id, t, true);
+    });
+  });
   p.then(function (resp) {
-    if (resp) { histEntries = resp.entries; applyStats(resp.stats); renderHistory(); }
+    if (resp) applyEditResponse(resp);
   });
 }
 
-function openHistory() {
+function openHistory(preserveStatus) {
   document.getElementById("history").classList.add("on");
   window.scrollTo(0, 0);
+  if (preserveStatus !== true) document.getElementById("hist-status").textContent = "";
   document.getElementById("hist-list").innerHTML = '<p class="hist-empty">Загружаю…</p>';
   fetch("/api/entries", {
     method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",

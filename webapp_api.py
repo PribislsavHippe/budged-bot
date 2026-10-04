@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import time
+from decimal import Decimal, InvalidOperation
 from urllib.parse import parse_qsl
 
 from aiohttp import web
@@ -188,6 +189,8 @@ async def api_entry_edit(request: web.Request) -> web.Response:
     if user_id is None:
         return body
     try:
+        if isinstance(body.get("entry_id"), bool):
+            raise ValueError()
         entry_id = int(body.get("entry_id"))
     except (TypeError, ValueError):
         return web.json_response({"error": "bad id"}, status=400)
@@ -206,19 +209,29 @@ async def api_entry_edit(request: web.Request) -> web.Response:
         await db.update_entry_account(entry_id, user_id, account)
     elif action == "amount":
         try:
-            amount = float(body.get("amount"))
-        except (TypeError, ValueError):
-            return web.json_response({"error": "bad amount"}, status=400)
-        if not (0 < amount <= 10_000_000):
+            raw = body.get("amount")
+            if isinstance(raw, bool):
+                raise ValueError()
+            amount = Decimal(str(raw))
+            if (not amount.is_finite() or not 0 < amount <= 10_000_000
+                    or amount != amount.quantize(Decimal("0.01"))):
+                raise ValueError()
+        except (TypeError, ValueError, InvalidOperation):
             return web.json_response({"error": "bad amount"}, status=400)
         sign = 1 if entry["kind"] == "income" else -1
-        await db.update_entry_amount(entry_id, user_id, sign * round(amount, 2))
+        await db.update_entry_amount(entry_id, user_id, sign * float(amount))
     else:
         return web.json_response({"error": "bad action"}, status=400)
 
-    stats = await _stats_payload(request.app, user_id)
-    entries = await db.get_recent_entries(user_id, limit=30)
-    return web.json_response({"stats": stats, "entries": entries}, headers=NO_CACHE)
+    # The write has succeeded. A failed read must not make the client retry it.
+    try:
+        stats = await _stats_payload(request.app, user_id)
+        entries = await db.get_recent_entries(user_id, limit=30)
+    except Exception as error:
+        from diagnostics import failure
+        failure(error, area="history", stage="refresh")
+        stats = entries = None
+    return web.json_response({"saved": True, "stats": stats, "entries": entries}, headers=NO_CACHE)
 
 
 async def api_gcal(request: web.Request) -> web.Response:

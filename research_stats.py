@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 TZ=ZoneInfo('Europe/Moscow')
-ACTIVE={'activity','user_started','cabinet_opened','tab_opened','help_opened','tip_added','expense_added',
+ACTIVE={'activity','user_started','cabinet_opened','cabinet_loaded','tab_opened','help_opened','tip_added','expense_added',
         'shift_planned','shift_closed','sales_report_started','vision_started','problem_reported'}
 ERROR_EVENTS={'cabinet_load_error','sales_report_error','vision_failed'}
 STAGES=[('user_started','Пришли'),('onboarding_completed','Завершили знакомство'),
@@ -58,7 +58,7 @@ def summarize(subjects,events,days=30,now=None,ux_version=None):
         day_events[day]+=1
         if e['event'] in ACTIVE:day_active[day].add(e['subject_id'])
     daily=[]
-    for offset in range(min(days,7)):
+    for offset in range(days):
         day=today-timedelta(days=offset)
         daily.append({'date':day.isoformat(),'active_users':len(day_active[day]),'events':day_events[day]})
     users=[]

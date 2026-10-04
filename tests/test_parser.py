@@ -76,6 +76,13 @@ def test_expense_cash_marker():
     assert tx["account"] == CASH
 
 
+def test_cash_marker_does_not_match_beznal():
+    (tx,) = parse_transactions("кофе 350 безналом")
+    assert tx["account"] == CARD
+    (tx,) = parse_transactions("чаевые 500 безнал")
+    assert tx["account"] == CARD
+
+
 def test_unknown_expense():
     (tx,) = parse_transactions("шурупы 450")
     assert tx["kind"] == "expense"

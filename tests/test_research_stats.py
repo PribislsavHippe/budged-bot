@@ -52,3 +52,9 @@ class ResearchMetricsTests(unittest.TestCase):
         self.assertEqual(d['event_count'],4)
         self.assertEqual(d['last_observed_at'],events[-1]['occurred_at'])
         self.assertEqual(d['daily_activity'][0],{'date':'2026-09-28','active_users':2,'events':3})
+
+    def test_server_confirmed_cabinet_load_counts_as_activity(self):
+        d=summarize(self.subjects(),[event('1','cabinet_loaded',28,screen='earnings')],now=NOW)
+        self.assertEqual(d['active_today'],1)
+        self.assertEqual(d['active_users'],1)
+        self.assertEqual(len(d['daily_activity']),30)
