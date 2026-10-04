@@ -10,6 +10,24 @@ with patch.dict(os.environ,{'SUPABASE_URL':'https://example.invalid','SUPABASE_K
     import db,schedule,schedule_chat as chat,report_photo as photo,jobs
 
 class Times(unittest.TestCase):
+    def test_google_sheet_rows_and_links(self):
+        import schedule_sheet as sheets
+        sheet_id='1gx13NYuISndRuCzG6I-DpD3zlkmfzc_S4LF1Pk0_dwU'
+        self.assertEqual(sheets.link(f'https://docs.google.com/spreadsheets/d/{sheet_id}/edit?usp=drivesdk'),(sheet_id,None))
+        self.assertEqual(sheets.link(f'https://docs.google.com/spreadsheets/d/{sheet_id}/edit#gid=1843113945'),(sheet_id,'1843113945'))
+        with self.assertRaises(ValueError):sheets.link(f'https://evil.example/spreadsheets/d/{sheet_id}/edit')
+        rows=[['Менеджеры']+[str(n) for n in range(1,9)],
+              ['Даша','15-01','x','9-16','','14-23','п','8-15',''],
+              ['Официанты']+[str(n) for n in range(1,9)],
+              ['Лёша','10-22','х','','10-23:30','и','11-23','','п'],
+              ['Бар','',*[item for n in range(1,9) for item in (str(n),'')]],
+              ['', 'Лиза', *[item for n in range(1,9) for item in (('8-16' if n%2 else 'x'),'8')]]]
+        people=sheets.parse_rows(rows)
+        self.assertEqual([p['name'] for p in people],['Даша','Лёша','Лиза'])
+        self.assertEqual(people[0]['cells'][0],{'day':1,'text':'15-01'})
+        self.assertEqual([c['day'] for c in people[1]['cells']],[1,4,6])
+        self.assertEqual([c['day'] for c in people[2]['cells']],[1,3,5,7])
+
     def test_scheduler_has_evening_retry_and_startup_catchup(self):
         scheduler=jobs.setup_scheduler(NS())
         names=[job.func.__name__ for job in scheduler.get_jobs()]
@@ -44,6 +62,26 @@ class Flow(unittest.IsolatedAsyncioTestCase):
         photo.drafts.clear();store.rows.clear()
         self.message=NS(text='октябрь 2026',from_user=NS(id=7),answer=AsyncMock(),edit_text=AsyncMock())
     def cb(self,data,uid=7):return NS(data=data,from_user=NS(id=uid),message=self.message,answer=AsyncMock())
+    async def test_sheet_link_requires_preview_and_saves_selected_row_only(self):
+        sheet_id='1gx13NYuISndRuCzG6I-DpD3zlkmfzc_S4LF1Pk0_dwU'
+        self.message.text=f'https://docs.google.com/spreadsheets/d/{sheet_id}/edit?usp=drivesdk'
+        await chat.sheet_link(self.message)
+        draft=photo.drafts[7]
+        self.assertEqual(draft.phase,'schedule_sheet_month')
+        self.message.text='октябрь 2026'
+        rows=[{'name':'Лёша','row':8,'cells':[{'day':5,'text':'14-23'}],'invalid':[]},
+              {'name':'Коллега','row':9,'cells':[{'day':6,'text':'9-16'}],'invalid':[]}]
+        with patch('schedule_sheet.read',new=AsyncMock(return_value=rows)) as read,patch.object(schedule,'save',new=AsyncMock()) as save,patch('google_calendar.is_connected',new=AsyncMock(return_value=False)):
+            await chat.sheet_month(self.message)
+            read.assert_awaited_once_with(sheet_id,'2026-10',None)
+            self.assertEqual(draft.phase,'schedule_sheet_name')
+            await chat.photo_action(self.cb(f'sch:{draft.nonce}:row0'))
+            self.assertEqual(draft.phase,'schedule_review')
+            save.assert_not_awaited()
+            await chat.photo_action(self.cb(f'sch:{draft.nonce}:save',8))
+            save.assert_not_awaited()
+            await chat.photo_action(self.cb(f'sch:{draft.nonce}:save'))
+            save.assert_awaited_once_with(7,[{'date':'2026-10-05','start':'14:00','end':'23:00'}])
     async def test_read_confirm_no_other_user_write(self):
         draft=photo.Draft('nonce','id','file',phase='schedule_month',image=b'photo',report={'name':'Алексей','index':7})
         photo.drafts[7]=draft

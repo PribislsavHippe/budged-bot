@@ -197,7 +197,8 @@ async def cmd_help(message: Message):
     )
     import schedule
     if schedule.enabled():
-        await message.answer('Пришли фото графика → «График смен» → выбери свою строку и месяц.\n'
+        await message.answer('Пришли фото графика → «График смен» или ссылку на Google Таблицу → выбери свою строку и месяц.\n'
+                             '/sheet ссылка — прочитать открытую Google Таблицу с графиком\n'
                              '/hours — записать время ухода; /hours вчера — за прошлую смену\n'
                              '/rate 350 — твоя ставка за час\n/work — часы и заработок за месяц\n'
                              '/reminders — напоминания о смене\n'

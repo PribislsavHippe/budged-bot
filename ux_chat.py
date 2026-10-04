@@ -60,7 +60,8 @@ async def choose_tip(callback):
 async def choose_schedule(callback):
     await callback.answer()
     await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer('Пришли фото графика. Я помогу выбрать твою строку и покажу смены перед сохранением.\n\n'
+    await callback.message.answer('Пришли фото графика или ссылку на открытую для просмотра Google Таблицу. '
+                                  'Я помогу выбрать твою строку и покажу смены перед сохранением.\n\n'
                                   'Когда захочешь, можно записать чаевые сообщением <b>чай 1500</b>.',
                                   reply_markup=skip_button())
 

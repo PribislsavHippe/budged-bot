@@ -8,12 +8,13 @@ from aiogram.filters import Command
 from aiogram.fsm.state import State,StatesGroup
 from aiogram.types import InlineKeyboardMarkup as Markup,InlineKeyboardButton as Button
 from aiogram.dispatcher.event.bases import UNHANDLED
-import db,schedule,research,report_vision as vision
+import db,schedule,research,report_vision as vision,schedule_sheet
 from workday import op_today
 
 router=Router()
 router.message.filter(F.chat.type=='private',lambda _:schedule.enabled())
 router.callback_query.filter(F.message.chat.type=='private',lambda _:schedule.enabled())
+_sheet_slots=asyncio.Semaphore(3)
 
 class Work(StatesGroup):
     end=State()
@@ -23,6 +24,58 @@ class Work(StatesGroup):
 
 def buttons(rows):return Markup(inline_keyboard=[[Button(text=label,callback_data=key)] for label,key in rows])
 def photo_buttons(draft,rows):return buttons([(label,f'sch:{draft.nonce}:{key}') for label,key in rows])
+
+
+@router.message(Command('sheet'))
+@router.message(F.text.regexp(r'https://docs\.google\.com/spreadsheets/d/'))
+async def sheet_link(message):
+    from report_photo import Draft,drafts,expire,DRAFT_TTL
+    try:sheet_id,gid=schedule_sheet.link(message.text)
+    except ValueError as error:
+        await message.answer(str(error));return
+    old=drafts.get(message.from_user.id)
+    if old and old.lock.locked():
+        await message.answer('Сначала дождись завершения предыдущего графика.');return
+    if len(drafts)>=100 and not old:
+        await message.answer('Сейчас читаю другие графики. Попробуй через минуту.');return
+    if old:expire(message.from_user.id,old)
+    draft=Draft(uuid4().hex[:12],uuid4().hex,'',phase='schedule_sheet_month',
+                report={'sheet_id':sheet_id,'gid':gid})
+    drafts[message.from_user.id]=draft
+    asyncio.get_running_loop().call_later(DRAFT_TTL,expire,message.from_user.id,draft)
+    await message.answer('За какой месяц этот график? Напиши, например: октябрь 2026. '
+                         'Прочитаю только лист этого месяца. /cancel — отменить.')
+
+
+def waiting_sheet(message):
+    from report_photo import drafts
+    draft=drafts.get(message.from_user.id)
+    return bool(draft and draft.phase=='schedule_sheet_month' and message.text and not message.text.startswith('/'))
+
+
+@router.message(waiting_sheet,F.text)
+async def sheet_month(message):
+    from report_photo import drafts
+    draft=drafts[message.from_user.id]
+    if draft.lock.locked():return
+    async with draft.lock:
+        try:
+            month_key=schedule.month(message.text)
+        except ValueError as error:
+            await message.answer(str(error));return
+        await message.answer('Читаю лист графика…')
+        try:
+            if _sheet_slots.locked():
+                await message.answer('Сейчас читаю другие графики. Попробуй через минуту.');return
+            async with _sheet_slots:
+                rows=await schedule_sheet.read(draft.report['sheet_id'],month_key,draft.report['gid'])
+        except ValueError as error:
+            await message.answer(html.escape(str(error))+'\nМожно написать другой месяц или /cancel.');return
+        draft.report={'rows':rows,'month':month_key}
+        draft.phase='schedule_sheet_name'
+        await message.answer('Выбери свою строку:',reply_markup=photo_buttons(draft,[
+            (row['name']+(f" · строка {row['row']}" if sum(r['name']==row['name'] for r in rows)>1 else ''),f'row{i}')
+            for i,row in enumerate(rows)]+[('Отмена','cancel')]))
 
 
 @router.message(Command('reminders'))
@@ -87,6 +140,25 @@ async def photo_action(callback):
         action=parts[2]
         if action=='cancel':
             expire(callback.from_user.id,draft);await callback.message.edit_text('График не сохраняю.');return
+        if action.startswith('row') and draft.phase=='schedule_sheet_name':
+            try:
+                index=int(action[3:])
+                if index<0:raise ValueError()
+                row=draft.report['rows'][index]
+                if row['invalid']:
+                    await callback.message.answer('В этой строке есть непонятные записи за дни: '+
+                        ', '.join(map(str,row['invalid']))+'. Пришли фото своего графика.');return
+                month_key=draft.report['month']
+                cells=schedule.clean_cells(row['cells'],month_key)
+            except (ValueError,IndexError,KeyError) as error:
+                await callback.message.answer(html.escape(str(error) or 'Не разобрал строку графика.'));return
+            draft.report={'name':row['name'],'cells':cells,'month':month_key}
+            draft.phase='schedule_review'
+            lines=[html.escape(row['name']),month_key]+[f"{int(c['date'][-2:])}: {c['start']}–{c['end']}" for c in cells]
+            await callback.message.edit_text('Проверь график:\n'+'\n'.join(lines)+
+                '\n\nСохраню только эти смены. Остальные записанные дни останутся.',
+                reply_markup=photo_buttons(draft,[('Сохранить','save'),('Отмена','cancel')]))
+            return
         if action.startswith('row') and draft.phase=='schedule_name':
             try:
                 index=int(action[3:]);row=draft.report['rows'][index];name=row['name']
