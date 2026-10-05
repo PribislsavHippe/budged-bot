@@ -2,7 +2,7 @@
 .app-tabs { display:flex; align-items:baseline; gap:22px; border:0; margin:0 0 22px; padding:0; background:none; overflow-x:auto; scrollbar-width:none; }
 .app-tabs::-webkit-scrollbar { display:none; }
 .app-tabs button { flex:0 0 auto; border:0; background:none; color:var(--ink); padding:12px 0 0; font:400 12px 'Onest',sans-serif; cursor:pointer; white-space:nowrap; }
-.app-tabs button[aria-selected=true] { order:-1; color:var(--ink); border:0; box-shadow:none; font:400 25px 'Onest',sans-serif; font-size:25px!important; letter-spacing:-.035em; }
+.app-tabs button[aria-selected=true] { color:var(--ink); border:0; box-shadow:none; font:400 25px 'Onest',sans-serif; font-size:25px!important; letter-spacing:-.035em; }
 #tips-dashboard { color:var(--ink); }
 .dashboard-controls { display:flex; justify-content:space-between; align-items:center; gap:12px; }
 .period-link,.privacy-link { border:0; background:none; padding:8px 0; color:var(--ink); font:400 14px 'Onest',sans-serif; cursor:pointer; text-align:left; }
