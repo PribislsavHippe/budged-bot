@@ -9,7 +9,7 @@ from aiogram.fsm.state import State,StatesGroup
 from aiogram.types import InlineKeyboardMarkup as Markup,InlineKeyboardButton as Button
 from aiogram.dispatcher.event.bases import UNHANDLED
 import db,schedule,research,report_vision as vision,schedule_sheet
-from chat_dates import human_date
+from chat_dates import human_date,human_month
 from workday import op_today
 
 router=Router()
@@ -46,7 +46,8 @@ async def sheet_link(message):
     asyncio.get_running_loop().call_later(DRAFT_TTL,expire,message.from_user.id,draft)
     research.track(message.from_user.id,'schedule_import_started',screen='calendar')
     await message.answer('За какой месяц этот график? Напиши, например: октябрь 2026. '
-                         'Прочитаю только лист этого месяца. /cancel — отменить.')
+                         'Прочитаю только лист этого месяца.',
+                         reply_markup=photo_buttons(draft,[('Отмена','cancel')]))
 
 
 def waiting_sheet(message):
@@ -64,7 +65,7 @@ async def sheet_month(message):
         try:
             month_key=schedule.month(message.text)
         except ValueError as error:
-            await message.answer(str(error));return
+            await message.answer(str(error),reply_markup=photo_buttons(draft,[('Отмена','cancel')]));return
         await message.answer('Читаю лист графика…')
         try:
             if _sheet_slots.locked():
@@ -72,7 +73,8 @@ async def sheet_month(message):
             async with _sheet_slots:
                 rows=await schedule_sheet.read(draft.report['sheet_id'],month_key,draft.report['gid'])
         except ValueError as error:
-            await message.answer(html.escape(str(error))+'\nМожно написать другой месяц или /cancel.');return
+            await message.answer(html.escape(str(error))+'\nМожно написать другой месяц.',
+                                 reply_markup=photo_buttons(draft,[('Отмена','cancel')]));return
         draft.report={'rows':rows,'month':month_key}
         draft.phase='schedule_sheet_name'
         await message.answer('Выбери свою строку:',reply_markup=photo_buttons(draft,[
@@ -157,7 +159,7 @@ async def photo_action(callback):
                 await callback.message.answer(html.escape(str(error) or 'Не разобрал строку графика.'));return
             draft.report={'name':row['name'],'cells':cells,'month':month_key}
             draft.phase='schedule_review'
-            lines=[html.escape(row['name']),month_key]+[f"{int(c['date'][-2:])}: {c['start']}–{c['end']}" for c in cells]
+            lines=[html.escape(row['name']),human_month(month_key)]+[f"{int(c['date'][-2:])}: {c['start']}–{c['end']}" for c in cells]
             await callback.message.edit_text('Проверь график:\n'+'\n'.join(lines)+
                 '\n\nСохраню только эти смены. Остальные записанные дни останутся.',
                 reply_markup=photo_buttons(draft,[('Сохранить','save'),('Отмена','cancel')]))
@@ -171,7 +173,7 @@ async def photo_action(callback):
             draft.report={'name':name,'index':row['index']};draft.phase='schedule_month'
             await callback.message.edit_text('За какой месяц этот график? Напиши месяц и год, например: октябрь 2026.',reply_markup=photo_buttons(draft,[('Отмена','cancel')]))
         elif action=='month' and draft.phase=='schedule_review':
-            draft.phase='schedule_month';await callback.message.answer('Напиши месяц и год графика.')
+            draft.phase='schedule_month';await callback.message.answer('Напиши месяц и год графика, например: октябрь 2026.',reply_markup=photo_buttons(draft,[('Отмена','cancel')]))
         elif action=='save' and draft.phase=='schedule_review':
             try:
                 await schedule.save(callback.from_user.id,draft.report['cells'])
@@ -185,7 +187,7 @@ async def photo_action(callback):
             from ux_chat import schedule_saved
             await schedule_saved(callback.from_user.id)
             await callback.message.edit_text(f'Сохранил смены: {len(cells)}. В конце каждой спрошу, во сколько ты ушёл. '
-                                             'Свою ставку можно указать командой /rate 350.')
+                                             'Когда запишешь время работы, сможешь добавить часовую ставку.')
             import google_calendar as gcal
             try:
                 if await gcal.is_connected(callback.from_user.id):
@@ -230,13 +232,13 @@ async def photo_month(message):
                 research.track(message.from_user.id,'vision_completed',screen='calendar')
             cells=schedule.clean_cells(draft.report['raw_cells'],month)
             draft.report['cells']=cells;draft.phase='schedule_review'
-            lines=[html.escape(draft.report['name']),month]+[f"{int(c['date'][-2:])}: {c['start']}–{c['end']}" for c in cells]
+            lines=[html.escape(draft.report['name']),human_month(month)]+[f"{int(c['date'][-2:])}: {c['start']}–{c['end']}" for c in cells]
             await message.answer('Проверь график:\n'+ '\n'.join(lines)+'\n\nСохраню только эти смены. Остальные записанные дни останутся.',reply_markup=photo_buttons(draft,[('Сохранить','save'),('Другой месяц','month'),('Отмена','cancel')]))
             research.track(message.from_user.id,'schedule_previewed',screen='calendar')
         except (ValueError,KeyError,TypeError,AttributeError,OSError,vision.VisionError) as error:
             if attempted:research.track(message.from_user.id,'vision_failed',screen='calendar',error_code='vision')
             text=str(error) if isinstance(error,(ValueError,vision.VisionError)) and str(error) else 'Не разобрал часы. Пришли более чёткий график.'
-            await message.answer(html.escape(text)+'\n/cancel — отменить.')
+            await message.answer(html.escape(text),reply_markup=photo_buttons(draft,[('Отмена','cancel')]))
 
 
 async def ask_end(message,uid,day,state):
@@ -273,16 +275,16 @@ async def work_summary(message):
     except Exception as error:
         from diagnostics import failure
         failure(error,area='work_time',stage='summary')
-        await message.answer('Не получилось загрузить часы. Попробуй /work чуть позже.');return
+        await message.answer('Не получилось показать часы. Попробуй чуть позже.');return
     if not rows:
-        await message.answer('За '+key+' ещё нет отработанных смен. /hours — записать время.');return
+        await message.answer('За '+human_month(key)+' ещё нет записанного времени работы.');return
     hours=income=0;missing=0;lines=[]
     for row in rows:
         result=schedule.earned(datetime.fromisoformat(row['actual_start']),datetime.fromisoformat(row['actual_end']),row['hourly_rate'])
         hours+=result['hours'];income+=result['income'] or 0;missing+=int(result['income'] is None)
         pay=f"{result['income']:g} ₽" if result['income'] is not None else 'без ставки'
         lines.append(f"{int(row['shift_date'][-2:])}: {schedule.hours_text(result['hours'])} · {pay}")
-    await message.answer(f"{key} · Отработано {schedule.hours_text(hours)} за {len(rows)} смен.\nПо ставке: {income:g} ₽. Чаевые отдельно."+
+    await message.answer(f"{human_month(key)} · Отработано {schedule.hours_text(hours)} за {len(rows)} смен.\nПо ставке: {income:g} ₽. Чаевые отдельно."+
                          (f"\nСмен без ставки: {missing}." if missing else '')+'\n\n'+'\n'.join(lines))
 
 
@@ -299,7 +301,7 @@ async def close(callback,state):
 async def end_text(message,state):
     data=await state.get_data()
     if time.time()-data.get('work_created',0)>4*3600:
-        await state.clear();await message.answer('Открой /hours ещё раз.');return
+        await state.clear();await message.answer('Время ожидания вышло. Открой смену ещё раз.');return
     try:
         if not data.get('work_start') and not re.search('[-–—]',message.text):raise ValueError('Напиши начало и конец смены: 10–23:30.')
         start,end=schedule.actual(data['work_day'],message.text,data.get('work_start'))

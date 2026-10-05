@@ -42,14 +42,15 @@ async def error(message, exception):
 async def create_restaurant(message, command):
     try:
         result=await identity.create(message.from_user.id,command.args or '')
-        await message.answer(f"Ресторан: <b>{html.escape(result['name'])}</b>\n/invite — создать приглашение\n/team — заявки и сотрудники")
+        await message.answer(f"Ресторан создан: <b>{html.escape(result['name'])}</b>. Что дальше?",
+                             reply_markup=buttons([[('Создать приглашение','ident:showinvite')],[('Сотрудники и заявки','ident:showteam')]]))
     except Exception as exc: await error(message,exc)
 
 
 @router.message(Command('invite'))
-async def invite(message):
+async def invite(message,uid=None):
     try:
-        restaurant,token=await identity.invite(message.from_user.id)
+        restaurant,token=await identity.invite(uid or message.from_user.id)
         bot=await message.bot.get_me()
         await message.answer(f"Приглашение в {html.escape(restaurant['name'])}:\n"
                              f"https://t.me/{bot.username}?start=team_{token}\n\n"
@@ -77,7 +78,8 @@ async def start_invite(message,command,state):
     await state.clear()
     await state.set_state(Identification.name)
     await state.update_data(invite_token=token)
-    await message.answer('Как тебя зовут в отчёте? Администратор проверит имя и увидит твои планы и продажи, записанные после присоединения. Личные чаевые и расходы останутся доступны только тебе в боте.\n/cancel — отменить')
+    await message.answer('Как тебя зовут в отчёте? Администратор проверит имя и увидит твои планы и продажи, записанные после присоединения. Личные чаевые и расходы останутся доступны только тебе в боте.',
+                         reply_markup=buttons([[('Отмена','ident:cancelname')]]))
 
 
 @router.message(Identification.name, F.photo | F.document)
@@ -91,6 +93,13 @@ async def cancel_registration(message,state):
     await state.clear()
     await message.answer('Заявка отменена.')
 
+@router.callback_query(F.data=='ident:cancelname')
+async def cancel_registration_button(query,state):
+    if await state.get_state()!=Identification.name.state:
+        await query.answer('Этот вопрос уже закрыт.');return
+    await state.clear();await query.answer()
+    await query.message.edit_text('Заявка отменена.')
+
 
 @router.message(Identification.name,F.text,~F.text.startswith('/'))
 async def register_name(message,state):
@@ -98,16 +107,17 @@ async def register_name(message,state):
     try:
         result=await identity.request(message.from_user.id,data.get('invite_token',''),message.text)
         await state.clear()
-        await message.answer(f"{identity.STATUSES[result['status']]}.\n/profile — твой ресторан")
+        await message.answer(f"{identity.STATUSES[result['status']]}. Посмотреть свой ресторан можно по кнопке ниже.",
+                             reply_markup=buttons([[('Мой ресторан','ident:showprofile')]]))
         from ux_chat import begin
         await begin(message)
     except Exception as exc: await error(message,exc)
 
 
 @router.message(Command('profile'))
-async def profile(message):
+async def profile(message,uid=None):
     try:
-        row=await identity.profile(message.from_user.id)
+        row=await identity.profile(uid or message.from_user.id)
         if not row:
             await message.answer('Ты ещё не присоединился к ресторану. Открой ссылку, которую прислал администратор.')
             return
@@ -141,6 +151,16 @@ async def team(message):
     except Exception as exc: await error(message,exc)
 
 
+@router.callback_query(F.data.in_({'ident:showinvite','ident:showteam','ident:showprofile'}))
+async def open_restaurant_action(query):
+    await query.answer()
+    if query.data=='ident:showinvite':await invite(query.message,query.from_user.id)
+    elif query.data=='ident:showteam':
+        try:await show_team(query.message,query.from_user.id)
+        except Exception as exc:await error(query.message,exc)
+    else:await profile(query.message,query.from_user.id)
+
+
 @router.callback_query(F.data.startswith('ident:'))
 async def callback(query):
     await query.answer()
@@ -154,7 +174,7 @@ async def callback(query):
         target=str(UUID(target))
         if action in ('leaveask','leave'):
             row=await identity.profile(query.from_user.id)
-            if not row or row['id']!=target:raise ValueError('Данные ресторана уже изменились. Открой /profile ещё раз.')
+            if not row or row['id']!=target:raise ValueError('Данные ресторана уже изменились. Открой профиль ещё раз.')
             if action=='leaveask':
                 await query.message.answer('Выйти из ресторана? Личные записи и отчёты останутся.',reply_markup=buttons([
                     [('Отключить',f'ident:leave:{target}'),('Отмена',f'ident:cancel:{target}')]]))

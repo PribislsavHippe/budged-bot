@@ -16,12 +16,16 @@ class Feedback(StatesGroup):
 
 def help_buttons():
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='Как пользоваться ботом',callback_data='ux:help')],
         [InlineKeyboardButton(text='Сообщить о проблеме',callback_data='ux:feedback')],
         [InlineKeyboardButton(text='Попробовать на деле',callback_data='ux:learn')]])
 
 
 def skip_button():
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Пропустить',callback_data='ux:skip')]])
+
+def feedback_cancel_button():
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Отмена',callback_data='ux:feedback_cancel')]])
 
 
 def first_action_buttons():
@@ -91,7 +95,7 @@ async def value_saved(message,entry):
                              'Если расходов не было, пропусти.',reply_markup=skip_button())
     else:
         await message.answer('Готово! В «Статистике» уже виден результат. '
-                             'Продолжай присылать записи, а за подсказками приходи в /help.',reply_markup=help_buttons())
+                             'Продолжай присылать записи. Подсказки — на кнопке ниже.',reply_markup=help_buttons())
 
 
 async def schedule_saved(uid):
@@ -109,7 +113,14 @@ async def skip(callback):
     await research.record(callback.from_user.id,'onboarding_skipped')
     await callback.answer()
     await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer('Хорошо. Просто присылай записи, когда понадобятся. Подсказки всегда есть в /help.')
+    await callback.message.answer('Хорошо. Просто присылай записи, когда понадобятся. Если нужна подсказка, нажми кнопку ниже.',reply_markup=help_buttons())
+
+
+@router.callback_query(F.data=='ux:help')
+async def help_button(callback):
+    await callback.answer()
+    from handlers import send_help
+    await send_help(callback.message,callback.from_user.id)
 
 
 @router.message(Command('learn'))
@@ -155,7 +166,15 @@ async def feedback_category(callback,state):
     await state.update_data(feedback_category=category,feedback_id=str(uuid5(NAMESPACE_URL,
                             f'feedback:{callback.from_user.id}:{callback.id}')))
     await callback.message.answer('Напиши одним сообщением, что случилось или что хочешь предложить. '
-                                 'Его прочитает владелец бота. Суммы, пароли и скриншоты присылать не нужно.\n\n/cancel — отменить.')
+                                 'Его прочитает владелец бота. Суммы, пароли и скриншоты присылать не нужно.',
+                                  reply_markup=feedback_cancel_button())
+
+@router.callback_query(F.data=='ux:feedback_cancel')
+async def feedback_cancel_button_pressed(callback,state):
+    if await state.get_state()!=Feedback.text.state:
+        await callback.answer('Этот вопрос уже закрыт.');return
+    await state.clear();await callback.answer()
+    await callback.message.edit_text('Обращение отменено.')
 
 
 @router.message(Feedback.text,F.text.startswith('/'))
@@ -171,7 +190,7 @@ async def feedback_cancel(message,state):
 async def feedback_text(message,state):
     text=(message.text or '').strip()
     if not 1<=len(text)<=2000:
-        await message.answer('Пришли сообщение до 2000 символов. /cancel — отменить.');return
+        await message.answer('Пришли сообщение до 2000 символов.',reply_markup=feedback_cancel_button());return
     from research_api import allowed
     if not allowed(message.from_user.id,'feedback',5):
         await message.answer('Слишком много обращений подряд. Попробуй через минуту.');return
@@ -187,7 +206,7 @@ async def feedback_text(message,state):
     except Exception as error:
         from diagnostics import failure
         failure(error,area='feedback',stage='save')
-        await message.answer('Обращение пока не сохранилось. Отправь его ещё раз или нажми /cancel.');return
+        await message.answer('Обращение пока не сохранилось. Отправь его ещё раз.',reply_markup=feedback_cancel_button());return
     await state.clear()
     research.track(message.from_user.id,'problem_reported',screen='help',operation=data['feedback_id'])
     await message.answer('Спасибо! Обращение сохранилось. Оно поможет улучшить бота.')
@@ -203,4 +222,4 @@ class ActivityMiddleware(BaseMiddleware):
 
 @router.message(Feedback.text)
 async def feedback_nontext(message):
-    await message.answer('Опиши проблему текстом, без скриншотов. /cancel — отменить.')
+    await message.answer('Опиши проблему текстом, без скриншотов.',reply_markup=feedback_cancel_button())

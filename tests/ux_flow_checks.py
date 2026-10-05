@@ -66,4 +66,29 @@ class Flows(unittest.IsolatedAsyncioTestCase):
             real_record=research.record
             message=await self.run_entry('чай 1500',real_record)
             self.assertTrue(any('1 500' in call.args[0] or '1500' in call.args[0] for call in message.answer.await_args_list))
+
+    async def test_history_undo_button_uses_clicker_and_rejects_stale_view(self):
+        message=self.message('');message.from_user.id=999
+        entry={'id':42,'kind':'income','account':'cash','signed_amount':500,'category':'Чаевые','note':None}
+        with patch.object(handlers.db,'get_or_create_user',new=AsyncMock(return_value={'private_money_mode':False})),patch.object(handlers.db,'get_recent_entries',new=AsyncMock(return_value=[entry])),patch.object(handlers.db,'delete_entry',new=AsyncMock()) as delete,patch.object(handlers,'today_block',new=AsyncMock(return_value='Итог')):
+            await handlers.cmd_undo(message,user_id=5,expected_id='41')
+            delete.assert_not_awaited()
+            await handlers.cmd_undo(message,user_id=5,expected_id='42')
+            delete.assert_awaited_once_with(42,5)
+
+    async def test_spend_cancel_button_clears_pending_amount(self):
+        message=self.message('');message.edit_text=AsyncMock()
+        callback=NS(data='ss:cancel',from_user=NS(id=5),message=message,answer=AsyncMock())
+        state=NS(get_state=AsyncMock(return_value=handlers.ShiftSpend.waiting_amount.state),clear=AsyncMock())
+        await handlers.shift_spend_chip(callback,state)
+        state.clear.assert_awaited_once()
+        message.edit_text.assert_awaited_once_with('Расход не записан.')
+
+    async def test_calendar_retry_button_uses_clicker(self):
+        import google_calendar
+        message=self.message('');message.from_user.id=999
+        callback=NS(data='calendar:retry',from_user=NS(id=5),message=message,answer=AsyncMock())
+        with patch.object(google_calendar,'is_configured',return_value=True),patch.object(google_calendar,'connection_status',new=AsyncMock(return_value={'connected':True})),patch.object(google_calendar,'sync_pending',new=AsyncMock(return_value={'synced':1,'pending':0,'message':''})) as sync:
+            await handlers.calendar_retry(callback)
+            sync.assert_awaited_once_with(5)
 if __name__=='__main__':unittest.main()

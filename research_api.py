@@ -27,7 +27,7 @@ async def handle(request):
     def respond(data,status=200):return web.json_response(data,status=status,headers=NO_CACHE)
     action=request.match_info['action']
     if action=='access':return respond({'available':is_admin(uid),'enabled':research.enabled(),'bot_username':request.app.get('bot_username')})
-    if not research.enabled():return respond({'error':'Исследования выключены. Включи UX_RESEARCH_ENABLED=1 на Render и перезапусти сервис.' if is_admin(uid) else 'Раздел пока не подключён.','code':'disabled'},404)
+    if not research.enabled():return respond({'error':'Сбор действий сейчас выключен. Включи его в настройках сервиса и перезапусти бота.' if is_admin(uid) else 'Раздел пока не подключён.','code':'disabled'},404)
     if action=='event':
         if not allowed(uid,'event',60):return respond({'error':'Слишком много запросов.'},429)
         try:

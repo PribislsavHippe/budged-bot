@@ -169,12 +169,12 @@ async def _auth(request: web.Request):
     try:
         body = await request.json()
     except Exception:
-        return None, web.json_response({"error": "bad request"}, status=400, headers=NO_CACHE)
+        return None, web.json_response({"error": "Не получилось прочитать запрос. Открой приложение ещё раз."}, status=400, headers=NO_CACHE)
     if not isinstance(body, dict):
-        return None, web.json_response({"error": "bad request"}, status=400, headers=NO_CACHE)
+        return None, web.json_response({"error": "Не получилось прочитать запрос. Открой приложение ещё раз."}, status=400, headers=NO_CACHE)
     user_id = validate_init_data(body.get("initData", ""), request.app["bot_token"])
     if user_id is None:
-        return None, web.json_response({"error": "unauthorized"}, status=401, headers=NO_CACHE)
+        return None, web.json_response({"error": "Открой приложение заново через бота."}, status=401, headers=NO_CACHE)
     request["verified_uid"] = user_id
     return user_id, body
 
@@ -185,7 +185,7 @@ async def api_stats(request: web.Request) -> web.Response:
         return body
     try:result=await _stats_payload(request.app, user_id, body)
     except (ValueError,TypeError,InvalidOperation):
-        return web.json_response({'error':'private data invalid'},status=400,headers=NO_CACHE)
+        return web.json_response({'error':'Не получилось прочитать личные записи на этом устройстве.'},status=400,headers=NO_CACHE)
     return web.json_response(result, headers=NO_CACHE)
 
 
@@ -251,7 +251,7 @@ async def api_tips_compare(request: web.Request) -> web.Response:
         entries,_ = await _entries_for_view(user_id,body)
         result = compare_tips(entries, kind, anchor, other, aligned)
     except (ValueError, TypeError, InvalidOperation):
-        return web.json_response({"error": "Проверь даты и тип периода"}, status=400)
+        return web.json_response({"error": "Проверь даты выбранного периода."}, status=400)
     return web.json_response(result, headers=NO_CACHE)
 
 
@@ -295,13 +295,13 @@ async def api_month(request: web.Request) -> web.Response:
         year = int(body.get("year"))
         month = int(body.get("month"))
     except (TypeError, ValueError):
-        return web.json_response({"error": "bad month"}, status=400)
+        return web.json_response({"error": "Не получилось открыть этот месяц. Выбери другой."}, status=400)
     if not 1 <= month <= 12 or not 2000 <= year <= 2100:
-        return web.json_response({"error": "bad month"}, status=400)
+        return web.json_response({"error": "Не получилось открыть этот месяц. Выбери другой."}, status=400)
 
     try:entries,private = await _entries_for_view(user_id,body)
     except (ValueError,TypeError,InvalidOperation):
-        return web.json_response({'error':'private data invalid'},status=400,headers=NO_CACHE)
+        return web.json_response({'error':'Не получилось прочитать личные записи на этом устройстве.'},status=400,headers=NO_CACHE)
     shifts = await db.get_shift_dates(user_id)
     result=compute_month(entries, shifts, year, month)
     result['private_money_mode']=private
@@ -371,7 +371,7 @@ async def api_calendar_edit(request: web.Request) -> web.Response:
             if account not in {'cash','card'}:raise ValueError()
             operation=str(UUID(str(body.get('operation_id',''))))
         except (ValueError,TypeError,InvalidOperation):
-            return web.json_response({'error':'Проверь сумму и счёт.'},status=400,headers=NO_CACHE)
+            return web.json_response({'error':'Проверь сумму и выбери: наличные или карта.'},status=400,headers=NO_CACHE)
         try:
             entry=await db.add_entry(user_id,'income',account,float(amount),category='Чаевые',
                                      note='из календаря',work_date=day_iso,source_key='calendar:'+operation)
@@ -435,11 +435,11 @@ async def api_entry_edit(request: web.Request) -> web.Response:
             raise ValueError()
         entry_id = int(body.get("entry_id"))
     except (TypeError, ValueError):
-        return web.json_response({"error": "bad id"}, status=400)
+        return web.json_response({"error": "Не получилось найти запись. Обнови историю."}, status=400)
 
     entry = await db.get_entry(entry_id, user_id)
     if entry is None:
-        return web.json_response({"error": "not found"}, status=404)
+        return web.json_response({"error": "Запись уже удалена или недоступна. Обнови историю."}, status=404)
 
     action = body.get("action")
     if action == "delete":
@@ -451,12 +451,12 @@ async def api_entry_edit(request: web.Request) -> web.Response:
             amount=Decimal(str(body.get('amount')).replace(',','.'))
             if not amount.is_finite() or not 0<amount<=10000000 or amount!=amount.quantize(Decimal('.01')):raise ValueError()
         except (ValueError,TypeError,InvalidOperation):
-            return web.json_response({'error':'Проверь чаевые и счёт.'},status=400,headers=NO_CACHE)
+            return web.json_response({'error':'Проверь сумму чаевых и выбери: наличные или карта.'},status=400,headers=NO_CACHE)
         await db.update_tip_details(entry_id,user_id,float(amount),body['account'])
     elif action == "account":
         account = body.get("account")
         if account not in ("cash", "card"):
-            return web.json_response({"error": "bad account"}, status=400)
+            return web.json_response({"error": "Выбери, куда поступили деньги: наличными или на карту."}, status=400)
         await db.update_entry_account(entry_id, user_id, account)
     elif action == "amount":
         try:
@@ -468,11 +468,11 @@ async def api_entry_edit(request: web.Request) -> web.Response:
                     or amount != amount.quantize(Decimal("0.01"))):
                 raise ValueError()
         except (TypeError, ValueError, InvalidOperation):
-            return web.json_response({"error": "bad amount"}, status=400)
+            return web.json_response({"error": "Проверь сумму: она должна быть больше нуля, с точностью до копеек."}, status=400)
         sign = 1 if entry["kind"] == "income" else -1
         await db.update_entry_amount(entry_id, user_id, sign * float(amount))
     else:
-        return web.json_response({"error": "bad action"}, status=400)
+        return web.json_response({"error": "Не получилось выполнить изменение. Обнови историю."}, status=400)
 
     # The write has succeeded. A failed read must not make the client retry it.
     try:
@@ -537,7 +537,7 @@ async def api_iphone_calendar(request: web.Request) -> web.Response:
         return web.json_response({'available': False, 'enabled': False}, headers=NO_CACHE)
     action = body.get('action', 'status')
     if action not in {'status', 'create', 'rotate', 'revoke'}:
-        return web.json_response({'error': 'Неизвестное действие.'}, status=400, headers=NO_CACHE)
+        return web.json_response({'error': 'Не получилось выполнить действие. Открой страницу ещё раз.'}, status=400, headers=NO_CACHE)
     if action == 'create':
         row = await db.create_calendar_subscription(user_id, str(uuid.uuid4()), secrets.token_urlsafe(32))
     elif action == 'rotate':
@@ -639,9 +639,9 @@ async def google_callback(request: web.Request) -> web.Response:
     except Exception as error:
         from diagnostics import failure
         failure(error,area='calendar',stage='backfill')
-        sync = {"synced": 0, "pending": "неизвестно", "message": "Подключение сохранено. Повторите отправку смен командой /calendar."}
+        sync = {"synced": 0, "pending": "неизвестно", "message": "Подключение сохранено. В чате бота отправь /calendar, чтобы повторить добавление смен."}
     return web.Response(
-        text=page + f"<h2>Подключено ✓</h2><p>Синхронизировано смен: {sync['synced']}. Ожидают: {sync['pending']}.</p><p>{sync['message']}</p><p>Возвращайся в Telegram.</p>",
+        text=page + f"<h2>Календарь подключён ✓</h2><p>Добавлено смен: {sync['synced']}. Пока не добавлены: {sync['pending']}.</p><p>{sync['message']}</p><p>Возвращайся в Telegram.</p>",
         content_type="text/html",
     )
 

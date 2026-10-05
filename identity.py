@@ -33,9 +33,9 @@ async def action(uid, kind, args):
         # Provider error text is used only for fixed classification, never echoed.
         messages = {'identity_select_restaurant':'Выбери ресторан в миниаппе — там у каждого своя ссылка и список сотрудников.',
                     'identity_forbidden':'Это может сделать администратор ресторана.',
-                    'identity_stale':'Заявка уже изменилась. Обнови список сотрудников или открой /team.',
+                    'identity_stale':'Заявка уже изменилась. Обнови список сотрудников.',
                     'identity_invite_expired':'Эта ссылка больше не работает. Попроси администратора прислать новую.',
-                    'identity_other_restaurant':'Сначала выйди из прежнего ресторана через /profile.'}
+                    'identity_other_restaurant':'Сначала открой свой ресторан и выйди из него.'}
         for code, message in messages.items():
             if code in str(error):
                 raise ValueError(message) from None

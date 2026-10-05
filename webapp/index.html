@@ -189,7 +189,7 @@
     <button id="tab-earnings" role="tab" aria-selected="true" aria-controls="earnings-panel">Чаевые</button>
     <button id="tab-sales" role="tab" aria-selected="false" aria-controls="sales-panel">План</button>
     <button id="tab-restaurant" role="tab" aria-selected="false" aria-controls="restaurant-panel" hidden>Ресторан</button>
-    <button id="tab-research" role="tab" aria-selected="false" aria-controls="research-panel" hidden>UX Research</button>
+    <button id="tab-research" role="tab" aria-selected="false" aria-controls="research-panel" hidden>Как используют приложение</button>
   </nav>
   <section id="research-panel" role="tabpanel" aria-labelledby="tab-research" hidden></section>
   <section id="restaurant-panel" role="tabpanel" aria-labelledby="tab-restaurant" hidden></section>
@@ -254,7 +254,7 @@
   <div id="private-modal" hidden style="position:fixed;inset:0;background:rgba(0,0,0,.52);z-index:30;display:none;align-items:end">
     <div class="sheet">
       <p class="sheet-title">Суперконфиденциальность</p>
-      <p id="private-description">Чаевые и расходы будут храниться только на этом устройстве. В UX Research попадут только факт добавления и время действия, без содержимого записи. При смене телефона данные не восстановятся. Пересланные записи нужно будет сохранить кнопкой в ответе бота.</p>
+      <p id="private-description">Чаевые и расходы будут храниться только на этом устройстве. В исследовании использования останутся только факт добавления и время действия, без содержимого записи. При смене телефона данные не восстановятся. Пересланные записи нужно будет сохранить кнопкой в ответе бота.</p>
       <p id="private-status" role="status"></p>
       <button class="btn" id="private-confirm">Перенести записи и включить</button>
       <button class="btn btn-ghost" id="private-clear" hidden>Удалить личные записи с устройства</button>
@@ -665,7 +665,7 @@ function load() {
       const el = document.getElementById("err");
       el.style.display = "block";
       el.textContent = "Не получилось загрузить данные. Открой бота и зайди в приложение ещё раз.";
-      document.getElementById("head").textContent = "Мой Бюджет";
+      document.getElementById("head").textContent = "Чаевые";
     });
 }
 
@@ -1007,7 +1007,7 @@ function openPrivacy() {
     document.getElementById('private-description').textContent='Прежний местный журнал не читается. Записи в базе сохранены; перенос остановлен, чтобы не стереть возможные данные на этом устройстве.';
     action.hidden=true;
   } else if (state.active && !state.lost) {
-    document.getElementById('private-description').textContent='Чаевые и расходы хранятся только на этом устройстве. В UX Research видны только факт добавления и время действия, без содержимого записи. Пересланные в чат записи сохраняй кнопкой в ответе бота. При смене телефона данные не восстановятся.';
+    document.getElementById('private-description').textContent='Чаевые и расходы хранятся только на этом устройстве. В исследовании использования видны только факт добавления и время действия, без содержимого записи. Пересланные в чат записи сохраняй кнопкой в ответе бота. При смене телефона данные не восстановятся.';
     action.hidden=true;
   } else if (state.active && ['missing','pending'].includes(state.lostReason)) {
     document.getElementById('private-description').textContent='Этот телефон не содержит прежний личный журнал. Если начать здесь, старые записи останутся только на прежнем устройстве, а новые будут сохраняться здесь.';
@@ -1018,7 +1018,7 @@ function openPrivacy() {
       : 'Не удалось прочитать личный журнал на этом устройстве. Чтобы не потерять записи, бот не создаёт новый журнал поверх него.';
     action.hidden=true;
   } else {
-    document.getElementById('private-description').textContent='Перенесу все чаевые и расходы на этот телефон и после проверки удалю их из базы. В UX Research останутся только факт добавления и время действия, без содержимого записи. При потере или смене устройства записи не восстановятся. После пересылки банка нажимай «Сохранить на устройстве» в ответе бота.';
+    document.getElementById('private-description').textContent='Перенесу все чаевые и расходы на этот телефон и после проверки удалю их из базы. В исследовании использования останутся только факт добавления и время действия, без содержимого записи. При потере или смене устройства записи не восстановятся. После пересылки банка нажимай «Сохранить на устройстве» в ответе бота.';
     action.hidden=false;action.textContent='Перенести записи и включить';
   }
   privateModal.hidden=false;privateModal.style.display='flex';

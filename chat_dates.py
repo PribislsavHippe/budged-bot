@@ -3,10 +3,16 @@ import re
 from datetime import date, timedelta
 
 MONTHS=('января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря')
+MONTHS_NOM=('январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь')
 
 def human_date(value):
     day=date.fromisoformat(value) if isinstance(value,str) else value
     return f'{day.day} {MONTHS[day.month-1]} {day.year}'
+
+def human_month(value):
+    year,month=map(int,value.split('-'))
+    date(year,month,1)
+    return f'{MONTHS_NOM[month-1]} {year}'
 
 
 def parse_date(text,today):

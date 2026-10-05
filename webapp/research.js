@@ -15,7 +15,7 @@
     <div id="research-task" hidden><button id="research-back">← К двум задачам</button><div id="research-task-content"></div><div id="research-task-journey" hidden></div></div>
     <details class="research-more"><summary>Остальные данные исследования</summary>
     <section><h2>Активность по дням</h2><div id="research-daily"></div></section>
-    <section><h2>Действия новых пользователей</h2><div id="research-funnel"></div><details class="research-note"><summary>Как читать показатели</summary><p>Каждое действие считается отдельно среди новых пользователей. Для D1 и D7 считаются только завершившиеся дни по Москве. «Ждём» — ещё рано оценивать возврат. Сбой — сигнал для проверки, а не доказанная причина ухода.</p></details></section>
+    <section><h2>Действия новых пользователей</h2><div id="research-funnel"></div><details class="research-note"><summary>Как читать показатели</summary><p>Каждое действие считается отдельно среди новых пользователей. Возврат на следующий день и через неделю считаем только после завершения соответствующего дня по Москве. «Ждём» — ещё рано оценивать возврат. Сбой — сигнал для проверки, а не доказанная причина ухода.</p></details></section>
     <section><h2>Возвращаются ли в приложение</h2><div id="research-retention" class="research-cards"></div></section>
     <section><h2>Где возникают ошибки</h2><div id="research-errors"></div></section>
     <details><summary>Использование функций</summary><div id="research-features"></div></details>
@@ -52,13 +52,13 @@
   }
   function render(d){
     latest=d;
-    $('research-overview').innerHTML=`<p class="research-muted">Активных за период: ${d.active_users} · Последнее событие: ${d.last_observed_at?time(d.last_observed_at):'нет'}. Записи до включения UX Research не восстанавливаются.</p>`;
+    $('research-overview').innerHTML=`<p class="research-muted">Активных за период: ${d.active_users} · Последнее событие: ${d.last_observed_at?time(d.last_observed_at):'нет'}. Действия до включения исследования здесь не появятся.</p>`;
     $('research-task-cards').innerHTML=`<button class="research-topic" data-task="schedule"><span>График</span><strong>${d.tasks.schedule.saved}</strong><small>Сохранили смену за период</small><span class="research-arrow">Смотреть ›</span></button><button class="research-topic" data-task="tips"><span>Чаевые</span><strong>${d.tasks.tips.saved}</strong><small>Записали чаевые за период</small><span class="research-arrow">Смотреть ›</span></button>`;
     renderTask(d);
     const dailyMax=Math.max(1,...d.daily_activity.map(x=>x.active_users));
     $('research-daily').innerHTML=d.daily_activity.map(x=>`<div class="research-day"><span>${new Date(x.date+'T12:00:00+03:00').toLocaleDateString('ru-RU',{day:'numeric',month:'short',timeZone:'Europe/Moscow'})}</span><progress max="${dailyMax}" value="${x.active_users}" aria-label="${x.active_users} активных"></progress><span>${x.active_users} чел. · ${x.events} событий</span></div>`).join('');
     $('research-funnel').innerHTML=d.funnel.map(s=>`<article class="research-stage"><div><strong>${esc(s.label)}</strong><b>${s.users}</b></div><progress max="100" value="${s.overall||0}" aria-label="${esc(s.label)}"></progress><p>${pct(s.conversion)} из доступных · ${pct(s.overall)} от всех новых</p><small>Не достигли: ${s.drop_off}${s.with_errors?' · из них со сбоем: '+s.with_errors:''}${s.pending?' · ждём: '+s.pending:''}</small></article>`).join('');
-    $('research-retention').innerHTML=Object.entries(d.retention).map(([k,v])=>`<article><b>${pct(v.rate)}</b>${k.toUpperCase()}<small>${v.returned} из ${v.eligible} · ждём ${v.pending}</small></article>`).join('');
+    $('research-retention').innerHTML=Object.entries(d.retention).map(([k,v])=>`<article><b>${pct(v.rate)}</b>${k==='d1'?'На следующий день':k==='d7'?'Через неделю':esc(k)}<small>${v.returned} из ${v.eligible} · ждём ${v.pending}</small></article>`).join('');
     $('research-errors').innerHTML=d.errors.length?d.errors.map(e=>`<p class="research-line"><span>${esc(labels[e.event]||e.event)}<small>${esc(screens[e.screen]||e.screen)} · ${esc(codes[e.code]||e.code)}</small></span><b>${e.count}</b></p>`).join(''):'<p class="research-muted">Зарегистрированных ошибок за период нет.</p>';
     $('research-features').innerHTML=d.features.map(f=>`<p class="research-line"><span>${esc(labels[f.event]||f.event)}</span><span>${f.users} чел. · ${f.count}</span></p>`).join('')||'<p>Пока нет событий.</p>';
     $('research-users').innerHTML=d.users.map(u=>`<button class="research-user" data-subject="${esc(u.id)}" data-label="${esc(u.label)}"><span><strong>${esc(u.label)}</strong><small>${u.cohort==='new'?'Новый':'Ранее зарегистрирован'} · v${u.onboarding_version}${u.errors?' · ошибок '+u.errors:''}</small></span><span>${time(u.last_at)}<small>${esc(labels[u.last_event]||u.last_event)}</small></span></button>`).join('')||'<p class="research-muted">Пока нет наблюдений.</p>';

@@ -27,7 +27,7 @@ from aiogram.types import (
 
 import db
 import parser as p
-from chat_dates import human_date
+from chat_dates import human_date, human_month
 from workday import MSK, entry_op_date, op_today
 
 router = Router()
@@ -150,28 +150,43 @@ async def cmd_start(message: Message, state: FSMContext):
 
 
 @router.message(Command("calendar"))
-async def cmd_calendar(message: Message):
+async def cmd_calendar(message: Message,user_id: int | None=None):
     import google_calendar as gcal
+    user_id=user_id or message.from_user.id
     if not gcal.is_configured():
         await message.answer(gcal.ERROR_MESSAGES["not_configured"])
         return
     try:
-        status = await gcal.connection_status(message.from_user.id)
+        status = await gcal.connection_status(user_id)
         if not status["connected"]:
             await message.answer(status["message"] or "Подключи Google Календарь в Статистике.")
             return
-        result = await gcal.sync_pending(message.from_user.id)
-        await message.answer(f"📆 Отправлено смен: {result['synced']}. Ожидают: {result['pending']}. " + result["message"])
+        result = await gcal.sync_pending(user_id)
+        await message.answer(f"📆 Добавил в Google Календарь {result['synced']} смен. Ещё не добавлены: {result['pending']}. " + result["message"])
     except Exception:
         logging.exception("Manual calendar sync failed")
-        await message.answer("Смены сохранил, но пока не смог добавить их в Google Календарь. Попробуй /calendar позже.")
+        await message.answer("Смены сохранил, но пока не смог добавить их в Google Календарь. Попробуй ещё раз позже.",reply_markup=calendar_retry_kb())
+
+
+def calendar_retry_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Повторить отправку в Google",callback_data="calendar:retry")]])
+
+
+@router.callback_query(F.data=="calendar:retry")
+async def calendar_retry(callback: CallbackQuery):
+    await callback.answer()
+    await cmd_calendar(callback.message,callback.from_user.id)
 
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
+    await send_help(message,message.from_user.id)
+
+
+async def send_help(message: Message,user_id: int):
     import research
     from ux_chat import help_buttons
-    research.track(message.from_user.id,'help_opened')
+    research.track(user_id,'help_opened')
     await message.answer('Помощь\n\nЕсли что-то не работает или есть идея — напиши нам.',reply_markup=help_buttons())
     await message.answer(
         "<b>Как я работаю</b>\n\n"
@@ -205,8 +220,11 @@ async def cmd_help(message: Message):
                              '/learn — пройти знакомство ещё раз')
     from identity_chat import enabled
     if enabled():
-        await message.answer("/profile — твой ресторан\n/team — сотрудники и заявки для администратора\n"
-                             "/restaurant Название — создать ресторан владельцу бота\n/invite — приглашение сотрудникам")
+        from identity_chat import buttons
+        await message.answer('Твой ресторан, сотрудники и приглашения — по кнопкам ниже.',
+                             reply_markup=buttons([[('Мой ресторан','ident:showprofile')],
+                                                   [('Сотрудники и заявки','ident:showteam')],
+                                                   [('Создать приглашение','ident:showinvite')]]))
 
 
 # ─── история ─────────────────────────────────────────────────────────────────
@@ -229,23 +247,34 @@ async def show_history(message: Message):
         dt = datetime.fromisoformat(e["created_at"].replace("Z", "+00:00")).astimezone(MSK)
         lines.append(f"<i>{dt.strftime('%d.%m %H:%M')}</i>  {entry_line(e)}")
     await message.answer(
-        "<b>Последние записи</b>\n\n" + "\n".join(lines) + "\n\n/undo — отменить последнюю"
+        "<b>Последние записи</b>\n\n" + "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Отменить последнюю запись",callback_data=f"history:undo:{entries[0]['id']}")]])
     )
 
 
+@router.callback_query(F.data.startswith("history:undo:"))
+async def history_undo(callback: CallbackQuery):
+    await callback.answer()
+    await cmd_undo(callback.message,user_id=callback.from_user.id,expected_id=callback.data.rsplit(":",1)[-1])
+
+
 @router.message(Command("undo"))
-async def cmd_undo(message: Message):
-    if (await db.get_or_create_user(message.from_user.id)).get('private_money_mode'):
+async def cmd_undo(message: Message,user_id: int | None=None,expected_id: str | None=None):
+    user_id=user_id or message.from_user.id
+    if (await db.get_or_create_user(user_id)).get('private_money_mode'):
         await message.answer('Исправить или удалить личную запись можно в «Статистике» на этом устройстве.',reply_markup=main_menu())
         return
-    entries = await db.get_recent_entries(message.from_user.id, limit=1)
+    entries = await db.get_recent_entries(user_id, limit=1)
     if not entries:
         await message.answer("Отменять нечего — журнал пуст.")
         return
     entry = entries[0]
-    await db.delete_entry(entry["id"], message.from_user.id)
+    if expected_id is not None and str(entry['id'])!=expected_id:
+        await message.answer('Последняя запись уже изменилась. Открой историю ещё раз.')
+        return
+    await db.delete_entry(entry["id"], user_id)
     await message.answer(
-        "Отменил:\n" + entry_line(entry) + "\n\n" + await today_block(message.from_user.id)
+        "Отменил:\n" + entry_line(entry) + "\n\n" + await today_block(user_id)
     )
 
 
@@ -547,6 +576,10 @@ def shift_spend_kb() -> InlineKeyboardMarkup:
     ])
 
 
+def shift_spend_cancel_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Отмена",callback_data="ss:cancel")]])
+
+
 async def send_shift_close_prompt(message: Message):
     await message.answer(
         "Какие были траты за смену?\n"
@@ -569,6 +602,14 @@ async def web_app_data_handler(message: Message):
 @router.callback_query(F.data.startswith("ss:"))
 async def shift_spend_chip(callback: CallbackQuery, state: FSMContext):
     choice = callback.data.split(":", 1)[1]
+    if choice == "cancel":
+        if await state.get_state()!=ShiftSpend.waiting_amount.state:
+            await callback.answer('Этот вопрос уже закрыт.')
+            return
+        await state.clear()
+        await callback.message.edit_text('Расход не записан.')
+        await callback.answer()
+        return
     if choice == "done":
         await state.clear()
         if (await db.get_or_create_user(callback.from_user.id)).get('private_money_mode'):
@@ -579,7 +620,7 @@ async def shift_spend_chip(callback: CallbackQuery, state: FSMContext):
         return
     await state.set_state(ShiftSpend.waiting_amount)
     await state.update_data(shift_category=choice)
-    await callback.message.answer(f"Сколько ушло на «{choice}»? Например, 350 рублей.")
+    await callback.message.answer(f"Сколько ушло на «{choice}»? Например, 350 рублей.",reply_markup=shift_spend_cancel_kb())
     await callback.answer()
 
 
@@ -587,7 +628,7 @@ async def shift_spend_chip(callback: CallbackQuery, state: FSMContext):
 async def shift_spend_amount(message: Message, state: FSMContext):
     amount = p.extract_amount(message.text or "")
     if amount is None:
-        await message.answer("Нужно число, например: <i>350</i>. Или /cancel.")
+        await message.answer("Напиши сумму числом, например <i>350</i>, или нажми «Отмена».",reply_markup=shift_spend_cancel_kb())
         return
     data = await state.get_data()
     category = data.get("shift_category", "Прочее")
@@ -642,8 +683,8 @@ async def legacy_button(message: Message):
         return
     await message.answer(
         "Я теперь считаю только чаевые.\n"
-        "📋 История и 🧾 Закрыть смену — на клавиатуре, /help — что умею.",
-        reply_markup=main_menu(),
+        "📋 История и 🧾 Закрыть смену — на клавиатуре. Подсказки откроются по кнопке ниже.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Как пользоваться ботом",callback_data="ux:help")]]),
     )
 
 
@@ -784,7 +825,7 @@ async def handle_text(message: Message, state: FSMContext):
             await message.answer(f"✓ {names[sale['kind']]}: {fmt(sale['value'])} {unit} · смена {human_date(sale['work_date'])}",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Отменить", callback_data=f"saleundo:{oid}")]]))
         else:
-            await message.answer("✓ " + ("Записал отчёт по " + human_date(sale["cutoff"]) + " включительно." if sale["action"] == "report" else "План продаж обновлен: " + sale["month"] + ".") + " Исправления — в разделе «План».")
+            await message.answer("✓ " + ("Записал отчёт по " + human_date(sale["cutoff"]) + " включительно." if sale["action"] == "report" else "План продаж обновлён на " + human_month(sale["month"]) + ".") + " Исправления — в разделе «План».")
         return
 
     # 3. Расписание смен: «работаю 22 24 26» → ставим смены
@@ -808,10 +849,11 @@ async def handle_text(message: Message, state: FSMContext):
                 if result["message"]: extra += "\n" + result["message"]
         except Exception:
             logging.exception("Calendar sync failed after shift save")
-            extra = "\nВ Google пока не отправлено. Смены сохранены; повтор — /calendar."
+            extra = "\nВ Google Календарь смены пока не добавлены. Попробуй ещё раз позже."
         await message.answer(
             f"📅 Поставил {word}: <b>{human}</b>.{extra}\n"
-            "Напомню накануне и в конце смены. Чаевые записывай, когда удобно."
+            "Напомню накануне и в конце смены. Чаевые записывай, когда удобно.",
+            reply_markup=calendar_retry_kb() if extra.startswith("\nВ Google Календарь смены пока") else None,
         )
         return
 
@@ -821,8 +863,8 @@ async def handle_text(message: Message, state: FSMContext):
         await message.answer(
             "Не нашёл сумму. Примеры:\n"
             "<i>чай 500</i> · <i>смена 2500</i>\n"
-            "/help — все команды",
-            reply_markup=main_menu(),
+            "Нажми кнопку ниже, если нужна подсказка.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Как пользоваться ботом",callback_data="ux:help")]]),
         )
         return
 
