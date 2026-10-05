@@ -189,9 +189,17 @@ async def api_stats(request: web.Request) -> web.Response:
     return web.json_response(result, headers=NO_CACHE)
 
 
+def _track_saved_money_entry(user_id: int, entry_id: int, event: str) -> None:
+    """Count a confirmed miniapp save once, without sending financial fields."""
+    from uuid import uuid5, NAMESPACE_URL
+    import research
+    research.track(user_id, event, source='miniapp', screen='earnings',
+                   operation=str(uuid5(NAMESPACE_URL, f'ux-entry:{user_id}:{entry_id}')))
+
+
 async def api_shift_spend(request: web.Request) -> web.Response:
     from decimal import Decimal,InvalidOperation
-    from uuid import UUID,uuid5,NAMESPACE_URL
+    from uuid import UUID
     user_id, body = await _auth(request)
     if user_id is None:return body
     if (await db.get_or_create_user(user_id)).get('private_money_mode'):
@@ -217,9 +225,7 @@ async def api_shift_spend(request: web.Request) -> web.Response:
         code,reference=failure(error,area='expense',stage='save')
         return web.json_response({'error':'Не получил подтверждение. Повтори — второй расход не появится.',
                                   'code':code,'reference':reference},status=503,headers=NO_CACHE)
-    import research
-    research.track(user_id,'expense_added',source='miniapp',screen='earnings',
-                   operation=str(uuid5(NAMESPACE_URL,f"ux-entry:{user_id}:{result['id']}")))
+    _track_saved_money_entry(user_id,result['id'],'expense_added')
     # Saving succeeded even if refreshing the chart fails. Never ask to re-enter it.
     try:stats=await _stats_payload(request.app,user_id)
     except Exception as error:
@@ -336,6 +342,8 @@ async def api_calendar_edit(request: web.Request) -> web.Response:
         except (TypeError,ValueError):
             return web.json_response({'error':'Укажи оба времени или оставь оба пустыми.'},status=400,headers=NO_CACHE)
         await db.save_shift(user_id,day_iso,start,end)
+        import research
+        research.track(user_id,'shift_planned',source='miniapp',screen='calendar')
         warning=None
         try:
             if await gcal.is_connected(user_id):
@@ -369,6 +377,7 @@ async def api_calendar_edit(request: web.Request) -> web.Response:
                                      note='из календаря',work_date=day_iso,source_key='calendar:'+operation)
         except ValueError:
             return web.json_response({'error':'Эта попытка уже сохранила другую сумму. Обнови календарь.'},status=409,headers=NO_CACHE)
+        _track_saved_money_entry(user_id,entry['id'],'tip_added')
         return web.json_response({'saved':True,'id':entry['id']},headers=NO_CACHE)
     if action=='expense_add':
         try:
@@ -389,6 +398,7 @@ async def api_calendar_edit(request: web.Request) -> web.Response:
                                      note='из миниаппа',work_date=day_iso,source_key='calendar-expense:'+operation)
         except ValueError:
             return web.json_response({'error':'Эта попытка уже сохранила другой расход. Обнови календарь.'},status=409,headers=NO_CACHE)
+        _track_saved_money_entry(user_id,entry['id'],'expense_added')
         return web.json_response({'saved':True,'id':entry['id']},headers=NO_CACHE)
     try:
         entry_id=int(body.get('entry_id'))

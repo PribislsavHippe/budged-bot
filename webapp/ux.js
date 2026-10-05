@@ -3,10 +3,19 @@
   const tg=window.Telegram?.WebApp;
   let enabled=false,bot='';
   const pending=[];
+  function operationId(){
+    const random=window.crypto;
+    if(random?.randomUUID)return random.randomUUID();
+    if(!random?.getRandomValues)return undefined;
+    const bytes=random.getRandomValues(new Uint8Array(16));
+    bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
+    const hex=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
+    return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+  }
   function send(event,screen,error_code){
     if(!enabled){if(pending.length<15)pending.push([event,screen,error_code]);return;}
     try { fetch('/api/research/event',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({initData:tg?.initData||'',event,screen,error_code,operation:window.crypto?.randomUUID?.()}),
+      body:JSON.stringify({initData:tg?.initData||'',event,screen,error_code,operation:operationId()}),
       signal:AbortSignal.timeout(5000)}).catch(()=>{}); } catch (_) { /* Telemetry never blocks UI. */ }
   }
   window.uxEvent=send;

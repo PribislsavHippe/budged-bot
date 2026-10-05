@@ -8,7 +8,7 @@ ACTIVE={'activity','user_started','cabinet_opened','cabinet_loaded','tab_opened'
         'shift_planned','shift_closed','hours_recorded','sales_report_started','vision_started','problem_reported'}
 ERROR_EVENTS={'cabinet_load_error','sales_report_error','vision_failed'}
 STAGES=[('user_started','Пришли'),('onboarding_completed','Завершили знакомство'),
-        ('first_value_action','Сделали первую запись'),('cabinet_opened','Открыли кабинет'),
+        ('first_value_action','Первое полезное действие'),('cabinet_opened','Открыли кабинет'),
         ('d1','Вернулись на следующий день'),('shift_planned','Добавили график'),('d7','Вернулись на 7-й день')]
 
 

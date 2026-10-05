@@ -1,5 +1,6 @@
 """Integration at signed HTTP and bot boundaries; no live services."""
 import asyncio,os,sys,unittest,logging,io
+from datetime import timedelta
 from unittest.mock import patch,AsyncMock
 from types import SimpleNamespace as NS
 from uuid import uuid4
@@ -44,6 +45,41 @@ async def main():
                     for amount in (0,-1,'NaN',1.234):
                         await post('/api/shift_spend',expected=400,operation_id=str(uuid4()),amount=amount,category='Такси')
                     await post('/api/shift_spend',expected=400,operation_id='bad',amount=1,category='Такси')
+                # All three calendar saves emit content-free events after persistence.
+                day=(webapp_api.op_today()-timedelta(days=1)).isoformat()
+                entries=AsyncMock(side_effect=[{'id':41},{'id':41},{'id':42}])
+                save_shift=AsyncMock()
+                with patch.object(db,'get_or_create_user',new=AsyncMock(return_value={'id':2,'private_money_mode':False})),patch.object(db,'add_entry',new=entries),patch.object(db,'save_shift',new=save_shift),patch.object(webapp_api.gcal,'is_connected',new=AsyncMock(return_value=False)):
+                    before=len(events)
+                    tip_operation=str(uuid4())
+                    await post('/api/calendar_edit',uid=2,date=day,action='tip_add',amount=250,
+                               account='card',operation_id=tip_operation)
+                    await post('/api/calendar_edit',uid=2,date=day,action='tip_add',amount=250,
+                               account='card',operation_id=tip_operation)
+                    await post('/api/calendar_edit',uid=2,date=day,action='expense_add',amount=50,
+                               category='Такси',operation_id=str(uuid4()))
+                    await post('/api/calendar_edit',uid=2,date=day,action='shift_save',start='10:00',end='22:00')
+                    emitted=events[before:]
+                    assert [a[1] for a,kw in emitted]==['tip_added','tip_added','expense_added','shift_planned']
+                    assert all(a[0]==2 and kw['source']=='miniapp' for a,kw in emitted)
+                    assert all(not ({'amount','category','account','date','note'} & kw.keys()) for _,kw in emitted)
+                    assert emitted[0][1]['operation']==emitted[1][1]['operation']
+                    assert emitted[1][1]['operation']!=emitted[2][1]['operation']
+                    assert save_shift.await_count==1 and entries.await_count==3
+                    before=len(events)
+                    await post('/api/calendar_edit',uid=2,expected=400,date=day,action='tip_add',
+                               amount=0,account='card',operation_id=str(uuid4()))
+                    assert len(events)==before
+                with patch.object(db,'get_or_create_user',new=AsyncMock(return_value={'id':2,'private_money_mode':True})):
+                    before=len(events)
+                    await post('/api/calendar_edit',uid=2,expected=409,date=day,action='tip_add',
+                               amount=250,account='card',operation_id=str(uuid4()))
+                    assert len(events)==before
+                with patch.object(db,'save_shift',new=AsyncMock(side_effect=RuntimeError('save failed'))):
+                    before=len(events)
+                    await post('/api/calendar_edit',uid=2,expected=503,date=day,
+                               action='shift_save',start='10:00',end='22:00')
+                    assert len(events)==before
                 # Ownership alone does not grant research access; request body cannot override signed user.
                 for action in ['overview','journey','feedback']:
                     await post('/api/research/'+action,uid=2,expected=403,user_id=1,subject=str(uuid4()))
@@ -52,6 +88,21 @@ async def main():
                 await post('/api/research/event',uid=2,expected=400,event='tab_opened',screen='earnings',amount=1500)
                 await post('/api/research/event',uid=2,expected=400,event='tab_opened',screen='secret user text')
                 await post('/api/research/event',uid=2,expected=202,event='tab_opened',screen='earnings',operation=str(uuid4()))
+                with patch.object(db,'get_or_create_user',new=AsyncMock(return_value={'id':2,'private_money_mode':False})):
+                    await post('/api/research/event',uid=2,expected=400,event='tip_added',
+                               screen='earnings',operation=str(uuid4()))
+                with patch.object(db,'get_or_create_user',new=AsyncMock(return_value={'id':2,'private_money_mode':True})):
+                    for kind in ('tip_added','expense_added'):
+                        operation=str(uuid4());before=len(events)
+                        await post('/api/research/event',uid=2,expected=202,event=kind,
+                                   screen='earnings',operation=operation)
+                        assert events[before:]==[((2,kind),{'source':'miniapp','screen':'earnings',
+                            'error_code':None,'operation':operation})]
+                    await post('/api/research/event',uid=2,expected=400,event='tip_added',
+                               screen='earnings',operation=str(uuid4()),amount=1500)
+                    await post('/api/research/event',uid=2,expected=400,event='tip_added',screen='earnings')
+                    await post('/api/research/event',uid=2,expected=400,event='tip_added',
+                               screen='calendar',operation=str(uuid4()))
                 with patch.object(research,'pages',new=AsyncMock(return_value=[])) as pages:
                     d=await post('/api/research/overview',days=7)
                     assert d['new_users']==0 and d['retention']['d1']['rate'] is None

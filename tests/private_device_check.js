@@ -21,7 +21,9 @@ function device() {
 function client(storage,url='https://example.com/app') {
   const tg={...storage,initData:'signed-test',initDataUnsafe:{user:{id:7}}};
   const location={href:url};
-  const window={Telegram:{WebApp:tg},crypto:webcrypto};
+  const emitted=[];
+  const window={Telegram:{WebApp:tg},crypto:webcrypto,
+    uxEvent:(event,screen)=>emitted.push({event,screen})};
   const context=vm.createContext({window,crypto:webcrypto,location,URL,TextEncoder,TextDecoder,
     btoa:s=>Buffer.from(s,'binary').toString('base64'),
     atob:s=>Buffer.from(s,'base64').toString('binary'),
@@ -50,7 +52,7 @@ function client(storage,url='https://example.com/app') {
       return {ok:status===200,status,json:async()=>response};
     }});
   vm.runInContext(fs.readFileSync('webapp/private.js','utf8'),context);
-  return {pm:window.privateMoney,location};
+  return {pm:window.privateMoney,location,emitted};
 }
 (async()=>{
   const oldTelegram=device();oldTelegram.isVersionAtLeast=()=>false;
@@ -79,6 +81,7 @@ function client(storage,url='https://example.com/app') {
   assert.equal(server.active,true);
   assert.deepEqual(server.entries,[]);
   assert.equal(first.pm.entries.length,3);
+  assert.equal(first.emitted.length,0); // Migrating old records is not a new save.
   const reopened=client(phone);
   await reopened.pm.init();
   assert.equal(reopened.pm.active,true);
@@ -89,9 +92,20 @@ function client(storage,url='https://example.com/app') {
   reopened.location.href='https://example.com/app?private_entry='+sealed.payload+'&private_sig='+sealed.signature;
   assert.equal(await reopened.pm.importUrl(),'Запись сохранена на этом устройстве.');
   assert.equal(reopened.pm.entries.length,4);
+  assert.deepEqual(reopened.emitted,[{event:'tip_added',screen:'earnings'}]);
   reopened.location.href='https://example.com/app?private_entry='+sealed.payload+'&private_sig='+sealed.signature;
   assert.equal(await reopened.pm.importUrl(),'Эта запись уже есть на устройстве.');
   assert.equal(reopened.pm.entries.length,4);
+  assert.equal(reopened.emitted.length,1);
+  await reopened.pm.add({id:'local:expense',kind:'expense',account:'cash',signed_amount:-50,
+    category:'Такси',work_date:'2026-10-04',created_at:'2026-10-04T20:04:00+03:00'});
+  assert.deepEqual(reopened.emitted[1],{event:'expense_added',screen:'earnings'});
+  const beforeFailedSave=reopened.emitted.length,write=phone.DeviceStorage.setItem;
+  phone.DeviceStorage.setItem=(_key,_value,callback)=>callback(null,false);
+  await assert.rejects(reopened.pm.add({id:'local:failed',kind:'income',account:'cash',
+    signed_amount:1,category:'Чаевые',work_date:'2026-10-04'}));
+  phone.DeviceStorage.setItem=write;
+  assert.equal(reopened.emitted.length,beforeFailedSave);
   assert.equal(server.entries.length,0);
 
   const second=client(device());

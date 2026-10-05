@@ -8,6 +8,7 @@ import research
 from research_stats import summarize
 
 CLIENT_EVENTS={'cabinet_opened','cabinet_loaded','cabinet_load_error','tab_opened','help_opened'}
+PRIVATE_MONEY_EVENTS={'tip_added','expense_added'}
 _limits=OrderedDict()
 
 def allowed(uid,channel,limit):
@@ -32,8 +33,13 @@ async def handle(request):
         try:
             event=body.get('event');screen=body.get('screen');error=body.get('error_code')
             if set(body)-{'initData','event','screen','error_code','operation'}:raise ValueError()
-            if event not in CLIENT_EVENTS:raise ValueError()
+            if event not in CLIENT_EVENTS|PRIVATE_MONEY_EVENTS:raise ValueError()
             if error is not None and (event!='cabinet_load_error' or error not in {'network','timeout','auth','invalid'}):raise ValueError()
+            if event in PRIVATE_MONEY_EVENTS:
+                import db
+                if screen!='earnings' or body.get('operation') is None or \
+                        not (await db.get_or_create_user(uid)).get('private_money_mode'):
+                    raise ValueError()
             args=dict(source='miniapp',screen=screen,error_code=error,operation=body.get('operation'))
             research.payload(uid,event,**args)
         except (ValueError,TypeError):return respond({'error':'Неизвестное событие.'},400)
