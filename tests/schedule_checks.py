@@ -48,6 +48,12 @@ class Times(unittest.TestCase):
     def test_actual_overtime_and_rate(self):
         a,b=schedule.actual('2026-09-28','23:30','10:00:00')
         self.assertEqual(schedule.earned(a,b,350),{'hours':13.5,'income':4725})
+        a,b=schedule.actual('2026-10-05','В 21:40','10:00:00')
+        self.assertEqual(b.strftime('%H:%M'),'21:40')
+        self.assertEqual(schedule.hours_text(schedule.earned(a,b,None)['hours']),'11 ч 40 мин')
+        self.assertEqual(schedule.hours_text(13.5),'13 ч 30 мин')
+        self.assertEqual(schedule.hours_text(0.5),'30 мин')
+        with self.assertRaises(ValueError):schedule.actual('2026-10-05','в 25:40','10:00:00')
         a,b=schedule.actual('2026-09-28','00:30','11:00')
         self.assertEqual(b.date().isoformat(),'2026-09-29')
         self.assertIsNone(schedule.earned(a,b,None)['income'])
@@ -109,6 +115,7 @@ class Flow(unittest.IsolatedAsyncioTestCase):
             await chat.save_actual(self.cb('work:save:n'),state);state.clear.assert_not_awaited()
             self.assertNotIn('secret',self.message.answer.await_args.args[0])
             await chat.save_actual(self.cb('work:save:n'),state);state.clear.assert_awaited_once()
+            self.assertIn('Записал 13 ч 30 мин.',self.message.edit_text.await_args.args[0])
             self.assertIn('4725',self.message.edit_text.await_args.args[0])
     async def test_private_rate_snapshot_and_export(self):
         store.rows={'users':[{'id':7,'hourly_rate':350},{'id':8,'hourly_rate':999}], 'worked_shifts':[], 'shifts':[]}

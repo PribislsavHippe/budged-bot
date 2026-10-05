@@ -59,7 +59,8 @@ def clean_cells(raw,month_key):
     return sorted(result,key=lambda c:c['date'])
 
 def actual(day,value,planned_start):
-    parts=value.strip().replace('–','-').replace('—','-').split('-')
+    answer=re.sub(r'^в\s+(?=\d)', '', value.strip(), flags=re.IGNORECASE)
+    parts=answer.replace('–','-').replace('—','-').split('-')
     if len(parts)>2:raise ValueError('Напиши время ухода или начало и конец: 10–23:30.')
     start=clock(parts[0]) if len(parts)==2 else clock(planned_start)
     end=clock(parts[-1]);d=date.fromisoformat(day)
@@ -67,6 +68,11 @@ def actual(day,value,planned_start):
     if b<=a:b+=timedelta(days=1)
     if not timedelta(0)<b-a<=timedelta(hours=24):raise ValueError('Проверь начало и конец смены.')
     return a,b
+
+def hours_text(hours):
+    total_minutes=round(hours*60)
+    whole,minutes=divmod(total_minutes,60)
+    return f'{whole} ч'+(f' {minutes} мин' if minutes else '') if whole else f'{minutes} мин'
 
 def earned(start,end,rate):
     minutes=Decimal(str((end-start).total_seconds()))/60

@@ -243,7 +243,8 @@ async def ask_end(message,uid,day,state):
     start=row.get('starts_at') if row else None
     await state.set_state(Work.end)
     await state.set_data({'work_day':day,'work_start':start,'work_nonce':uuid4().hex[:12],'work_created':time.time()})
-    await message.answer(f'Смена {day}. Во сколько ты ушёл?'+(f' Начало по графику — {start[:5]}.' if start else '')+
+    shown_day=datetime.fromisoformat(day).strftime('%d.%m.%Y')
+    await message.answer(f'Смена {shown_day}. Во сколько ты ушёл?'+(f' Начало по графику — {start[:5]}.' if start else '')+
                          '\nМожно указать и фактическое начало: 10–23:30. /cancel — отменить.')
 
 
@@ -279,8 +280,8 @@ async def work_summary(message):
         result=schedule.earned(datetime.fromisoformat(row['actual_start']),datetime.fromisoformat(row['actual_end']),row['hourly_rate'])
         hours+=result['hours'];income+=result['income'] or 0;missing+=int(result['income'] is None)
         pay=f"{result['income']:g} ₽" if result['income'] is not None else 'без ставки'
-        lines.append(f"{int(row['shift_date'][-2:])}: {result['hours']:g} ч · {pay}")
-    await message.answer(f"{key} · Отработано {hours:g} ч за {len(rows)} смен.\nПо ставке: {income:g} ₽. Чаевые отдельно."+
+        lines.append(f"{int(row['shift_date'][-2:])}: {schedule.hours_text(result['hours'])} · {pay}")
+    await message.answer(f"{key} · Отработано {schedule.hours_text(hours)} за {len(rows)} смен.\nПо ставке: {income:g} ₽. Чаевые отдельно."+
                          (f"\nСмен без ставки: {missing}." if missing else '')+'\n\n'+'\n'.join(lines))
 
 
@@ -308,7 +309,7 @@ async def end_text(message,state):
     await state.update_data(actual_start=start.isoformat(),actual_end=end.isoformat())
     await state.set_state(Work.confirm)
     hours=schedule.earned(start,end,None)['hours']
-    await message.answer(f"{start.strftime('%d.%m %H:%M')} → {end.strftime('%d.%m %H:%M')}\nОтработано: {hours:g} ч. Верно?",
+    await message.answer(f"{start.strftime('%d.%m %H:%M')} → {end.strftime('%d.%m %H:%M')}\nОтработано: {schedule.hours_text(hours)}. Верно?",
                          reply_markup=buttons([('Да, записать',f"work:save:{data['work_nonce']}"),('Отмена','work:cancel')]))
 
 
@@ -326,7 +327,7 @@ async def save_actual(callback,state):
         await callback.message.answer('Не получил подтверждение. Нажми «Да, записать» ещё раз — вторая запись не появится.')
         return
     await state.clear();research.track(callback.from_user.id,'hours_recorded',screen='calendar')
-    text=f"Записал {result['hours']:g} ч."
+    text=f"Записал {schedule.hours_text(result['hours'])}."
     if result['income'] is not None:text+=f" Заработок по ставке: {result['income']:g} ₽. Чаевые считаются отдельно."
     await callback.message.edit_text(text,reply_markup=buttons([('Указать ставку',f"work:rate:{data['work_day']}")]) if result['income'] is None else None)
 
