@@ -68,6 +68,25 @@ class Flow(unittest.IsolatedAsyncioTestCase):
         photo.drafts.clear();store.rows.clear()
         self.message=NS(text='октябрь 2026',from_user=NS(id=7),answer=AsyncMock(),edit_text=AsyncMock())
     def cb(self,data,uid=7):return NS(data=data,from_user=NS(id=uid),message=self.message,answer=AsyncMock())
+    async def test_work_time_prompt_uses_human_date_and_cancel_button(self):
+        state=NS(set_state=AsyncMock(),set_data=AsyncMock(),get_state=AsyncMock(return_value=chat.Work.end.state),clear=AsyncMock())
+        with patch.object(schedule,'load_shift',new=AsyncMock(return_value={'starts_at':'10:00:00'})):
+            await chat.ask_end(self.message,7,'2026-10-05',state)
+        prompt=self.message.answer.await_args
+        self.assertIn('Смена 5 октября 2026.',prompt.args[0])
+        self.assertNotIn('/cancel',prompt.args[0])
+        self.assertEqual(prompt.kwargs['reply_markup'].inline_keyboard[0][0].text,'Отмена')
+        await chat.cancel_work(self.cb('work:cancel'),state)
+        state.clear.assert_awaited_once()
+        self.assertEqual(self.message.edit_text.await_args.args[0],'Время не записываю.')
+    async def test_rate_prompt_can_be_skipped_with_button(self):
+        state=NS(set_state=AsyncMock(),set_data=AsyncMock(),get_state=AsyncMock(return_value=chat.Work.rate.state),clear=AsyncMock())
+        await chat.ask_rate(self.cb('work:rate:2026-10-05'),state)
+        prompt=self.message.answer.await_args
+        self.assertNotIn('/cancel',prompt.args[0])
+        self.assertEqual(prompt.kwargs['reply_markup'].inline_keyboard[0][0].text,'Пропустить')
+        await chat.cancel_work(self.cb('work:cancel'),state)
+        self.assertEqual(self.message.edit_text.await_args.args[0],'Ставку не записываю.')
     async def test_sheet_link_requires_preview_and_saves_selected_row_only(self):
         sheet_id='1gx13NYuISndRuCzG6I-DpD3zlkmfzc_S4LF1Pk0_dwU'
         self.message.text=f'https://docs.google.com/spreadsheets/d/{sheet_id}/edit?usp=drivesdk'

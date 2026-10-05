@@ -9,6 +9,7 @@ from aiogram.fsm.state import State,StatesGroup
 from aiogram.types import InlineKeyboardMarkup as Markup,InlineKeyboardButton as Button
 from aiogram.dispatcher.event.bases import UNHANDLED
 import db,schedule,research,report_vision as vision,schedule_sheet
+from chat_dates import human_date
 from workday import op_today
 
 router=Router()
@@ -243,9 +244,9 @@ async def ask_end(message,uid,day,state):
     start=row.get('starts_at') if row else None
     await state.set_state(Work.end)
     await state.set_data({'work_day':day,'work_start':start,'work_nonce':uuid4().hex[:12],'work_created':time.time()})
-    shown_day=datetime.fromisoformat(day).strftime('%d.%m.%Y')
-    await message.answer(f'Смена {shown_day}. Во сколько ты ушёл?'+(f' Начало по графику — {start[:5]}.' if start else '')+
-                         '\nМожно указать и фактическое начало: 10–23:30. /cancel — отменить.')
+    await message.answer(f'Смена {human_date(day)}. Во сколько ты ушёл?'+(f' Начало по графику — {start[:5]}.' if start else '')+
+                         '\nМожно указать и фактическое начало: 10–23:30.',
+                         reply_markup=buttons([('Отмена','work:cancel')]))
 
 
 @router.message(Command('hours'))
@@ -334,7 +335,11 @@ async def save_actual(callback,state):
 
 @router.callback_query(F.data=='work:cancel')
 async def cancel_work(callback,state):
-    await state.clear();await callback.answer();await callback.message.edit_text('Не записываю.')
+    current=await state.get_state()
+    if current not in {Work.end.state,Work.confirm.state,Work.rate.state}:
+        await callback.answer('Этот вопрос уже закрыт.');return
+    await state.clear();await callback.answer()
+    await callback.message.edit_text('Ставку не записываю.' if current==Work.rate.state else 'Время не записываю.')
 
 
 @router.message(Command('rate'))
@@ -342,7 +347,8 @@ async def rate_command(message,state):
     await state.set_state(Work.rate);await state.set_data({})
     value=message.text.split(maxsplit=1)
     if len(value)==2:await set_rate(message,state,value[1])
-    else:await message.answer('Сколько рублей в час? Например, 350. /cancel — отменить.')
+    else:await message.answer('Сколько рублей в час? Например, 350.',
+                              reply_markup=buttons([('Отмена','work:cancel')]))
 
 
 @router.callback_query(F.data.startswith('work:rate:'))
@@ -351,14 +357,18 @@ async def ask_rate(callback,state):
     try:day=date.fromisoformat(callback.data.rsplit(':',1)[-1]).isoformat()
     except ValueError:return
     await callback.answer();await state.set_state(Work.rate);await state.set_data({'rate_day':day})
-    await callback.message.answer('Сколько рублей в час? Например, 350. Ставку видишь только ты в боте. /cancel — пропустить.')
+    await callback.message.answer('Сколько рублей в час? Например, 350. Ставку видишь только ты в боте.',
+                                  reply_markup=buttons([('Пропустить','work:cancel')]))
 
 
 async def set_rate(message,state,value):
     try:
         rate=Decimal(value.replace(' ','').replace(',','.'))
         if not rate.is_finite() or not 0<rate<=1000000 or rate!=rate.quantize(Decimal('.01')):raise ValueError()
-    except (ValueError,InvalidOperation):await message.answer('Напиши ставку числом, например 350.');return
+    except (ValueError,InvalidOperation):
+        await message.answer('Напиши ставку числом, например 350.',
+                             reply_markup=buttons([('Пропустить','work:cancel')]))
+        return
     data=await state.get_data();await db.get_or_create_user(message.from_user.id)
     try:
         await db._execute(db.supabase.rpc('set_hourly_rate',{'actor':message.from_user.id,'rate':float(rate),'work_day':data.get('rate_day')}))
