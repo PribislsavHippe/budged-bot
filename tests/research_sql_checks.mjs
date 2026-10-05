@@ -8,6 +8,7 @@ CREATE TABLE users(id BIGINT PRIMARY KEY); INSERT INTO users VALUES(1);`);
 await db.exec(await fs.readFile(new URL('../migration_v9.sql',import.meta.url),'utf8'));
 await db.exec(await fs.readFile(new URL('../migration_v10.sql',import.meta.url),'utf8'));
 await db.exec(await fs.readFile(new URL('../migration_v16.sql',import.meta.url),'utf8'));
+await db.exec(await fs.readFile(new URL('../migration_v18.sql',import.meta.url),'utf8'));
 let q=await db.query('SELECT cohort,onboarding_state,onboarding_version FROM research_subjects WHERE user_id=1');
 assert.deepEqual(q.rows,[{cohort:'existing',onboarding_state:'legacy',onboarding_version:0}]);
 await db.exec('INSERT INTO users VALUES(2),(3),(4)');
@@ -25,6 +26,9 @@ await record(1,'onboarding_started');q=await db.query('SELECT onboarding_state F
 await record(4,'onboarding_started');await record(4,'shift_planned');
 q=await db.query(`SELECT event FROM analytics_events e JOIN research_subjects s ON s.id=e.subject_id WHERE s.user_id=4`);
 assert.deepEqual(new Set(q.rows.map(r=>r.event)),new Set(['onboarding_started','shift_planned','first_value_action','onboarding_completed']));
+for(const kind of ['schedule_import_started','schedule_previewed','schedule_imported'])await record(4,kind);
+q=await db.query(`SELECT event FROM analytics_events e JOIN research_subjects s ON s.id=e.subject_id WHERE s.user_id=4 AND event LIKE 'schedule_%'`);
+assert.deepEqual(new Set(q.rows.map(r=>r.event)),new Set(['schedule_import_started','schedule_previewed','schedule_imported']));
 for(const role of ['anon','authenticated']){
   await db.exec('SET ROLE '+role);
   for(const table of ['research_subjects','analytics_events','feedback','restaurants'])await assert.rejects(db.query('SELECT * FROM '+table),/permission denied/);
@@ -35,5 +39,5 @@ await assert.rejects(record(2,'financial_amount'),/check constraint/);
 await db.exec(`INSERT INTO feedback(subject_id,category,body,screen,app_version) SELECT id,'idea','Test only','help','test' FROM research_subjects WHERE user_id=2`);
 await db.exec('DELETE FROM users WHERE id=2');
 q=await db.query('SELECT count(*)::int n FROM feedback');assert.equal(q.rows[0].n,0);
-console.log('Research SQL checks passed: v16, baseline, milestones, dedupe, skip, service role, RLS, cascade deletion.');
+console.log('Research SQL checks passed: v18, baseline, milestones, dedupe, skip, service role, RLS, cascade deletion.');
 await db.close();

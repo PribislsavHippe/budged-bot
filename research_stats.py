@@ -5,7 +5,8 @@ from zoneinfo import ZoneInfo
 
 TZ=ZoneInfo('Europe/Moscow')
 ACTIVE={'activity','user_started','cabinet_opened','cabinet_loaded','tab_opened','help_opened','tip_added','expense_added',
-        'shift_planned','shift_closed','hours_recorded','sales_report_started','vision_started','problem_reported'}
+        'shift_planned','shift_closed','hours_recorded','sales_report_started','vision_started','problem_reported',
+        'schedule_import_started','schedule_previewed','schedule_imported'}
 ERROR_EVENTS={'cabinet_load_error','sales_report_error','vision_failed'}
 STAGES=[('user_started','Пришли'),('onboarding_completed','Завершили знакомство'),
         ('first_value_action','Первое полезное действие'),('cabinet_opened','Открыли кабинет'),
@@ -14,6 +15,55 @@ STAGES=[('user_started','Пришли'),('onboarding_completed','Заверши�
 
 def dt(value):return datetime.fromisoformat(value.replace('Z','+00:00'))
 def pct(n,d):return round(n/d*100,1) if d else None
+
+
+def task_metrics(selected,window,today):
+    """Only measurements supported by content-free events in this window."""
+    def people(kind,screen=None):
+        return {e['subject_id'] for e in window if e['event']==kind and
+                (screen is None or e.get('screen')==screen)}
+    tips_by_day=defaultdict(set)
+    imports_by_day=defaultdict(set)
+    sources=defaultdict(set)
+    for e in window:
+        if e['event']=='schedule_imported':
+            imports_by_day[e['subject_id']].add(dt(e['occurred_at']).astimezone(TZ).date())
+        if e['event']!='tip_added':continue
+        sid=e['subject_id']
+        tips_by_day[sid].add(dt(e['occurred_at']).astimezone(TZ).date())
+        sources[e.get('source')].add(sid)
+    eligible={sid for sid,dates in tips_by_day.items() if min(dates)<today}
+    repeated={sid for sid,dates in tips_by_day.items() if len(dates)>1}
+    import_eligible={sid for sid,dates in imports_by_day.items() if min(dates)<today}
+    import_repeated={sid for sid,dates in imports_by_day.items() if len(dates)>1}
+    schedule_events={'shift_planned','vision_started','vision_completed','vision_failed',
+                     'schedule_import_started','schedule_previewed','schedule_imported'}
+    tip_events={'tip_added','tab_opened','cabinet_opened'}
+    def recent(kind):
+        relevant=[e for e in window if e['event'] in kind and
+                  (e['event'] not in {'tab_opened','cabinet_opened'} or e.get('screen')=='earnings') and
+                  (e['event'] not in {'vision_started','vision_completed','vision_failed'} or e.get('screen')=='calendar')]
+        latest={}
+        for e in relevant:
+            sid=e['subject_id']
+            if sid not in latest or dt(e['occurred_at'])>dt(latest[sid]['occurred_at']):latest[sid]=e
+        return [{'id':sid,'label':f"U-{selected[sid]['label']:04d}",
+                 'last_event':row['event'],'last_at':row['occurred_at']}
+                for sid,row in sorted(latest.items(),key=lambda item:dt(item[1]['occurred_at']),reverse=True)[:20]]
+    return {
+        'tips':{'saved':len(tips_by_day),'repeat':len(repeated),'repeat_eligible':len(eligible),
+                'miniapp_opened':len(people('tab_opened','earnings')|people('cabinet_opened','earnings')),
+                'sources':{key:len(sources[key]) for key in ('bot','miniapp')},
+                'recent':recent(tip_events)},
+        'schedule':{'saved':len(people('shift_planned')),'imported':len(imports_by_day),
+                    'repeat':len(import_repeated),'repeat_eligible':len(import_eligible),
+                    'import_started':len(people('schedule_import_started','calendar')),
+                    'previewed':len(people('schedule_previewed','calendar')),
+                    'recognition_started':len(people('vision_started','calendar')),
+                    'recognition_completed':len(people('vision_completed','calendar')),
+                    'recognition_failed':len(people('vision_failed','calendar')),
+                    'recent':recent(schedule_events)}
+    }
 
 def summarize(subjects,events,days=30,now=None,ux_version=None):
     now=now or datetime.now(timezone.utc)
@@ -86,4 +136,5 @@ def summarize(subjects,events,days=30,now=None,ux_version=None):
             'errors':[{'event':k[0],'screen':k[1],'code':k[2],'count':n} for k,n in errors.most_common()],
             'features':[{'event':name,'users':len({e['subject_id'] for e in window if e['event']==name}),
                          'count':sum(e['event']==name for e in window)} for name in sorted({e['event'] for e in window})],
+            'tasks':task_metrics(selected,window,today),
             'users':users}

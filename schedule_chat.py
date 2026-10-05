@@ -43,6 +43,7 @@ async def sheet_link(message):
                 report={'sheet_id':sheet_id,'gid':gid})
     drafts[message.from_user.id]=draft
     asyncio.get_running_loop().call_later(DRAFT_TTL,expire,message.from_user.id,draft)
+    research.track(message.from_user.id,'schedule_import_started',screen='calendar')
     await message.answer('За какой месяц этот график? Напиши, например: октябрь 2026. '
                          'Прочитаю только лист этого месяца. /cancel — отменить.')
 
@@ -92,6 +93,7 @@ async def start_photo(callback,draft):
     from report_photo import LimitedImage,_recognition_slots
     if not schedule.enabled():
         await callback.message.answer('Импорт графика пока не подключён.');return
+    research.track(callback.from_user.id,'schedule_import_started',screen='calendar')
     research.track(callback.from_user.id,'vision_started',screen='calendar')
     draft.phase='schedule_reading'
     await callback.message.edit_text('Читаю имена в графике…')
@@ -158,6 +160,7 @@ async def photo_action(callback):
             await callback.message.edit_text('Проверь график:\n'+'\n'.join(lines)+
                 '\n\nСохраню только эти смены. Остальные записанные дни останутся.',
                 reply_markup=photo_buttons(draft,[('Сохранить','save'),('Отмена','cancel')]))
+            research.track(callback.from_user.id,'schedule_previewed',screen='calendar')
             return
         if action.startswith('row') and draft.phase=='schedule_name':
             try:
@@ -177,6 +180,7 @@ async def photo_action(callback):
                 await callback.message.answer('Не получил подтверждение. Нажми «Сохранить» ещё раз — повтор не добавит вторые смены.');return
             cells=draft.report['cells'];expire(callback.from_user.id,draft)
             await research.record(callback.from_user.id,'shift_planned',screen='calendar')
+            research.track(callback.from_user.id,'schedule_imported',screen='calendar')
             from ux_chat import schedule_saved
             await schedule_saved(callback.from_user.id)
             await callback.message.edit_text(f'Сохранил смены: {len(cells)}. В конце каждой спрошу, во сколько ты ушёл. '
@@ -227,6 +231,7 @@ async def photo_month(message):
             draft.report['cells']=cells;draft.phase='schedule_review'
             lines=[html.escape(draft.report['name']),month]+[f"{int(c['date'][-2:])}: {c['start']}–{c['end']}" for c in cells]
             await message.answer('Проверь график:\n'+ '\n'.join(lines)+'\n\nСохраню только эти смены. Остальные записанные дни останутся.',reply_markup=photo_buttons(draft,[('Сохранить','save'),('Другой месяц','month'),('Отмена','cancel')]))
+            research.track(message.from_user.id,'schedule_previewed',screen='calendar')
         except (ValueError,KeyError,TypeError,AttributeError,OSError,vision.VisionError) as error:
             if attempted:research.track(message.from_user.id,'vision_failed',screen='calendar',error_code='vision')
             text=str(error) if isinstance(error,(ValueError,vision.VisionError)) and str(error) else 'Не разобрал часы. Пришли более чёткий график.'

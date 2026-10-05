@@ -65,13 +65,15 @@ class Flow(unittest.IsolatedAsyncioTestCase):
     async def test_sheet_link_requires_preview_and_saves_selected_row_only(self):
         sheet_id='1gx13NYuISndRuCzG6I-DpD3zlkmfzc_S4LF1Pk0_dwU'
         self.message.text=f'https://docs.google.com/spreadsheets/d/{sheet_id}/edit?usp=drivesdk'
-        await chat.sheet_link(self.message)
+        with patch.object(chat.research,'track') as started:
+            await chat.sheet_link(self.message)
+        started.assert_called_once_with(7,'schedule_import_started',screen='calendar')
         draft=photo.drafts[7]
         self.assertEqual(draft.phase,'schedule_sheet_month')
         self.message.text='октябрь 2026'
         rows=[{'name':'Лёша','row':8,'cells':[{'day':5,'text':'14-23'}],'invalid':[]},
               {'name':'Коллега','row':9,'cells':[{'day':6,'text':'9-16'}],'invalid':[]}]
-        with patch('schedule_sheet.read',new=AsyncMock(return_value=rows)) as read,patch.object(schedule,'save',new=AsyncMock()) as save,patch('google_calendar.is_connected',new=AsyncMock(return_value=False)):
+        with patch('schedule_sheet.read',new=AsyncMock(return_value=rows)) as read,patch.object(schedule,'save',new=AsyncMock()) as save,patch('google_calendar.is_connected',new=AsyncMock(return_value=False)),patch.object(chat.research,'track') as tracked:
             await chat.sheet_month(self.message)
             read.assert_awaited_once_with(sheet_id,'2026-10',None)
             self.assertEqual(draft.phase,'schedule_sheet_name')
@@ -82,6 +84,7 @@ class Flow(unittest.IsolatedAsyncioTestCase):
             save.assert_not_awaited()
             await chat.photo_action(self.cb(f'sch:{draft.nonce}:save'))
             save.assert_awaited_once_with(7,[{'date':'2026-10-05','start':'14:00','end':'23:00'}])
+            self.assertEqual([c.args[1] for c in tracked.call_args_list],['schedule_previewed','schedule_imported'])
     async def test_read_confirm_no_other_user_write(self):
         draft=photo.Draft('nonce','id','file',phase='schedule_month',image=b'photo',report={'name':'Алексей','index':7})
         photo.drafts[7]=draft

@@ -63,3 +63,47 @@ class ResearchMetricsTests(unittest.TestCase):
         self.assertEqual(d['active_today'],1)
         self.assertEqual(d['active_users'],1)
         self.assertEqual(len(d['daily_activity']),30)
+
+    def test_task_metrics_count_people_and_repeat_tips_on_different_days(self):
+        events=[event('1','tip_added',19,source='bot'),event('1','tip_added',19,11,source='bot'),
+                event('1','tip_added',20,source='miniapp'),event('2','tip_added',28,source='miniapp'),
+                event('3','shift_planned',19,screen='calendar'),event('3','shift_planned',20,screen='calendar'),
+                event('4','vision_started',19,screen='calendar'),event('4','vision_failed',19,screen='calendar'),
+                event('4','vision_started',20,screen='sales')]
+        tasks=summarize(self.subjects(),events,now=NOW)['tasks']
+        self.assertEqual(tasks['tips']['saved'],2)
+        self.assertEqual(tasks['tips']['repeat'],1)
+        self.assertEqual(tasks['tips']['repeat_eligible'],1)
+        self.assertEqual(tasks['tips']['sources'],{'bot':1,'miniapp':2})
+        self.assertEqual(tasks['schedule']['saved'],1)
+        self.assertEqual(tasks['schedule']['repeat'],0)
+        self.assertEqual(tasks['schedule']['repeat_eligible'],0)
+        self.assertEqual(tasks['schedule']['recognition_started'],1)
+        self.assertEqual(tasks['schedule']['recognition_failed'],1)
+
+    def test_task_metrics_do_not_call_a_miniapp_open_a_tip_attempt(self):
+        events=[event('1','tab_opened',19,screen='earnings'),event('1','cabinet_opened',19,screen='earnings'),
+                event('3','cabinet_opened',19,screen='restaurant'),
+                event('2','tip_added',20,source='bot'),event('3','vision_completed',21,screen='sales')]
+        tasks=summarize(self.subjects(),events,now=NOW)['tasks']
+        self.assertEqual(tasks['tips']['miniapp_opened'],1)
+        self.assertEqual(tasks['tips']['saved'],1)
+        self.assertEqual({row['id'] for row in tasks['tips']['recent']},{'1','2'})
+        self.assertEqual(tasks['schedule']['recognition_completed'],0)
+        self.assertEqual(tasks['schedule']['saved'],0)
+
+    def test_schedule_repeat_requires_two_confirmed_import_days(self):
+        events=[event('1','schedule_import_started',19,screen='calendar'),
+                event('1','schedule_previewed',19,screen='calendar'),
+                event('1','schedule_imported',19,screen='calendar'),
+                event('1','schedule_imported',19,11,screen='calendar'),
+                event('1','schedule_imported',20,screen='calendar'),
+                event('2','schedule_imported',28,screen='calendar'),
+                event('3','shift_planned',19,screen='chat')]
+        s=summarize(self.subjects(),events,now=NOW)['tasks']['schedule']
+        self.assertEqual(s['import_started'],1)
+        self.assertEqual(s['previewed'],1)
+        self.assertEqual(s['imported'],2)
+        self.assertEqual(s['repeat'],1)
+        self.assertEqual(s['repeat_eligible'],1)
+        self.assertEqual(s['saved'],1)
