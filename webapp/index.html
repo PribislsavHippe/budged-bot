@@ -171,8 +171,8 @@
   .cal-title { font-size:15px; }
   .calendar-disclosure { margin-top:28px; border:0; }
   .calendar-disclosure>summary { font-size:24px; color:var(--ink); font-weight:400; padding:0 0 18px; }
-  .app-footer { flex-direction:row; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:8px; border:0; margin:48px 0 10px; padding:0; }
-  .app-footer button { padding:8px 0; min-height:40px; color:var(--ink); font:400 12px 'Onest',sans-serif; white-space:nowrap; }
+  .app-footer { display:flex; flex-direction:row; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:8px; border:0; margin:48px 0 10px; padding:0; }
+  .app-footer button { appearance:none; -webkit-appearance:none; border:0; border-radius:0; box-shadow:none; background:transparent; padding:8px 0; min-height:40px; color:var(--ink); font:400 clamp(10px, 3vw, 12px) 'Onest',sans-serif; white-space:nowrap; cursor:pointer; }
   #ux-access-retry:not([hidden]) { width:100%; text-align:left; }
   .calendar-disclosure>summary { list-style:none; }
   .calendar-disclosure>summary::-webkit-details-marker { display:none; }
