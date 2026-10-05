@@ -767,8 +767,11 @@ function paintIphoneCalendar(data){
   const box=document.getElementById('iphone-calendar');
   box.hidden=!data?.available;
   if(!data?.available)return;
-  document.getElementById('iphone-calendar-toggle').textContent='Подключить iPhone ›';
+  document.getElementById('iphone-calendar-toggle').textContent=data.enabled
+    ? 'Открыть настройку iPhone ›' : 'Подключить iPhone ›';
   document.getElementById('iphone-calendar-link').value=data.feed_url||'';
+  iphoneCalendarStatus(data.enabled
+    ? 'Ссылка готова. Проверь подписку в «Календаре» iPhone.' : '');
   if(!data.enabled){document.getElementById('iphone-calendar-help').hidden=true;document.getElementById('iphone-calendar-help').open=false;}
 }
 function iphoneCalendarStatus(message){
@@ -776,7 +779,7 @@ function iphoneCalendarStatus(message){
   status.textContent=message;status.hidden=!message;
 }
 function openIphoneCalendar(){
-  const url=iphoneCalendarData?.feed_url;
+  const url=iphoneCalendarData?.setup_url;
   document.getElementById('iphone-calendar-help').hidden=false;
   if(url&&tg?.openLink)tg.openLink(url);
   else if(url)window.open(url,'_blank','noopener');
@@ -792,7 +795,7 @@ document.getElementById('iphone-calendar-toggle').onclick=async function(){
   iphoneCalendarBusy=true;
   this.disabled=true;iphoneCalendarStatus('Подготавливаю календарь…');
   try{paintIphoneCalendar(await iphoneCalendarRequest('create'));
-    iphoneCalendarStatus('Готово. Нажми ещё раз, чтобы открыть календарь.');}
+    iphoneCalendarStatus('Ссылка готова. Нажми ещё раз, чтобы открыть инструкцию по подписке.');}
   catch(e){iphoneCalendarStatus(e.message);}
   finally{iphoneCalendarBusy=false;this.disabled=false;}
 };
