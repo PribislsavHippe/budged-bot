@@ -1052,14 +1052,14 @@ document.getElementById('private-clear').onclick=async function () {
 };
 document.getElementById('private-confirm').onclick=async function () {
   const status=document.getElementById('private-status');
-  this.disabled=true;status.textContent='Переношу и проверяю записи…';
+  this.disabled=true;status.textContent='Начинаю перенос…';
   try {
     if (privateMoney.state.active) await privateMoney.rotate();
-    else await privateMoney.activate();
+    else await privateMoney.activate(message=>{status.textContent=message;});
     status.textContent='Готово. Личные записи теперь на этом устройстве.';
     privateButtonText();load();if(calYear)loadMonth(calYear,calMonth);
     this.hidden=true;
-  } catch (error) {status.textContent=error.message;}
+  } catch (error) {status.textContent=error.message||'Не удалось завершить перенос. Открой приложение снова и повтори.';}
   finally {this.disabled=false;}
 };
 document.getElementById('private-exit').onclick=async function () {

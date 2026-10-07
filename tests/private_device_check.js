@@ -19,13 +19,14 @@ function device() {
                        setItem:(key,value,cb)=>{map.set(key,value);cb(null,true);}});
   return {DeviceStorage:storage(local),SecureStorage:storage(secure),_local:local,_secure:secure};
 }
-function client(storage,url='https://example.com/app') {
+function client(storage,url='https://example.com/app',fastTimeouts=false) {
   const tg={...storage,initData:'signed-test',initDataUnsafe:{user:{id:7}}};
   const location={href:url};
   const emitted=[];
   const window={Telegram:{WebApp:tg},crypto:webcrypto,
     uxEvent:(event,screen)=>emitted.push({event,screen})};
   const context=vm.createContext({window,crypto:webcrypto,location,URL,TextEncoder,TextDecoder,
+    AbortController,setTimeout:fastTimeouts?(fn,ms)=>setTimeout(fn,Math.min(ms,20)):setTimeout,clearTimeout,
     btoa:s=>Buffer.from(s,'binary').toString('base64'),
     atob:s=>Buffer.from(s,'base64').toString('binary'),
     history:{replaceState:(_a,_b,next)=>{location.href='https://example.com'+next;}},
@@ -85,6 +86,13 @@ function client(storage,url='https://example.com/app') {
   const failedClient=client(failing);
   await failedClient.pm.init();
   await assert.rejects(failedClient.pm.activate());
+  assert.equal(server.active,false);
+  assert.equal(server.entries.length,2);
+
+  const silent=device(),silentClient=client(silent,'https://example.com/app',true);
+  await silentClient.pm.init();
+  silent.SecureStorage.getItem=()=>{};
+  await assert.rejects(silentClient.pm.activate(),/Телефон не ответил/);
   assert.equal(server.active,false);
   assert.equal(server.entries.length,2);
 

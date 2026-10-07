@@ -12,6 +12,15 @@
     exitArchivePending:false,exitConflict:false,exiting:false,archiveCount:0,today:null};
   let syncing=null;
   let deactivating=false;
+  const storageTimeoutMs=15000;
+  const requestTimeoutMs=30000;
+
+  function within(promise,ms,message) {
+    let timer;
+    return Promise.race([promise,new Promise((_,reject)=>{
+      timer=setTimeout(()=>reject(new Error(message)),ms);
+    })]).finally(()=>clearTimeout(timer));
+  }
 
   function encode(bytes) {
     let value='';
@@ -24,20 +33,35 @@
   }
   function item(storage,method,key,value) {
     return new Promise((resolve,reject)=>{
-      const done=(error,result)=>error ? reject(new Error(String(error)))
-        : method==='setItem' && result!==true
-          ? reject(new Error('Устройство не подтвердило сохранение. Записи в базе не удалены.'))
-          : resolve(result);
-      if (method==='setItem') storage.setItem(key,value,done);
-      else storage.getItem(key,done);
+      let settled=false;
+      const timer=setTimeout(()=>done(new Error('Телефон не ответил на запрос хранилища. Открой приложение снова и проверь состояние журнала.')),storageTimeoutMs);
+      const done=(error,result)=>{
+        if (settled) return;
+        settled=true;clearTimeout(timer);
+        if (error) reject(error instanceof Error?error:new Error(String(error)));
+        else if (method==='setItem' && result!==true)
+          reject(new Error('Устройство не подтвердило сохранение. Записи в базе не удалены.'));
+        else resolve(result);
+      };
+      try {
+        if (method==='setItem') storage.setItem(key,value,done);
+        else storage.getItem(key,done);
+      } catch (error) {done(error);}
     });
   }
   async function request(path,extra) {
-    const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',
-      body:JSON.stringify({initData:tg?.initData||'',...extra})});
-    const body=await response.json();
-    if (!response.ok) throw new Error(body.error||'Не получилось связаться с ботом.');
-    return body;
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),requestTimeoutMs);
+    try {
+      const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',
+        signal:controller.signal,body:JSON.stringify({initData:tg?.initData||'',...extra})});
+      const body=await response.json();
+      if (!response.ok) throw new Error(body.error||'Не получилось связаться с ботом.');
+      return body;
+    } catch (error) {
+      if (controller.signal.aborted) throw new Error('Бот долго не отвечает. Открой приложение снова и повтори перенос.');
+      throw error;
+    } finally {clearTimeout(timer);}
   }
   async function aesKey(create) {
     let raw=await item(tg.SecureStorage,'getItem',aesName);
@@ -85,8 +109,9 @@
         {name:'RSA-OAEP',hash:'SHA-256'},false,['decrypt']),publicJwk:keys.public};
     }
     if (!create) throw new Error('На этом устройстве нет ключа для пересланных записей.');
-    const pair=await crypto.subtle.generateKey({name:'RSA-OAEP',modulusLength:2048,
-      publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['encrypt','decrypt']);
+    const pair=await within(crypto.subtle.generateKey({name:'RSA-OAEP',modulusLength:2048,
+      publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['encrypt','decrypt']),
+      requestTimeoutMs,'Телефон долго готовит ключ. Открой приложение снова и повтори перенос.');
     const publicJwk=await crypto.subtle.exportKey('jwk',pair.publicKey);
     const privateJwk=await crypto.subtle.exportKey('jwk',pair.privateKey);
     publicJwk.alg='RSA-OAEP-256';
@@ -146,12 +171,14 @@
     }
     return state;
   }
-  async function activate() {
+  async function activate(progress=()=>{}) {
     if (!available()) throw new Error('Обнови Telegram: хранение на устройстве здесь недоступно.');
     if (state.lostReason==='unreadable')
       throw new Error('Не удалось прочитать прежний журнал на устройстве. Данные в базе сохранены.');
+    progress('Получаю записи из базы…');
     const result=await request('/api/private/prepare',{});
     if (result.active) throw new Error('Приватный режим уже включён.');
+    progress('Готовлю ключи на телефоне…');
     const keys=await rsaKeys(true);
     await aesKey(true);
     const byId=new Map(state.entries.map(e=>[String(e.id),e]));
@@ -159,10 +186,12 @@
     state.entries=[...byId.values()];
     state.receipts=[...new Set([...state.receipts,...state.entries.map(e=>String(e.id))])];
     const saved=JSON.stringify({entries:state.entries,receipts:state.receipts});
+    progress('Сохраняю и проверяю записи на телефоне…');
     await saveLocal();
     await loadLocal();
     if (JSON.stringify({entries:state.entries,receipts:state.receipts})!==saved)
       throw new Error('Перенос не подтвердился. Серверные записи сохранены.');
+    progress('Подтверждаю перенос в базе…');
     try {
       await request('/api/private/activate',{entry_ids:result.entries.map(e=>e.id),public_key:keys.publicJwk});
     } catch (error) {
