@@ -11,6 +11,17 @@ with patch.dict(os.environ, {'SUPABASE_URL':'https://example.invalid','SUPABASE_
     import report_photo as photo
 
 class IdentityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pending_profile_describes_personal_access_without_waiting(self):
+        message=NS(from_user=NS(id=42),answer=AsyncMock())
+        row={'id':'00000000-0000-0000-0000-000000000001','restaurant_name':'Кафе',
+             'report_name':'Семён Тестов','status':'pending','has_admin':True}
+        with patch.object(identity,'profile',new=AsyncMock(return_value=row)):
+            await chat.profile(message)
+        answer=message.answer.await_args.args[0]
+        self.assertIn('Личные записи уже доступны',answer)
+        self.assertIn('Данные из отчёта ресторана пока не подключены',answer)
+        self.assertNotIn('администратора',answer)
+
     async def test_exact_unique_verified_match(self):
         link={'status':'approved','has_admin':True,'name_key':'семен тестов'}
         rows=[{'name':'Другой человек'},{'name':' Семён   Тестов '}]
@@ -94,7 +105,7 @@ class IdentityTests(unittest.IsolatedAsyncioTestCase):
                 if text.startswith('/'):msg['entities']=[{'type':'bot_command','offset':0,'length':len(text.split()[0])}]
             await dp.feed_raw_update(bot,{'update_id':1,'message':msg})
         state=dp.fsm.get_context(bot=bot,chat_id=42,user_id=42)
-        with patch.dict(os.environ,{'IDENTITY_ENABLED':'1'}),patch.object(Message,'answer',new=AsyncMock()),patch.object(identity,'request',new=AsyncMock(return_value={'status':'pending'})) as request,patch.object(photo.vision,'configured',return_value=True):
+        with patch.dict(os.environ,{'IDENTITY_ENABLED':'1'}),patch.object(Message,'answer',new=AsyncMock()),patch.object(identity,'request',new=AsyncMock(return_value={'status':'pending','report_name':'Семён Тестов'})) as request,patch.object(photo.vision,'configured',return_value=True):
             await send('/start team_token');self.assertEqual(await state.get_state(),chat.Identification.name.state)
             await send('/cancel');self.assertIsNone(await state.get_state());request.assert_not_awaited()
             await send('/start team_token');await send('Семён Тестов')

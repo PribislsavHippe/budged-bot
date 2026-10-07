@@ -41,9 +41,11 @@ class Flows(unittest.IsolatedAsyncioTestCase):
         import identity_chat
         message=self.message('Тест Имя')
         state=NS(get_data=AsyncMock(return_value={'invite_token':'test-token'}),clear=AsyncMock())
-        with patch.object(identity_chat.identity,'request',new=AsyncMock(return_value={'status':'pending'})),patch.object(handlers.db,'get_or_create_user',new=AsyncMock(return_value={'id':5,'tutorial_step':'new'})),patch.object(handlers.db,'_execute',new=AsyncMock()),patch.object(research,'record',new=AsyncMock(return_value=None)),patch.object(research,'track'):
+        with patch.object(identity_chat.identity,'request',new=AsyncMock(return_value={'status':'pending','report_name':'Тест Имя'})),patch.object(handlers.db,'get_or_create_user',new=AsyncMock(return_value={'id':5,'tutorial_step':'new'})),patch.object(handlers.db,'_execute',new=AsyncMock()),patch.object(research,'record',new=AsyncMock(return_value=None)),patch.object(research,'track'):
             await identity_chat.register_name(message,state)
             state.clear.assert_awaited_once()
+            self.assertIn('Теперь можно пользоваться ботом',message.answer.await_args_list[0].args[0])
+            self.assertNotIn('подтверждения',message.answer.await_args_list[0].args[0])
             self.assertIn('чай 1500',message.answer.await_args.args[0])
 
     async def test_help_is_one_short_choice_and_faq_has_an_answer(self):

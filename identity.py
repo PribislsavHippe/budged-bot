@@ -34,14 +34,14 @@ async def action(uid, kind, args):
         messages = {'identity_select_restaurant':'Выбери ресторан в миниаппе — там у каждого своя ссылка и список сотрудников.',
                     'identity_forbidden':'Это может сделать администратор ресторана.',
                     'identity_stale':'Заявка уже изменилась. Обнови список сотрудников.',
-                    'identity_invite_expired':'Эта ссылка больше не работает. Попроси администратора прислать новую.',
+                    'identity_invite_expired':'Эта ссылка больше не работает. Попроси того, кто её прислал, отправить новую.',
                     'identity_other_restaurant':'Сначала открой свой ресторан и выйди из него.'}
         for code, message in messages.items():
             if code in str(error):
                 raise ValueError(message) from None
         if error.code == '23505':
             raise ValueError('Под этим именем уже есть сотрудник. Если это тёзки, в отчёте нужны разные имена или коды.') from None
-        raise ValueError('Пока не получается подключить тебя к ресторану. Сообщи администратору — он поможет.') from None
+        raise ValueError('Пока не получается сохранить имя. Попробуй ещё раз или напиши Лёше.') from None
 
 
 async def transfer(uid, link_id, source_id, target_id):

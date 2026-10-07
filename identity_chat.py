@@ -54,7 +54,9 @@ async def invite(message,uid=None):
         bot=await message.bot.get_me()
         await message.answer(f"Приглашение в {html.escape(restaurant['name'])}:\n"
                              f"https://t.me/{bot.username}?start=team_{token}\n\n"
-                             'Действует 7 дней. Предыдущая ссылка отключена. Вход требует подтверждения администратора.')
+                             'Ссылка действует 7 дней. Предыдущая ссылка больше не работает. '
+                             'После ввода имени человек сможет пользоваться личным ботом. '
+                             'Его связь с отчётом ресторана ты подтвердишь в разделе «Сотрудники и заявки».')
     except Exception as exc: await error(message,exc)
 
 
@@ -78,7 +80,8 @@ async def start_invite(message,command,state):
     await state.clear()
     await state.set_state(Identification.name)
     await state.update_data(invite_token=token)
-    await message.answer('Как тебя зовут в отчёте? Администратор проверит имя и увидит твои планы и продажи, записанные после присоединения. Личные чаевые и расходы останутся доступны только тебе в боте.',
+    await message.answer('Как тебя зовут в рабочем отчёте? Напиши имя так, как оно там указано. '
+                         'Личные чаевые и расходы будешь видеть только ты.',
                          reply_markup=buttons([[('Отмена','ident:cancelname')]]))
 
 
@@ -91,14 +94,14 @@ async def cancel_for_photo(message,state):
 @router.message(Identification.name,Command('cancel'))
 async def cancel_registration(message,state):
     await state.clear()
-    await message.answer('Заявка отменена.')
+    await message.answer('Хорошо, имя не записываю.')
 
 @router.callback_query(F.data=='ident:cancelname')
 async def cancel_registration_button(query,state):
     if await state.get_state()!=Identification.name.state:
         await query.answer('Этот вопрос уже закрыт.');return
     await state.clear();await query.answer()
-    await query.message.edit_text('Заявка отменена.')
+    await query.message.edit_text('Хорошо, имя не записываю.')
 
 
 @router.message(Identification.name,F.text,~F.text.startswith('/'))
@@ -107,8 +110,8 @@ async def register_name(message,state):
     try:
         result=await identity.request(message.from_user.id,data.get('invite_token',''),message.text)
         await state.clear()
-        await message.answer(f"{identity.STATUSES[result['status']]}. Посмотреть свой ресторан можно по кнопке ниже.",
-                             reply_markup=buttons([[('Мой ресторан','ident:showprofile')]]))
+        await message.answer(f"Спасибо, {html.escape(result['report_name'])}! Теперь можно пользоваться ботом. "
+                             'Личные чаевые и расходы будут видны только тебе.')
         from ux_chat import begin
         if await begin(message,prompt=False):
             await message.answer('Можно сразу записать чаевые: пришли сумму, например <i>чай 1500</i>. '
@@ -121,11 +124,13 @@ async def profile(message,uid=None):
     try:
         row=await identity.profile(uid or message.from_user.id)
         if not row:
-            await message.answer('Ты ещё не присоединился к ресторану. Открой ссылку, которую прислал администратор.')
+            await message.answer('Ресторан пока не указан. Если у тебя есть приглашение, открой ссылку из него.')
             return
-        note='' if row['has_admin'] else '\nУ ресторана нет действующего администратора.'
+        status=('Личные записи уже доступны. Данные из отчёта ресторана пока не подключены.'
+                if row['status']=='pending' else identity.STATUSES[row['status']])
+        note='' if row['has_admin'] else '\nСвязь с отчётом ресторана сейчас недоступна.'
         await message.answer(f"<b>{html.escape(row['restaurant_name'])}</b>\n"
-                             f"В отчёте: {html.escape(row['report_name'])}\n{identity.STATUSES[row['status']]}{note}",
+                             f"Имя в отчёте: {html.escape(row['report_name'])}\n{status}{note}",
                              reply_markup=buttons([[('Выйти из ресторана',f"ident:leaveask:{row['id']}")]]))
     except Exception as exc: await error(message,exc)
 
