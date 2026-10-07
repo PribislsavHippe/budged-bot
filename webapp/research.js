@@ -10,7 +10,7 @@
   let days=30,version=null,page=0,loading=false,serial=0,task=null,latest=null;
   panel.innerHTML=`<header class="research-head"><h1>Исследование</h1><button id="research-refresh">Обновить</button></header>
     <div class="research-controls"><div class="research-period"><button data-days="7" aria-pressed="false">7 дней</button><button data-days="30" aria-pressed="true">30 дней</button></div><label>Знакомство <select id="research-version"><option value="">Все версии</option></select></label></div>
-    <button id="research-export" class="research-export">Сохранить данные для разбора ↓</button><p class="research-muted research-export-note">В файле будут действия и пути людей под кодами. Сумм и текстов обращений в нём нет.</p>
+    <button id="research-export" class="research-export">Прислать данные в чат ↓</button><p class="research-muted research-export-note">Бот пришлёт файл с действиями и путями людей под кодами. Сумм и текстов обращений в нём нет.</p>
     <p id="research-error" role="alert"></p><p id="research-state" role="status"></p>
     <div id="research-home"><div id="research-overview"></div><div id="research-task-cards"></div><p class="research-muted">График и чаевые — две самостоятельные задачи. Человек может вести только одну из них.</p></div>
     <div id="research-task" hidden><button id="research-back">← К двум задачам</button><div id="research-task-content"></div><div id="research-task-journey" hidden></div></div>
@@ -23,7 +23,7 @@
     <section><h2>Последние действия</h2><p class="research-muted">Недавние события сверху. Нажми на человека, чтобы увидеть путь.</p><div id="research-users"></div><div class="research-controls"><button id="research-prev">←</button><span id="research-page"></span><button id="research-next">→</button></div><div id="research-journey" hidden></div></section>
     <section><h2>Обратная связь</h2><button id="research-feedback-load">Последние обращения</button><div id="research-feedback"></div></section></details>`;
   async function api(action,body={}){
-    const r=await fetch('/api/research/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,initData:tg?.initData||''}),signal:AbortSignal.timeout(20000)});
+    const r=await fetch('/api/research/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,initData:tg?.initData||''}),signal:AbortSignal.timeout(action==='export'?60000:20000)});
     let data;try{data=await r.json();}catch(_){throw new Error('Сервер не ответил. Попробуй ещё раз.');}
     if(!r.ok)throw new Error(r.status===401?'Открой приложение заново из бота.':data.error||'Раздел недоступен.');return data;
   }
@@ -85,16 +85,10 @@
   $('research-export').onclick=async()=>{
     const button=$('research-export');button.disabled=true;$('research-error').textContent='';$('research-state').textContent='Готовлю файл…';
     try{
-      const data=await api('export',{days,version});
-      const name=`ux-research-${data.summary.from}-${data.summary.through}.json`;
-      const file=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
-      const url=URL.createObjectURL(file),link=document.createElement('a');
-      link.href=url;link.download=name;document.body.appendChild(link);link.click();link.remove();
-      setTimeout(()=>URL.revokeObjectURL(url),60000);
-      $('research-state').textContent='Файл предложен для сохранения. Проверь загрузки на телефоне.';
+      await api('export',{days,version});
+      $('research-state').textContent='Отправил файл в чат с ботом. Его можно переслать для разбора.';
     }catch(e){
-      if(e.name==='AbortError')$('research-state').textContent='Сохранение отменено.';
-      else{error(e);$('research-state').textContent='Не удалось подготовить файл.';}
+      error(e);$('research-state').textContent='Файл не отправился.';
     }finally{button.disabled=false;}
   };
   $('research-feedback-load').onclick=async()=>{const button=$('research-feedback-load');button.disabled=true;try{const d=await api('feedback');$('research-feedback').innerHTML=d.rows.map(r=>`<article class="research-feedback"><button data-subject="${esc(r.subject_id)}" data-label="${esc(r.label)}">${esc(r.label)}</button><small>${time(r.created_at)} · ${esc({broken:'Сбой',confusing:'Непонятно',idea:'Идея'}[r.category])}</small><p>${esc(r.body)}</p></article>`).join('')||'<p>Обращений пока нет.</p>';}catch(e){error(e);}finally{button.disabled=false;}};

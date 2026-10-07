@@ -66,6 +66,7 @@ async def run_webhook(bot: Bot, dp: Dispatcher):
     SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=secret).register(app, path=WEBHOOK_PATH)
     setup_application(app, dp, bot=bot)
     register_webapp_routes(app, BOT_TOKEN, me.username)
+    app["bot"] = bot
 
     # Access logs would expose the private bearer URL used by iPhone calendars.
     runner = web.AppRunner(app, access_log=None)

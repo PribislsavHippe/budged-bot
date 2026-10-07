@@ -15,6 +15,7 @@ async def main():
     with patch.dict(os.environ,{'SUPABASE_URL':'https://example.invalid','SUPABASE_KEY':'test','IDENTITY_ENABLED':'1','UX_RESEARCH_ENABLED':'1'}),patch('supabase.create_client',return_value=store):
         import db,webapp_api,restaurant_api,research,research_api,admin,identity,ux_chat,handlers
         app=web.Application();webapp_api.register_webapp_routes(app,TOKEN,'testbot')
+        app['bot']=NS(send_document=AsyncMock())
         events=[]
         with patch.object(admin,'is_admin',side_effect=lambda uid:uid==1),patch.object(research,'track',side_effect=lambda *a,**kw:events.append((a,kw))):
             async with TestClient(TestServer(app)) as client:
@@ -109,9 +110,15 @@ async def main():
                     assert d['new_users']==0 and d['retention']['d1']['rate'] is None
                     assert all('user_id' not in call.args[1] for call in pages.await_args_list)
                     d=await post('/api/research/export',days=7)
-                    assert d['format']=='ux-research-analysis-v1' and d['events']==[]
-                    assert d['summary']['event_count']==0
+                    assert d=={'sent':True}
+                    sent=app['bot'].send_document.await_args.kwargs
+                    assert sent['chat_id']==1 and sent['document'].filename.startswith('ux-research-')
+                    assert b'"event_count":0' in sent['document'].data
                     assert all('user_id' not in call.args[1] for call in pages.await_args_list)
+                    app['bot'].send_document.side_effect=RuntimeError('delivery failed')
+                    failed=await post('/api/research/export',days=7,expected=503)
+                    assert failed['error']=='Не получилось отправить файл в чат. Попробуй ещё раз.'
+                    app['bot'].send_document.side_effect=None
                 await post('/api/research/overview',days=999,expected=400)
                 await post('/api/research/export',days=999,expected=400)
                 with patch.dict(os.environ,{'UX_RESEARCH_ENABLED':'0'}):

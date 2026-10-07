@@ -4,6 +4,8 @@ from uuid import UUID
 import time
 from collections import OrderedDict
 from aiohttp import web
+from aiogram.types import BufferedInputFile
+import json
 import research
 from research_stats import summarize,analysis_export
 
@@ -59,7 +61,12 @@ async def handle(request):
             events=await research.pages('analytics_events','id,subject_id,event,occurred_at,onboarding_version,source,screen,step,error_code',
                                         lambda q:q.gte('occurred_at',since).order('occurred_at').order('id'))
             if action=='export':
-                return respond(analysis_export(subjects,events,days,ux_version=version))
+                data=analysis_export(subjects,events,days,ux_version=version)
+                filename=f"ux-research-{data['summary']['from']}-{data['summary']['through']}.json"
+                document=BufferedInputFile(json.dumps(data,ensure_ascii=False,separators=(',',':')).encode('utf-8'),filename=filename)
+                await request.app['bot'].send_document(chat_id=uid,document=document,
+                    caption='Данные исследования за выбранный период. Файл можно переслать для разбора.')
+                return respond({'sent':True})
             data=summarize(subjects,events,days,ux_version=version)
             data['versions']=sorted({s['onboarding_version'] for s in subjects})
             data['user_count']=len(data['users']);page=body.get('page',0)
@@ -85,7 +92,8 @@ async def handle(request):
     except Exception as error:
         from diagnostics import failure
         code,reference=failure(error,area='research',stage=action if action in {'overview','export','journey','feedback'} else 'unknown')
-        return respond({'error':'Исследования пока не загрузились. Попробуй ещё раз.','code':code,'reference':reference},503)
+        message='Не получилось отправить файл в чат. Попробуй ещё раз.' if action=='export' else 'Исследования пока не загрузились. Попробуй ещё раз.'
+        return respond({'error':message,'code':code,'reference':reference},503)
 
 
 def register(app):app.router.add_post('/api/research/{action}',handle)
