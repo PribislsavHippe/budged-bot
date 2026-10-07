@@ -162,15 +162,28 @@ function client(storage,url='https://example.com/app',fastTimeouts=false) {
   const pending=JSON.parse(execFileSync('.venv/bin/python',['-c',
     `import json,sys,private_payload\nr=json.load(sys.stdin)\np,_=private_payload.seal(7,r['key'],r['record'],'test-bot-token')\nprint(json.dumps({'payload':p}))`],
     {input:JSON.stringify({key:server.publicKey,record:pendingRecord})}));
-  server.backups=[{record_id:pendingRecord.id,payload:pending.payload}];
+  const preCancelled={id:'telegram:7:101:0',kind:'income',account:'cash',signed_amount:350,
+    category:'Чаевые',work_date:'2026-10-04',created_at:'2026-10-04T20:06:00+03:00'};
+  const preCancel={id:preCancelled.id+':cancel',kind:'delete_change',
+    target_id:preCancelled.id,signed_amount:0};
+  const sealedBeforeImport=JSON.parse(execFileSync('.venv/bin/python',['-c',
+    `import json,sys,private_payload\nr=json.load(sys.stdin)\np,_=private_payload.seal(7,r['key'],r['record'],'test-bot-token')\nprint(json.dumps({'payload':p}))`],
+    {input:JSON.stringify({key:server.publicKey,record:preCancelled})}));
+  const sealedPreCancel=JSON.parse(execFileSync('.venv/bin/python',['-c',
+    `import json,sys,private_payload\nr=json.load(sys.stdin)\np,_=private_payload.seal(7,r['key'],r['record'],'test-bot-token')\nprint(json.dumps({'payload':p}))`],
+    {input:JSON.stringify({key:server.publicKey,record:preCancel})}));
+  server.backups=[{record_id:pendingRecord.id,payload:pending.payload},
+    {record_id:preCancelled.id,payload:sealedBeforeImport.payload},
+    {record_id:preCancel.id,payload:sealedPreCancel.payload}];
   phone.DeviceStorage.setItem=(_key,_value,callback)=>callback(null,false);
   await assert.rejects(reopened.pm.sync());
   assert.equal(reopened.pm.entries.length,5);
   assert.equal(reopened.emitted.length,beforeFailedSave);
   phone.DeviceStorage.setItem=write;
-  assert.equal(await reopened.pm.sync(),1);
+  assert.equal(await reopened.pm.sync(),3);
   assert.equal(await reopened.pm.sync(),0);
   assert.equal(reopened.pm.entries.length,6);
+  assert.equal(reopened.pm.entries.some(e=>e.id===preCancelled.id),false);
   assert.equal(reopened.emitted.length,beforeFailedSave+1);
   await reopened.pm.edit(pendingRecord.id,{signed_amount:800});
   assert.equal(await reopened.pm.sync(),0);
@@ -185,18 +198,23 @@ function client(storage,url='https://example.com/app',fastTimeouts=false) {
   assert.equal(reopened.pm.entries.find(e=>e.id===pendingRecord.id).account,'cash');
   assert.equal(reopened.pm.entries.length,6);
   assert.equal(await reopened.pm.sync(),0);
-  await reopened.pm.remove(pendingRecord.id);
-  assert.equal(await reopened.pm.sync(),0);
+  const cancellation={id:pendingRecord.id+':cancel',kind:'delete_change',
+    target_id:pendingRecord.id,signed_amount:0};
+  const sealedCancellation=JSON.parse(execFileSync('.venv/bin/python',['-c',
+    `import json,sys,private_payload\nr=json.load(sys.stdin)\np,_=private_payload.seal(7,r['key'],r['record'],'test-bot-token')\nprint(json.dumps({'payload':p}))`],
+    {input:JSON.stringify({key:server.publicKey,record:cancellation})}));
+  server.backups.push({record_id:cancellation.id,payload:sealedCancellation.payload});
+  assert.equal(await reopened.pm.sync(),1);
   assert.equal(reopened.pm.entries.some(e=>e.id===pendingRecord.id),false);
+  assert.equal(await reopened.pm.sync(),0);
 
   phone._local.set('money_ledger_v1','corrupted');
   const damaged=client(phone);
   await damaged.pm.init();
   assert.equal(damaged.pm.state.lostReason,'unreadable');
   await assert.rejects(damaged.pm.rotate());
-  assert.equal(await damaged.pm.restoreRecent(),1);
-  assert.equal(damaged.pm.entries[0].id,pendingRecord.id);
-  assert.equal(damaged.pm.entries[0].account,'cash');
+  assert.equal(await damaged.pm.restoreRecent(),0);
+  assert.equal(damaged.pm.entries.some(e=>e.id===pendingRecord.id),false);
   assert.equal(phone._local.get('money_ledger_damaged_v1'),'corrupted');
   await damaged.pm.clear();
   assert.equal(server.backups.length,0);

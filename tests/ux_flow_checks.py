@@ -22,6 +22,7 @@ class Flows(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.answer.await_count,1)
         self.assertIn('чай 1500',message.answer.await_args.args[0])
         self.assertNotIn('Твои смены — в одном месте',message.answer.await_args.args[0])
+        self.assertTrue(message.answer.await_args.kwargs['reply_markup'].remove_keyboard)
         recorded=AsyncMock(return_value={'first_value':True,'was_learning':True})
         message=await self.run_entry('чай 1500',recorded)
         self.assertEqual(recorded.await_args.args,(5,'tip_added'))
@@ -31,6 +32,7 @@ class Flows(unittest.IsolatedAsyncioTestCase):
         message=self.message('/start')
         with patch.object(handlers.db,'get_or_create_user',new=AsyncMock(return_value={'id':5,'onboarded':True,'tutorial_step':'tip'})),patch.object(handlers,'today_block',new=AsyncMock(return_value='Итог')),patch.object(ux_chat,'begin',new=AsyncMock()) as begin,patch.object(research,'track'):
             await handlers.cmd_start(message,NS(clear=AsyncMock()));begin.assert_not_awaited()
+        self.assertTrue(message.answer.await_args.kwargs['reply_markup'].remove_keyboard)
     async def test_repeat_for_existing_user_without_analytics(self):
         message=self.message('/learn')
         with patch.object(handlers.db,'get_or_create_user',new=AsyncMock(return_value={'id':5,'onboarded':True,'tutorial_step':None})),patch.object(handlers.db,'_execute',new=AsyncMock()) as saved,patch.object(research,'record',new=AsyncMock(return_value=None)),patch.object(research,'track'):
@@ -93,6 +95,37 @@ class Flows(unittest.IsolatedAsyncioTestCase):
             delete.assert_not_awaited()
             await handlers.cmd_undo(message,user_id=5,expected_id='42')
             delete.assert_awaited_once_with(42,5)
+
+    async def test_private_tip_has_undo_and_saves_cancellation_for_clicker(self):
+        message=self.message('чай 1500');message.bot.delete_message=AsyncMock()
+        key={'kty':'RSA','alg':'RSA-OAEP-256','n':'placeholder','e':'AQAB'}
+        user={'id':5,'onboarded':True,'private_money_mode':True,
+              'private_money_public_key':key}
+        with patch.dict(os.environ,{'BOT_TOKEN':'test-bot-token'}),\
+             patch.object(handlers.db,'get_or_create_user',new=AsyncMock(return_value=user)),\
+             patch('private_payload.seal',return_value=('sealed','signature')),\
+             patch('private_payload.key_id',return_value='key-id'),\
+             patch.object(handlers.db,'save_private_backup',new=AsyncMock()) as save:
+            await handlers.handle_text(message,NS(clear=AsyncMock()))
+            reply=message.answer.await_args.kwargs['reply_markup']
+            undo=reply.inline_keyboard[-1][0]
+            self.assertEqual(undo.callback_data,'pundo:100:0')
+            self.assertEqual(save.await_count,1)
+            callback=NS(data=undo.callback_data,from_user=NS(id=5),
+                        message=NS(chat=NS(id=5),text='Записал чаевые: 1 500 ₽ · наличные.',
+                                   edit_text=AsyncMock()),answer=AsyncMock(),id='click-1')
+            await handlers.cb_private_undo(callback)
+            self.assertEqual(save.await_count,2)
+            self.assertEqual(save.await_args.args[:2],(5,'telegram:5:100:0:cancel'))
+            callback.message.edit_text.assert_awaited_once()
+
+            save.side_effect=RuntimeError('storage unavailable')
+            failed=NS(data='pundo:100:1',from_user=NS(id=5),
+                      message=NS(chat=NS(id=5),text='Записал чаевые: 500 ₽ · наличные.',
+                                 edit_text=AsyncMock()),answer=AsyncMock(),id='click-2')
+            await handlers.cb_private_undo(failed)
+            failed.message.edit_text.assert_not_awaited()
+            self.assertTrue(failed.answer.await_args.kwargs['show_alert'])
 
     async def test_spend_cancel_button_clears_pending_amount(self):
         message=self.message('');message.edit_text=AsyncMock()

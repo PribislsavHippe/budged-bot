@@ -310,9 +310,25 @@
         !Number.isFinite(Number(record.signed_amount)) ||
         (record.kind==='account_change' &&
           (typeof record.target_id!=='string' || !['cash','card'].includes(record.account) ||
+           Number(record.signed_amount)!==0)) ||
+        (record.kind==='delete_change' &&
+          (typeof record.target_id!=='string' || !record.target_id ||
            Number(record.signed_amount)!==0)))
       throw new Error('Зашифрованная запись повреждена.');
     return record;
+  }
+  function applyBackupChanges(base,changes) {
+    const byId=new Map(base.map(e=>[String(e.id),e]));
+    changes.filter(e=>!['account_change','delete_change'].includes(e.kind))
+      .forEach(e=>byId.set(String(e.id),e));
+    changes.filter(e=>e.kind==='account_change').forEach(change=>{
+      const original=byId.get(change.target_id);
+      if (original && original.kind!=='accrual')
+        byId.set(change.target_id,{...original,account:change.account});
+    });
+    changes.filter(e=>e.kind==='delete_change')
+      .forEach(change=>byId.delete(change.target_id));
+    return [...byId.values()];
   }
   async function backupRecords(seen=new Set()) {
     const result=await request('/api/private/backups',{});
@@ -341,15 +357,8 @@
     const fresh=await backupRecords(seen);
     if (!fresh.length) return 0;
     const previous=state.entries,receipts=state.receipts;
-    const byId=new Map(previous.map(e=>[String(e.id),e]));
-    const additions=fresh.filter(e=>e.kind!=='account_change');
-    additions.forEach(e=>byId.set(String(e.id),e));
-    fresh.filter(e=>e.kind==='account_change').forEach(change=>{
-      const original=byId.get(change.target_id);
-      if (original && original.kind!=='accrual')
-        byId.set(change.target_id,{...original,account:change.account});
-    });
-    state.entries=[...byId.values()];
+    const additions=fresh.filter(e=>!['account_change','delete_change'].includes(e.kind));
+    state.entries=applyBackupChanges(previous,fresh);
     state.receipts=[...new Set([...receipts,...fresh.map(e=>String(e.id))])];
     const saved=JSON.stringify({entries:state.entries,receipts:state.receipts});
     try {
@@ -357,7 +366,8 @@
       if (JSON.stringify({entries:state.entries,receipts:state.receipts})!==saved)
         throw new Error('Телефон не подтвердил сохранение личных записей.');
     } catch (error) {state.entries=previous;state.receipts=receipts;throw error;}
-    additions.forEach(record=>{
+    const activeIds=new Set(state.entries.map(e=>String(e.id)));
+    additions.filter(record=>activeIds.has(String(record.id))).forEach(record=>{
       if (record.kind==='income' && record.category==='Чаевые') window.uxEvent?.('tip_added','earnings');
       else if (record.kind==='expense') window.uxEvent?.('expense_added','earnings');
     });
@@ -436,15 +446,8 @@
         keys.publicJwk.e!==profile.public_key.e)
       throw new Error('Ключ на этом телефоне не подходит к временным копиям.');
     const backups=await backupRecords();
-    const byId=new Map(backups.filter(e=>e.kind!=='account_change')
-      .map(e=>[String(e.id),e]));
-    backups.filter(e=>e.kind==='account_change').forEach(change=>{
-      const original=byId.get(change.target_id);
-      if (original && original.kind!=='accrual')
-        byId.set(change.target_id,{...original,account:change.account});
-    });
-    const records=[...byId.values()];
-    if (!records.length) throw new Error('Временных копий за последние 14 дней нет.');
+    if (!backups.length) throw new Error('Временных копий за последние 14 дней нет.');
+    const records=applyBackupChanges([],backups);
     const old=await item(tg.DeviceStorage,'getItem',ledgerName);
     if (old) await item(tg.DeviceStorage,'setItem',damagedLedgerName,old);
     const previous=state.entries,receipts=state.receipts;

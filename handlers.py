@@ -21,10 +21,8 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    KeyboardButton,
     Message,
-    ReplyKeyboardMarkup,
-    WebAppInfo,
+    ReplyKeyboardRemove,
 )
 
 import db
@@ -33,8 +31,6 @@ from chat_dates import human_date, human_month
 from workday import MSK, entry_op_date, op_today
 
 router = Router()
-
-WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
 
 SHIFT_SPEND_CATEGORIES = ["Мойка", "Бар", "Еда", "Такси"]
 
@@ -76,14 +72,8 @@ async def today_block(user_id: int) -> str:
     return today_line(income, spent)
 
 
-def main_menu() -> ReplyKeyboardMarkup:
-    row1 = [KeyboardButton(text="📋 История"), KeyboardButton(text="🧾 Записать расход")]
-    rows = [row1]
-    if WEBHOOK_HOST:
-        rows.append([KeyboardButton(
-            text="📊 Статистика", web_app=WebAppInfo(url=f"{WEBHOOK_HOST}/app")
-        )])
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+def hide_old_menu() -> ReplyKeyboardRemove:
+    return ReplyKeyboardRemove()
 
 
 def entry_line(e: dict) -> str:
@@ -126,7 +116,7 @@ def _name(message: Message) -> str:
 
 async def _greet(message: Message, name: str):
     await db.set_onboarded(message.from_user.id)
-    await message.answer(_welcome_text(name), reply_markup=main_menu())
+    await message.answer(_welcome_text(name), reply_markup=hide_old_menu())
     import research
     research.track(message.from_user.id,'user_started')
     from ux_chat import begin
@@ -148,9 +138,9 @@ async def cmd_start(message: Message, state: FSMContext):
         return
     if user.get("onboarded"):
         if user.get('private_money_mode'):
-            await message.answer('Личные записи и итоги хранятся на твоём устройстве. Открой «Статистику».',reply_markup=main_menu())
+            await message.answer('Личные записи и итоги хранятся на твоём устройстве. Открой «Статистику».',reply_markup=hide_old_menu())
         else:
-            await message.answer(await today_block(message.from_user.id), reply_markup=main_menu())
+            await message.answer(await today_block(message.from_user.id), reply_markup=hide_old_menu())
         return
     await _greet(message, _name(message))
 
@@ -203,8 +193,9 @@ async def send_help(message: Message,user_id: int):
 async def show_history(message: Message):
     import research
     research.track(message.from_user.id,"tab_opened",screen="history")
+    await message.answer('Нижнее меню убрал. История и правки есть в «Статистике».',
+                         reply_markup=hide_old_menu())
     if (await db.get_or_create_user(message.from_user.id)).get('private_money_mode'):
-        await message.answer('История чаевых и расходов теперь в «Статистике» на твоём устройстве.',reply_markup=main_menu())
         return
     entries = await db.get_recent_entries(message.from_user.id, limit=15)
     if not entries:
@@ -232,7 +223,7 @@ async def history_undo(callback: CallbackQuery):
 async def cmd_undo(message: Message,user_id: int | None=None,expected_id: str | None=None):
     user_id=user_id or message.from_user.id
     if (await db.get_or_create_user(user_id)).get('private_money_mode'):
-        await message.answer('Исправить или удалить личную запись можно в «Статистике» на этом устройстве.',reply_markup=main_menu())
+        await message.answer('Исправить или удалить личную запись можно в «Статистике» на этом устройстве.',reply_markup=hide_old_menu())
         return
     entries = await db.get_recent_entries(user_id, limit=1)
     if not entries:
@@ -273,7 +264,7 @@ async def reset_yes(callback: CallbackQuery, state: FSMContext):
     await db.clear_entries(callback.from_user.id)
     await state.clear()
     await callback.message.edit_text("Журнал очищен.")
-    await callback.message.answer("Начинаем заново. Запиши: <i>чай 500</i>", reply_markup=main_menu())
+    await callback.message.answer("Начинаем заново. Запиши: <i>чай 500</i>", reply_markup=hide_old_menu())
     await callback.answer()
 
 
@@ -562,6 +553,8 @@ async def send_shift_close_prompt(message: Message):
 
 @router.message(F.text.in_({"🧾 Записать расход", "🧾 Закрыть смену"}))
 async def shift_close_button(message: Message):
+    await message.answer('Нижнее меню убрал. Расходы можно записывать прямо сообщением.',
+                         reply_markup=hide_old_menu())
     await send_shift_close_prompt(message)
 
 
@@ -655,7 +648,7 @@ async def legacy_button(message: Message):
         return
     await message.answer(
         "Я теперь считаю только чаевые.\n"
-        "📋 История и 🧾 Закрыть смену — на клавиатуре. Подсказки откроются по кнопке ниже.",
+        "Историю и правки можно открыть в «Статистике». Подсказки — по кнопке ниже.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Как пользоваться ботом",callback_data="ux:help")]]),
     )
 
@@ -707,9 +700,12 @@ async def _send_private_record(message: Message, record: dict, index: int,
     markup=None
     if record['kind'] in ('income','expense'):
         other=db.CASH if record['account']==db.CARD else db.CARD
-        markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
-            text=f'Изменить на {"наличные" if other==db.CASH else "безналичные"}',
-            callback_data=f'pacc:{message.message_id}:{index}:{other}')]])
+        markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f'Изменить на {"наличные" if other==db.CASH else "безналичные"}',
+                callback_data=f'pacc:{message.message_id}:{index}:{other}')],
+            [InlineKeyboardButton(text='↩️ Отменить',
+                callback_data=f'pundo:{message.message_id}:{index}')]])
     reply=await message.answer(intro+info,reply_markup=markup)
     if delete_source:
         failed=False
@@ -759,12 +755,51 @@ async def cb_private_account(callback: CallbackQuery):
     label='наличные' if account==db.CASH else 'безналичные'
     updated=re.sub(r'· (наличные|безналичные)',f'· {label}',callback.message.text or '',count=1)
     other=db.CASH if account==db.CARD else db.CARD
-    markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
-        text=f'Изменить на {"наличные" if other==db.CASH else "безналичные"}',
-        callback_data=f'pacc:{message_id}:{index}:{other}')]])
+    markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=f'Изменить на {"наличные" if other==db.CASH else "безналичные"}',
+            callback_data=f'pacc:{message_id}:{index}:{other}')],
+        [InlineKeyboardButton(text='↩️ Отменить',
+            callback_data=f'pundo:{message_id}:{index}')]])
     try:await callback.message.edit_text(html.escape(updated),reply_markup=markup)
     except Exception:pass
     await callback.answer(f'Теперь {label}. В «Статистике» обновится автоматически.')
+
+
+@router.callback_query(F.data.startswith('pundo:'))
+async def cb_private_undo(callback: CallbackQuery):
+    import private_payload
+    from datetime import datetime, timezone
+    try:
+        _,message_id,index=callback.data.split(':')
+        if (not message_id.isdecimal() or not index.isdecimal()
+                or callback.message.chat.id!=callback.from_user.id):
+            raise ValueError('record')
+        user=await db.get_or_create_user(callback.from_user.id)
+        if not user.get('private_money_mode') or not user.get('private_money_public_key'):
+            await callback.answer('Личный журнал сейчас недоступен.',show_alert=True)
+            return
+        target=f'telegram:{callback.message.chat.id}:{message_id}:{index}'
+        change={'id':f'{target}:cancel','kind':'delete_change',
+                'target_id':target,'signed_amount':0,
+                'created_at':datetime.now(timezone.utc).isoformat()}
+        sealed,_=private_payload.seal(callback.from_user.id,
+            user['private_money_public_key'],change,os.environ['BOT_TOKEN'])
+        await db.save_private_backup(callback.from_user.id,change['id'],sealed,
+                                     private_payload.key_id(user['private_money_public_key']))
+    except Exception as error:
+        from diagnostics import failure
+        failure(error,area='private_money',stage='undo')
+        await callback.answer('Не получил подтверждение отмены. Проверь запись в «Статистике» и попробуй ещё раз.',show_alert=True)
+        return
+    summary=(callback.message.text or '').split(' В «Статистике»',1)[0]
+    summary=re.sub(r'^Записал ', 'Отменил ', summary, count=1)
+    if not summary.startswith('Отменил '):summary='Запись отменена.'
+    try:
+        await callback.message.edit_text('↩️ '+html.escape(summary)+
+            ' В «Статистике» запись исчезнет после обновления.')
+    except Exception:pass
+    await callback.answer('Запись отменена')
 
 
 async def _save_bank_tips(message: Message, notif: dict, source_messages=None):
