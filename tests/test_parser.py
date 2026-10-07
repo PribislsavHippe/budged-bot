@@ -42,6 +42,16 @@ def test_tips_manual():
     assert tx["amount"] == 500
 
 
+def test_bare_number_is_tips_but_named_expense_is_unchanged():
+    for text, amount in (("500", 500), ("500 ₽", 500), ("1 500", 1500), ("250,50", 250.5)):
+        (tx,) = parse_transactions(text)
+        assert (tx["kind"], tx["category"], tx["account"], tx["amount"]) == (
+            "income", "Чаевые", CASH, amount
+        )
+    (expense,) = parse_transactions("кофе 500")
+    assert (expense["kind"], expense["category"]) == ("expense", "Еда")
+
+
 def test_tips_card_explicit():
     (tx,) = parse_transactions("чаевые 800 на карту")
     assert tx["kind"] == "income"

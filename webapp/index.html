@@ -844,23 +844,24 @@ function renderHistory() {
   if (!histEntries.length) { list.innerHTML = '<p class="hist-empty">Пока пусто.</p>'; return; }
   histEntries.forEach(function (e) {
     const amt = Math.abs(e.signed_amount);
-    const income = e.kind === "income";
+    const income = e.kind === "income" || e.kind === "accrual";
+    const accrual = e.kind === "accrual";
     const item = document.createElement("div");
     item.className = "hist-item";
     item.innerHTML =
       '<div class="hist-row">' +
         '<div><div class="hist-cat">' + esc(e.category) + '</div>' +
         '<div class="hist-meta">' + fmtDT(e.created_at) +
-          ' · <span class="txt">' + accLabel(e.account) + '</span></div></div>' +
-        '<div class="hist-amt">' + (income ? "+" : "−") + rub(amt) + ' ₽</div>' +
+          ' · <span class="txt">' + (accrual ? 'Начисление к зарплате' : accLabel(e.account)) + '</span></div></div>' +
+        '<div class="hist-amt">' + (accrual ? '' : income ? "+" : "−") + rub(amt) + ' ₽</div>' +
       '</div>' +
       '<div class="hist-edit">' +
         '<div class="hist-edit-row">' +
           '<input type="number" inputmode="numeric" class="hist-amt-input" value="' + amt + '">' +
-          '<div class="acc-toggle">' +
+          (accrual ? '' : '<div class="acc-toggle">' +
             '<button class="acc-btn" data-acc="cash">Нал</button>' +
             '<button class="acc-btn" data-acc="card">Карта</button>' +
-          '</div>' +
+          '</div>') +
         '</div>' +
         '<div class="hist-actions">' +
           '<button class="hist-save">Сохранить</button>' +
@@ -907,7 +908,7 @@ function editEntry(id, payload, silent) {
     if (!entry) return Promise.resolve(null);
     const task=payload.action==='delete' ? privateMoney.remove(id)
       : privateMoney.edit(id,payload.action==='account' ? {account:payload.account}
-        : {signed_amount:(entry.kind==='income'?1:-1)*Number(payload.amount)});
+        : {signed_amount:(entry.kind==='income'||entry.kind==='accrual'?1:-1)*Number(payload.amount)});
     return task.then(function () {
       const response={saved:true,stats:null,entries:null};
       if (!silent) {histEntries=privateMoney.entries.slice(-30).reverse();renderHistory();load();if(calYear)loadMonth(calYear,calMonth);}
@@ -1048,9 +1049,11 @@ document.getElementById('private-confirm').onclick=async function () {
 async function startApp() {
   try {
     await privateMoney.init();
+    window.dispatchEvent(new Event('private-money-ready'));
     privateButtonText();
     const imported=await privateMoney.importUrl();
     if (imported) {
+      window.dispatchEvent(new Event('private-money-ready'));
       document.getElementById('private-status').textContent=imported;
       privateModal.hidden=false;privateModal.style.display='flex';
       document.getElementById('private-confirm').hidden=true;

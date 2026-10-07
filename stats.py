@@ -19,7 +19,7 @@ def _entry_date(e: dict) -> date:
 
 
 def _net(entries: list[dict]) -> float:
-    return round(sum(float(e["signed_amount"]) for e in entries if e["kind"] != "adjustment"), 2)
+    return round(sum(float(e["signed_amount"]) for e in entries if e["kind"] in ("income", "expense")), 2)
 
 
 def _tips(entries: list[dict]) -> float:

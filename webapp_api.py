@@ -62,8 +62,10 @@ def _private_entries(body: dict) -> list[dict]:
     entries=body.get('private_entries',[])
     if not isinstance(entries,list) or len(entries)>5000:raise ValueError('private_entries_invalid')
     for e in entries:
-        if not isinstance(e,dict) or e.get('kind') not in {'income','expense','adjustment'} \
-                or e.get('account') not in {'cash','card'} or not isinstance(e.get('category'),str) \
+        if not isinstance(e,dict) or e.get('kind') not in {'income','expense','adjustment','accrual'} \
+                or e.get('account') not in {'cash','card','pending'} \
+                or (e['kind']=='accrual') != (e['account']=='pending') \
+                or not isinstance(e.get('category'),str) \
                 or not 1<=len(e['category'])<=100 \
                 or type(e.get('id')) not in {str,int} or not str(e['id']):
             raise ValueError('private_entries_invalid')
@@ -454,6 +456,8 @@ async def api_entry_edit(request: web.Request) -> web.Response:
             return web.json_response({'error':'Проверь сумму чаевых и выбери: наличные или карта.'},status=400,headers=NO_CACHE)
         await db.update_tip_details(entry_id,user_id,float(amount),body['account'])
     elif action == "account":
+        if entry["kind"] == "accrual":
+            return web.json_response({"error": "Начисление не поступило на счёт."}, status=400)
         account = body.get("account")
         if account not in ("cash", "card"):
             return web.json_response({"error": "Выбери, куда поступили деньги: наличными или на карту."}, status=400)
@@ -469,7 +473,7 @@ async def api_entry_edit(request: web.Request) -> web.Response:
                 raise ValueError()
         except (TypeError, ValueError, InvalidOperation):
             return web.json_response({"error": "Проверь сумму: она должна быть больше нуля, с точностью до копеек."}, status=400)
-        sign = 1 if entry["kind"] == "income" else -1
+        sign = 1 if entry["kind"] in ("income", "accrual") else -1
         await db.update_entry_amount(entry_id, user_id, sign * float(amount))
     else:
         return web.json_response({"error": "Не получилось выполнить изменение. Обнови историю."}, status=400)
@@ -672,11 +676,26 @@ async def api_errors(request, handler):
     return response
 
 
+async def service_charge_view(request: web.Request) -> web.Response:
+    user_id, body = await _auth(request)
+    if user_id is None:
+        return body
+    from sales import month_key
+    from service_charge import summarize
+    try:
+        month = month_key(body.get("month", op_today().strftime("%Y-%m")))
+        entries, private = await _entries_for_view(user_id, body)
+    except ValueError:
+        return web.json_response({"error": "Не получилось открыть личные начисления. Обнови страницу."}, status=400, headers=NO_CACHE)
+    return web.json_response({**summarize(entries, month), "private": private}, headers=NO_CACHE)
+
+
 def register_webapp_routes(app: web.Application, bot_token: str, bot_username: str | None = None):
     app["bot_token"] = bot_token
     app["bot_username"] = bot_username
     from sales_api import register_sales_routes
     register_sales_routes(app)
+    app.router.add_post("/api/service_charge/view", service_charge_view)
     from research_api import register as register_research
     register_research(app)
     app.middlewares.append(api_errors)

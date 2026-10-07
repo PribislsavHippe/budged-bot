@@ -761,6 +761,27 @@ def test_private_stats_use_only_device_entries():
         _db.private_ids.remove(42)
 
 
+def test_service_charge_view_is_personal_and_private_mode_uses_device():
+    _db.store.clear()
+    _db.seed(42, 'accrual', 'pending', 700, 'Сервисный сбор')['work_date'] = '2026-10-07'
+    _db.seed(99, 'accrual', 'pending', 900, 'Сервисный сбор')['work_date'] = '2026-10-07'
+    signed = init_data(TOKEN, 42)
+    server = run(webapp_api.service_charge_view(Req({'initData': signed, 'month': '2026-10'})))
+    assert server.status == 200 and server.data['total'] == 700 and server.data['private'] is False
+    denied = run(webapp_api.service_charge_view(Req({'initData': 'forged', 'month': '2026-10'})))
+    assert denied.status == 401
+    _db.private_ids.add(42)
+    try:
+        local = {'id': 'local:service', 'kind': 'accrual', 'account': 'pending',
+                 'signed_amount': 350, 'category': 'Сервисный сбор',
+                 'work_date': '2026-10-07', 'created_at': '2026-10-07T15:00:00+03:00'}
+        private = run(webapp_api.service_charge_view(Req({
+            'initData': signed, 'month': '2026-10', 'private_entries': [local]})))
+        assert private.status == 200 and private.data['total'] == 350 and private.data['private'] is True
+    finally:
+        _db.private_ids.remove(42)
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

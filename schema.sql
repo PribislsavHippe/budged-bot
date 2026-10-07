@@ -21,13 +21,16 @@ CREATE TABLE users (
 );
 
 -- Журнал операций — ЕДИНСТВЕННЫЙ источник правды о деньгах.
--- Баланс счёта = сумма signed_amount по этому счёту. Ничего не хранится отдельно.
+-- Баланс счёта = сумма доходов и расходов по нему. Начисления в баланс не входят.
 CREATE TABLE entries (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT REFERENCES users(id) ON DELETE CASCADE NOT NULL,
-    kind TEXT CHECK (kind IN ('income', 'expense', 'adjustment')) NOT NULL,
-    account TEXT CHECK (account IN ('cash', 'card')) NOT NULL,
-    -- Знаковая сумма: доход +, расход -, сверка ± (разница между реальным и расчётным).
+    kind TEXT CHECK (kind IN ('income', 'expense', 'adjustment', 'accrual')) NOT NULL,
+    account TEXT CHECK (account IN ('cash', 'card', 'pending')) NOT NULL,
+    CONSTRAINT entries_accrual_account_check CHECK (
+        (kind = 'accrual' AND account = 'pending') OR (kind <> 'accrual' AND account <> 'pending')
+    ),
+    -- Знаковая сумма: доход +, расход -, сверка ±, начисление + до выплаты.
     signed_amount NUMERIC(12, 2) NOT NULL,
     category TEXT NOT NULL DEFAULT 'Прочее',
     note TEXT,                          -- исходный текст пользователя / банка

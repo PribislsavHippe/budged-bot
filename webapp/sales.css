@@ -42,6 +42,10 @@
 .sales-record button {border:0;background:none;padding:8px 0;font:13px Onest,sans-serif;text-decoration:underline;color:#203c49;cursor:pointer;flex-shrink:0}
 .sales-record .sales-muted {font-size:11px}
 #sales-panel :focus-visible {outline:2px solid #355e72;outline-offset:3px}
+.service-charge {border-top:1px solid #d5dadd;margin-top:28px;padding-top:8px}
+.service-charge-line {display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.service-charge-line strong {font:400 22px 'Prata',Georgia,serif;text-align:right}
+#service-charge-error {color:#8b2929;font-size:13px}
 @media(max-width:360px){#sales-panel h1{font-size:18px}.sales-goal-amount strong{font-size:19px}.sales-record{gap:8px}}
 .sales-toolbar {margin-bottom:14px}
 .sales-month-picker {background:var(--tile);padding:12px;border-radius:10px;margin-bottom:14px}

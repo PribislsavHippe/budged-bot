@@ -1,7 +1,7 @@
-"""Доступ к Supabase. Единственный источник правды о деньгах — таблица entries.
+"""Доступ к Supabase. Личный журнал — таблица entries.
 
-Баланс НИКОГДА не хранится отдельно: он всегда пересчитывается как сумма
-signed_amount по журналу. Это гарантирует, что баланс и история не разойдутся.
+Баланс поступивших денег не хранится отдельно: он считается по доходам и
+расходам журнала. Начисления до выплаты в этот баланс не входят.
 """
 import os
 import asyncio
@@ -19,9 +19,10 @@ supabase: Client = create_client(
 
 CASH = "cash"
 CARD = "card"
-ACCOUNTS = (CASH, CARD)
+PENDING = "pending"
+ACCOUNTS = (CASH, CARD, PENDING)
 
-ACCOUNT_LABELS = {CASH: "Наличные", CARD: "Карта"}
+ACCOUNT_LABELS = {CASH: "Наличные", CARD: "Карта", PENDING: "Начислено"}
 
 
 # The sync Supabase client is shared. Serialize calls off the event loop.
@@ -90,8 +91,9 @@ async def add_entry(
     work_date: str | None = None,
     source_key: str | None = None,
 ) -> dict:
-    assert kind in ("income", "expense", "adjustment"), kind
+    assert kind in ("income", "expense", "adjustment", "accrual"), kind
     assert account in ACCOUNTS, account
+    assert (kind == "accrual") == (account == PENDING)
     data = {
         "user_id": user_id,
         "kind": kind,

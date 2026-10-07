@@ -109,8 +109,10 @@ _EXPENSE_RULES = [
 
 
 def classify(text: str) -> tuple[str, str]:
-    """(kind, category): доход только по явным словам, иначе расход."""
-    lower = text.lower()
+    """(kind, category): сумма без пояснения — чаевые, иначе явные слова или расход."""
+    lower = _normalize(text.lower())
+    if re.fullmatch(r"\s*\d[\d ]*(?:[.,]\d{1,2})?\s*", lower):
+        return "income", "Чаевые"
     for pattern, category in _INCOME_RULES:
         if re.search(pattern, lower):
             return "income", category

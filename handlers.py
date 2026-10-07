@@ -37,7 +37,7 @@ WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
 SHIFT_SPEND_CATEGORIES = ["Мойка", "Бар", "Еда", "Такси"]
 
 KIND_SIGN = {"income": 1, "expense": -1}
-KIND_EMOJI = {"income": "➕", "expense": "➖"}
+KIND_EMOJI = {"income": "➕", "expense": "➖", "accrual": "🕓"}
 
 
 class ShiftSpend(StatesGroup):
@@ -87,6 +87,8 @@ def main_menu() -> ReplyKeyboardMarkup:
 def entry_line(e: dict) -> str:
     amount = float(e["signed_amount"])
     emoji = KIND_EMOJI.get(e["kind"], "•")
+    if e["kind"] == "accrual":
+        return f"{emoji} {fmt(amount)} ₽ · Сервисный сбор · начисление к зарплате"
     acc = db.ACCOUNT_LABELS[e["account"]]
     sign = "+" if amount > 0 else "−"
     note = f" ({html.escape(str(e['note']))})" if e.get("note") else ""
@@ -95,7 +97,7 @@ def entry_line(e: dict) -> str:
 
 def undo_kb(entry_ids: list[int], toggle_entry: dict | None = None) -> InlineKeyboardMarkup:
     rows = []
-    if toggle_entry is not None:
+    if toggle_entry is not None and toggle_entry["kind"] != "accrual":
         other = db.CASH if toggle_entry["account"] == db.CARD else db.CARD
         rows.append([InlineKeyboardButton(
             text=f"Перенести на {db.ACCOUNT_LABELS[other].lower()}",
@@ -190,7 +192,7 @@ async def send_help(message: Message,user_id: int):
     await message.answer('Помощь\n\nЕсли что-то не работает или есть идея — напиши нам.',reply_markup=help_buttons())
     await message.answer(
         "<b>Как я работаю</b>\n\n"
-        "Чаевые: <i>чай 500</i>, <i>смена 2500</i>\n"
+        "Чаевые: <i>500</i> или <i>чай 500</i>. Расход — с названием: <i>кофе 200</i>.\n"
         "Перешли сообщение банка о чаевых — разберу сумму и помогу сохранить.\n\n"
         "🧾 Записать расход — внести траты за смену (мойка, бар, еда…), "
         "покажу чистыми за смену\n"
@@ -198,6 +200,7 @@ async def send_help(message: Message,user_id: int):
         "📊 Статистика — графики и календарь\n\n"
         "Продажи: <i>бокал</i> · <i>коктейль 2</i> · <i>открытка</i> · <i>двд</i>\n"
         "Суммы: <i>бутылка 3500</i> · <i>десерты 1200</i> · <i>оборот 25000</i>\n"
+        "Личный сервисный сбор: <i>сс 2000</i> — начисление к зарплате, в чаевые не входит\n"
         "<i>план продаж вино 143000; коктейли 110; десерты 82000; оборот 1570000</i>\n"
         "<i>цена бокала 850</i> — оценка, не подтвержденная выручка\n"
         "<i>отчёт по 13 сентября, вино 73 238, коктейли 57</i> — итог с начала месяца\n"
@@ -379,7 +382,7 @@ async def cmd_export(message: Message):
     """Отдать человеку его собственные данные — сигнал «это твоё, а не моё»."""
     private=(await db.get_or_create_user(message.from_user.id)).get('private_money_mode')
     if private:
-        await message.answer('Личные чаевые и расходы хранятся только на этом устройстве и не входят в серверную выгрузку. Остальные данные отправлю ниже.')
+        await message.answer('Личные чаевые, расходы и начисления хранятся только на этом устройстве и не входят в серверную выгрузку. Остальные данные отправлю ниже.')
     entries = await db.get_all_entries(message.from_user.id)
     shifts = await db.get_shift_dates(message.from_user.id)
     import sales_db
@@ -434,7 +437,8 @@ async def cmd_export(message: Message):
         writer.writerow([
             dt.strftime("%d.%m.%Y %H:%M"),
             (date.fromisoformat(e['work_date']) if e.get('work_date') else entry_op_date(e["created_at"])).strftime("%d.%m.%Y"),
-            "доход" if e["kind"] == "income" else "расход",
+            {"income": "доход", "expense": "расход", "adjustment": "сверка",
+             "accrual": "начисление"}.get(e["kind"], e["kind"]),
             db.ACCOUNT_LABELS.get(e["account"], e["account"]),
             e["category"],
             f'{float(e["signed_amount"]):.2f}'.replace(".", ","),
@@ -722,7 +726,9 @@ async def _send_private_record(message: Message, record: dict, index: int,
     url=f'{WEBHOOK_HOST}/app?private_entry={sealed}&private_sig={signature}'
     markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
         text='🔒 Сохранить на устройстве',web_app=WebAppInfo(url=url))]])
-    reply=await message.answer('Разобрал запись. Сохрани её на этом устройстве:',reply_markup=markup)
+    intro = (f"Сервисный сбор {fmt(record['signed_amount'])} ₽ — начисление к зарплате. "
+             if record['kind'] == 'accrual' else 'Разобрал запись. ')
+    reply=await message.answer(intro+'Сохрани её на этом устройстве:',reply_markup=markup)
     if delete_source:
         try:
             await message.bot.delete_message(message.chat.id,message.message_id)
@@ -730,7 +736,7 @@ async def _send_private_record(message: Message, record: dict, index: int,
             from diagnostics import failure
             failure(error,area='private_money',stage='delete_source')
             try:
-                await reply.edit_text('Разобрал запись. Сохрани её на этом устройстве. '
+                await reply.edit_text(intro+'Сохрани её на этом устройстве. '
                                       'Исходное сообщение осталось в чате — удали его вручную.',reply_markup=markup)
             except Exception:
                 pass
@@ -828,6 +834,29 @@ async def handle_text(message: Message, state: FSMContext):
             await message.answer("✓ " + ("Записал отчёт по " + human_date(sale["cutoff"]) + " включительно." if sale["action"] == "report" else "План продаж обновлён на " + human_month(sale["month"]) + ".") + " Исправления — в разделе «План».")
         return
 
+    from service_charge import parse as parse_service_charge
+    try:
+        service_amount = parse_service_charge(text)
+    except ValueError as error:
+        await message.answer(html.escape(str(error)))
+        return
+    if service_amount is not None:
+        record = {"kind": "accrual", "account": db.PENDING,
+                  "signed_amount": service_amount, "category": "Сервисный сбор", "note": None}
+        if user.get("private_money_mode"):
+            await _send_private_record(message, record, 0)
+            return
+        try:
+            entry = await db.add_entry(message.from_user.id, **record,
+                work_date=op_today().isoformat(),
+                source_key=f"telegram:{message.chat.id}:{message.message_id}:0")
+        except Exception:
+            logging.exception("Service charge write failed")
+            await message.answer("Не удалось подтвердить запись. Проверь личные начисления в «Плане» или историю, прежде чем отправлять сумму снова.")
+            return
+        await message.answer("✓ " + entry_line(entry), reply_markup=undo_kb([entry["id"]]))
+        return
+
     # 3. Расписание смен: «работаю 22 24 26» → ставим смены
     shift_dates = p.parse_shift_days(text, op_today())
     if shift_dates is not None:
@@ -857,7 +886,7 @@ async def handle_text(message: Message, state: FSMContext):
         )
         return
 
-    # 4. Обычные записи: «чай 500», «кофе 200, такси 350»
+    # 4. Обычные записи: «500» или «чай 500», «кофе 200, такси 350»
     items = p.parse_transactions(text)
     if not items:
         await message.answer(

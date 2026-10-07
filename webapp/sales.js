@@ -8,7 +8,7 @@
   const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const val=(k,n)=>num(n)+(counts.has(k)?' шт.':' ₽');
   const fields=(prefix,keys)=>keys.map(k=>`<label>${labels[k]} · ${counts.has(k)?'шт.':'₽'}<input id="${prefix}-${k}" inputmode="decimal" placeholder="Не указано"></label>`).join('');
-  let data=null,busy=false,pending=null,editing=null;
+  let data=null,busy=false,pending=null,editing=null,serviceSeq=0;
   const storage='sales-correction-'+(tg?.initDataUnsafe?.user?.id||'local');
   try {pending=JSON.parse(sessionStorage.getItem(storage)||'null');} catch(_){}
   function persist(){try{pending?sessionStorage.setItem(storage,JSON.stringify(pending)):sessionStorage.removeItem(storage);}catch(_){}}
@@ -20,9 +20,32 @@
     <div id="sales-reports"></div>
     <section class="sales-form" id="sales-report" hidden><h2>Исправить отчет</h2><form id="sales-report-form"><label>По какой день отчёт<input id="report-cutoff" type="date" readonly></label>${fields('report',Object.keys(labels))}<label><input id="report-complete" type="checkbox"> Я записал все продажи за этот период</label><button class="btn" data-change>Сохранить отчет</button></form></section>
     <section class="sales-form" id="sales-edit" hidden><h2 id="sales-edit-title">Исправить запись</h2><form id="sales-edit-form"><label>Сумма или количество<input id="sales-edit-value" inputmode="decimal" required></label><label>Дата смены<input id="sales-edit-date" type="date" required></label><button class="btn" data-change>Сохранить запись</button></form></section>
-    <details class="sales-form"><summary>История продаж</summary><div id="sales-history"></div></details></div>`;
+    <details class="sales-form"><summary>История продаж</summary><div id="sales-history"></div></details></div>
+    <section id="service-charge" class="service-charge" aria-labelledby="service-charge-heading">
+      <h2 id="service-charge-heading">Личные начисления</h2>
+      <div class="service-charge-line"><span>Сервисный сбор</span><strong id="service-charge-total">Загружаю…</strong></div>
+      <p id="service-charge-caption" class="sales-muted">Начисление к зарплате. Не входит в чаевые и продажи.</p>
+      <p class="sales-muted">Чтобы записать, напиши боту: <strong>сс 2000</strong>. Исправить запись можно в «Истории и правках».</p>
+      <p id="service-charge-error" role="alert"></p><button id="service-charge-reload" class="btn btn-ghost" hidden>Загрузить ещё раз</button>
+    </section>`;
   function lock(){document.querySelectorAll('#sales-panel [data-change]').forEach(b=>b.disabled=busy||!!pending);$('sales-month').disabled=busy||!!pending;$('sales-retry').hidden=!pending;$('sales-retry').disabled=busy;}
   async function api(action,body){const r=await fetch('/api/sales/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,initData:tg?.initData||''}),signal:AbortSignal.timeout(20000)});const j=await r.json();if(!r.ok){const e=new Error(r.status===401?'Открой бота и зайди в приложение ещё раз.':j.error);e.status=r.status;throw e;}return j;}
+  async function loadService(){
+    const seq=++serviceSeq;
+    const total=$('service-charge-total'), error=$('service-charge-error');
+    if(!window.privateMoney?.state.ready){total.textContent='Загружаю…';return;}
+    if(window.privateMoney?.state.lost){total.textContent='Недоступно';error.textContent='Личный журнал недоступен на этом устройстве.';return;}
+    total.textContent='Загружаю…';error.textContent='';$('service-charge-reload').hidden=true;
+    try{
+      const response=await fetch('/api/service_charge/view',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({initData:tg?.initData||'',month:$('sales-month').value||undefined,
+          ...window.privateMoney?.payload}),signal:AbortSignal.timeout(20000)});
+      const result=await response.json();
+      if(seq!==serviceSeq)return;
+      if(!response.ok)throw new Error(result.error||'Не получилось загрузить личные начисления.');
+      total.textContent=result.count?num(result.total)+' ₽':'Пока не записан';
+    }catch(e){if(seq!==serviceSeq)return;total.textContent='Недоступно';error.textContent=e.message;$('service-charge-reload').hidden=false;}
+  }
   function render(s){
     const openMetrics=data?.month===s.month?[...document.querySelectorAll('.sales-goal[open]')].map(el=>el.dataset.metric):[];
     data=s;$('sales-month').value=s.month;$('sales-content').hidden=false;
@@ -48,7 +71,7 @@
     $('sales-reports').innerHTML='<details class="sales-form"><summary>Официальные отчеты</summary>'+ (s.reports.length?s.reports.map((r,i)=>`<div class="sales-record"><span>По ${esc(r.cutoff)}</span><button data-report="${i}" data-change>Исправить отчет</button></div>`).join(''):'<p class="sales-muted">Нет отчётов</p>')+'</details>';
     $('sales-history').innerHTML=s.events.length?s.events.map(e=>`<div class="sales-record"><div>${kinds[e.kind]} · ${num(e.value)}<p class="sales-muted">${esc(e.work_date)}${e.voided?' · отменено':''}</p></div>${e.voided?'':`<button data-edit="${esc(e.id)}" data-change>Исправить</button><button data-undo="${esc(e.id)}" data-change>Отменить</button>`}</div>`).join(''):'<p class="sales-muted">Нет записей</p>';lock();
   }
-  async function load(){if(busy)return;busy=true;lock();$('sales-error').textContent='';try{render(await api('view',{month:$('sales-month').value||undefined}));$('sales-reload').hidden=true;}catch(e){$('sales-error').textContent=e.message;$('sales-reload').hidden=false;}finally{busy=false;lock();}}
+  async function load(){if(busy)return;busy=true;lock();$('sales-error').textContent='';loadService();try{render(await api('view',{month:$('sales-month').value||undefined}));$('sales-reload').hidden=true;}catch(e){$('sales-error').textContent=e.message;$('sales-reload').hidden=false;}finally{busy=false;lock();}}
   async function mutate(action,body){if(busy)return;if(!pending){pending={action,body:{month:data.month,...body}};persist();}busy=true;lock();$('sales-error').textContent='';try{render(await api(pending.action,pending.body));pending=null;persist();$('sales-status').textContent='Изменения сохранены';$('sales-report').hidden=true;$('sales-edit').hidden=true;$('sales-settings').open=false;}catch(e){$('sales-error').textContent=e.message;if(e.status>=400&&e.status<500&&e.status!==401){pending=null;persist();}}finally{busy=false;lock();}}
   const values=(prefix,keys)=>Object.fromEntries(keys.filter(k=>$(prefix+'-'+k).value.trim()!=='').map(k=>[k,$(prefix+'-'+k).value]));
   $('sales-panel').addEventListener('click',e=>{const b=e.target.closest('button');if(!b||busy||pending)return;
@@ -62,6 +85,8 @@
   $('sales-period').onclick=()=>{const box=$('sales-month-picker');box.hidden=!box.hidden;$('sales-period').setAttribute('aria-expanded',String(!box.hidden));if(!box.hidden)$('sales-month').focus();};
   $('sales-month').onchange=()=>{$('sales-month-picker').hidden=true;$('sales-period').setAttribute('aria-expanded','false');$('sales-content').hidden=true;$('sales-edit').hidden=true;$('sales-report').hidden=true;$('sales-settings').open=false;$('sales-settings-form').reset();load();};
   $('sales-reload').onclick=load;$('sales-retry').onclick=()=>{if(pending)mutate(pending.action,pending.body);};
+  $('service-charge-reload').onclick=loadService;
+  window.addEventListener('private-money-ready',()=>{if(!$('sales-panel').hidden)loadService();});
   for(const tab of document.querySelectorAll('#tab-sales,#tab-earnings'))tab.onclick=()=>{document.getElementById('research-panel').hidden=true;document.getElementById('tab-research').setAttribute('aria-selected','false');document.getElementById('restaurant-panel').hidden=true;document.getElementById('tab-restaurant').setAttribute('aria-selected','false');const plan=tab.id==='tab-sales';$('sales-panel').hidden=!plan;$('earnings-panel').hidden=plan;$('tab-sales').setAttribute('aria-selected',String(plan));$('tab-earnings').setAttribute('aria-selected',String(!plan));if(plan)load();else window.dispatchEvent(new Event('earnings-updated'));};
   if(pending?.body?.month)$('sales-month').value=pending.body.month;lock();
 })();
