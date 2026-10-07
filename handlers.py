@@ -4,11 +4,13 @@
 Принцип: записываем сразу, отмена — одной кнопкой. Многошаговых диалогов нет.
 """
 import csv
+import asyncio
 import html
 import io
 import logging
 import os
 import re
+from decimal import Decimal
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
@@ -193,7 +195,7 @@ async def send_help(message: Message,user_id: int):
     await message.answer(
         "<b>Как я работаю</b>\n\n"
         "Чаевые: <i>500</i> или <i>чай 500</i>. Расход — с названием: <i>кофе 200</i>.\n"
-        "Перешли сообщение банка о чаевых — разберу сумму и помогу сохранить.\n\n"
+        "Перешли одно или несколько сообщений банка о чаевых — сложу суммы и запишу одним итогом.\n\n"
         "🧾 Записать расход — внести траты за смену (мойка, бар, еда…), "
         "покажу чистыми за смену\n"
         "📋 История — последние записи\n"
@@ -705,7 +707,8 @@ async def undo_sale(callback: CallbackQuery):
 # ─── главный обработчик текста ───────────────────────────────────────────────
 
 async def _send_private_record(message: Message, record: dict, index: int,
-                               delete_source: bool = True):
+                               delete_source: bool = True, source_messages=None,
+                               confirmation: str | None = None):
     """Store an encrypted 14-day copy; the phone imports it on next open."""
     import private_payload
     from datetime import datetime, timezone
@@ -726,31 +729,42 @@ async def _send_private_record(message: Message, record: dict, index: int,
         failure(error,area='private_money',stage='backup_save')
         await message.answer('Не получил подтверждение сохранения. Открой личный журнал и проверь запись перед повтором.')
         return False
-    intro = ('Сервисный сбор записан как начисление к зарплате. '
-             if record['kind'] == 'accrual' else 'Запись сохранена в зашифрованной копии. ')
-    reply=await message.answer(intro+'Она появится на телефоне, когда откроешь «Статистику». '
+    intro = confirmation or ('Сервисный сбор записан как начисление к зарплате.'
+             if record['kind'] == 'accrual' else 'Запись сохранена в зашифрованной копии.')
+    reply=await message.answer(intro+' Она появится на телефоне, когда откроешь «Статистику». '
                                'Открой её в течение 14 дней.')
     if delete_source:
-        try:
-            await message.bot.delete_message(message.chat.id,message.message_id)
-        except Exception as error:
-            from diagnostics import failure
-            failure(error,area='private_money',stage='delete_source')
+        failed=False
+        for source in (source_messages or [message]):
             try:
-                await reply.edit_text(intro+'Она появится на телефоне, когда откроешь «Статистику». '
-                                      'Исходное сообщение осталось в чате — удали его вручную.')
+                await message.bot.delete_message(source.chat.id,source.message_id)
+            except Exception as error:
+                from diagnostics import failure
+                failure(error,area='private_money',stage='delete_source')
+                failed=True
+        if failed:
+            try:
+                warning=('Исходное сообщение осталось в чате — удали его вручную.'
+                         if len(source_messages or [message])==1 else
+                         'Некоторые исходные сообщения остались в чате — удали их вручную.')
+                await reply.edit_text(intro+' Она появится на телефоне, когда откроешь «Статистику». '
+                                      +warning)
             except Exception:
                 pass
     return True
 
 
-async def _save_bank_tips(message: Message, notif: dict):
+async def _save_bank_tips(message: Message, notif: dict, source_messages=None):
     """Чаевые из банковского уведомления → на карту, с чеком и процентом."""
     tips = notif["amount"]
+    count=len(source_messages) if source_messages else 1
     if (await db.get_or_create_user(message.from_user.id)).get('private_money_mode'):
         await _send_private_record(message,{'kind':'income','account':'card',
             'signed_amount':tips,'category':'Чаевые','note':'из банка',
-            'order_amount':notif.get('order_amount'),'tip_percent':notif.get('tip_percent')},0)
+            'order_amount':notif.get('order_amount'),'tip_percent':notif.get('tip_percent')},0,
+            source_messages=source_messages,
+            confirmation=f'Записал чаевые: <b>{fmt(tips)} ₽</b>'+
+                (f' из {count} уведомлений.' if count>1 else '.'))
         return
     entry = await db.add_entry(
         message.from_user.id, "income", db.CARD, tips,
@@ -766,12 +780,69 @@ async def _save_bank_tips(message: Message, notif: dict):
         details.append(f"{notif['tip_percent']:g}%")
     details_str = f" ({', '.join(details)})" if details else ""
     await message.answer(
-        f"➕ Чаевые <b>{fmt(tips)} ₽</b>{details_str} → карта\n\n"
+        f"➕ Чаевые <b>{fmt(tips)} ₽</b>{details_str} → карта"+
+        (f" · {count} уведомлений" if count>1 else "")+"\n\n"
         + await today_block(message.from_user.id),
         reply_markup=undo_kb([entry["id"]], toggle_entry=entry),
     )
     from ux_chat import value_saved
     await value_saved(message,entry)
+
+
+# Telegram delivers a selection of forwarded text messages as separate updates.
+# Wait briefly for the rest of the selection before creating one entry.
+_forward_batches = {}
+_forward_quiet_seconds = 2.0
+
+
+def _forward_source(origin):
+    user=getattr(origin,'sender_user',None)
+    chat=getattr(origin,'chat',None) or getattr(origin,'sender_chat',None)
+    if user is not None:return ('user',user.id)
+    if chat is not None:return ('chat',chat.id)
+    return ('name',getattr(origin,'sender_user_name',None) or 'unknown')
+
+
+def _queue_forwarded_tips(message: Message, notif: dict | None):
+    key=(message.chat.id,message.from_user.id,_forward_source(message.forward_origin))
+    loop=asyncio.get_running_loop()
+    batch=_forward_batches.setdefault(key,{"messages":{},"timer":None})
+    batch['messages'][message.message_id]=(message,notif)
+    if batch['timer'] is not None:batch['timer'].cancel()
+    batch['timer']=loop.call_later(_forward_quiet_seconds,
+        lambda:asyncio.create_task(_flush_forwarded_tips(key)))
+
+
+async def _flush_forwarded_tips(key):
+    batch=_forward_batches.pop(key,None)
+    if not batch:return
+    items=[batch['messages'][mid] for mid in sorted(batch['messages'])]
+    first=items[0][0]
+    missing=sum(notif is None for _,notif in items)
+    if missing:
+        warning=('В пересланном сообщении не нашёл сумму чаевых. Ничего не записал. '
+                 'Запиши вручную: <i>чай 500</i>.' if len(items)==1 else
+                 f'Не нашёл сумму чаевых в {missing} из {len(items)} пересланных сообщений. '
+                 'Ничего не записал. Перешли только уведомления о чаевых ещё раз.')
+        await first.answer(warning)
+        return
+    total=sum((Decimal(str(notif['amount'])) for _,notif in items),Decimal('0'))
+    notif=items[0][1].copy() if len(items)==1 else {
+        'amount':float(total),'order_amount':None,'tip_percent':None}
+    try:
+        await _save_bank_tips(first,notif,source_messages=[message for message,_ in items])
+    except Exception:
+        logging.exception('Forwarded tips batch save failed')
+        await first.answer('Не удалось подтвердить запись чаевых. Проверь историю перед повторной пересылкой.')
+
+
+@router.shutdown()
+async def flush_forwarded_tips_on_shutdown():
+    """Do not discard a received batch during a graceful restart."""
+    keys=list(_forward_batches)
+    for key in keys:
+        _forward_batches[key]['timer'].cancel()
+    await asyncio.gather(*(_flush_forwarded_tips(key) for key in keys))
 
 
 @router.message(F.text)
@@ -786,13 +857,7 @@ async def handle_text(message: Message, state: FSMContext):
     # 1. Пересланное сообщение банка о чаевых → на карту
     if message.forward_origin is not None:
         notif = p.parse_bank_notification(text)
-        if notif is not None:
-            await _save_bank_tips(message, notif)
-        else:
-            await message.answer(
-                "В пересланном сообщении не нашёл сумму чаевых.\n"
-                "Запиши руками: <i>чай 500</i>"
-            )
+        _queue_forwarded_tips(message,notif)
         return
 
     # 2. Текст уведомления банка, скопированный без пересылки
