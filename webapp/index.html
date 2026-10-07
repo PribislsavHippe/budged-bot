@@ -92,12 +92,36 @@
   /* ── разбор дня из календаря ── */
   #day { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 92; display: none; }
   #day.on { display: flex; align-items: flex-end; }
-  #day .sheet { max-height: min(85vh, 760px); overflow-y: auto; }
+  #day .sheet { max-height: min(85vh, 760px); overflow-y: auto; padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
+  .day-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+  .day-header .sheet-title { margin: 0; }
+  #day-close { flex: 0 0 auto; min-height: 44px; padding: 8px 0 8px 12px; border: 0; background: none; color: var(--ink-soft); font: inherit; font-size: 14px; cursor: pointer; }
   .day-edit { border-top: 1px solid #eee; margin-top: 12px; padding-top: 2px; }
   #day details:not([open]) > :not(summary) { display: none !important; }
   .day-edit summary { cursor: pointer; padding: 12px 0; font-size: 15px; list-style-position: inside; }
   .day-edit[open] summary { margin-bottom: 6px; }
-  .day-edit .tips-actions { margin-bottom: 6px; }
+  .day-tip-fields { display: none; gap: 14px; }
+  #day details[open] .day-tip-fields { display: grid; }
+  .day-tip-fields label,.day-shift-fields label { font-size: 13px; color: var(--ink-soft); }
+  .day-tip-fields input[type=number],.day-shift-fields input[type=time] { display: block; width: 100%; min-height: 48px; margin-top: 6px; padding: 10px 12px; border: 1px solid var(--faint); border-radius: 10px; background: #fff; color: var(--ink); font: 16px 'Onest',sans-serif; }
+  .day-account { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; border: 0; }
+  .day-account-title { grid-column: 1 / -1; margin-bottom: 1px; font-size: 13px; color: var(--ink-soft); }
+  .day-account label { position: relative; cursor: pointer; }
+  .day-account input { position: absolute; opacity: 0; }
+  .day-account span { display: flex; align-items: center; justify-content: center; min-height: 44px; border: 1px solid var(--faint); border-radius: 10px; color: var(--ink); font-size: 14px; }
+  .day-account input:checked + span { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .day-account input:focus-visible + span,#day button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .day-primary { min-height: 48px; margin-top: 14px; font-size: 15px; }
+  .day-tip-record { display: grid; grid-template-columns: minmax(0,1fr) auto auto; align-items: center; gap: 10px; min-height: 56px; border-bottom: 1px solid #eee; }
+  .day-tip-record:first-child { margin-top: 12px; }
+  .day-tip-record span { font-size: 14px; }
+  .day-tip-record strong { font-size: 15px; font-weight: 500; white-space: nowrap; }
+  .day-tip-record button { min-height: 44px; padding: 8px 0 8px 8px; border: 0; background: none; color: #8c3838; font: inherit; font-size: 13px; cursor: pointer; }
+  .day-shift-fields { display: none; grid-template-columns: 1fr 1fr; gap: 12px; }
+  #day details[open] .day-shift-fields { display: grid; }
+  .day-shift-actions { display: flex; align-items: center; gap: 14px; margin: 14px 0 6px; }
+  .day-shift-actions .btn { flex: 1; width: auto; min-height: 48px; margin: 0; }
+  .day-shift-actions #day-shift-delete { flex: 0 0 auto; border: 0; background: none; color: #8c3838; padding: 10px 0; }
   .day-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f2f2f2; }
   .day-row:last-child { border-bottom: none; }
   .day-row .k { font-size: 14px; color: var(--ink-soft); }
@@ -293,23 +317,22 @@
   </div>
 
   <!-- Разбор дня из календаря -->
-  <div id="day">
+  <div id="day" role="dialog" aria-modal="true" aria-labelledby="day-title">
     <div class="sheet">
-      <p class="sheet-title" id="day-title">—</p>
+      <div class="day-header"><p class="sheet-title" id="day-title">—</p><button id="day-close" type="button">Готово</button></div>
       <div id="day-body"></div>
       <p class="sheet-sub" id="day-status" role="status"></p>
       <details class="day-edit" id="day-tips-details">
         <summary id="day-tips-summary">Добавить чаевые</summary>
-        <div class="spend-inputs" id="day-tip-inputs"><input id="day-tip-amount" type="number" inputmode="decimal" min="0.01" max="10000000" step="0.01" placeholder="Сумма ₽" aria-label="Сумма чаевых"><select id="day-tip-account" aria-label="Счёт"><option value="card">Карта</option><option value="cash">Наличные</option></select></div>
-        <button class="btn btn-ghost" id="day-tip-add">Записать чаевые</button>
+        <div class="day-tip-fields" id="day-tip-inputs"><label>Сумма чаевых<input id="day-tip-amount" type="number" inputmode="decimal" min="0.01" max="10000000" step="0.01" placeholder="Сумма ₽"></label><div class="day-account" role="group" aria-label="Куда поступили"><span class="day-account-title">Куда поступили</span><label><input type="radio" name="day-tip-account" value="card" checked><span>На карту</span></label><label><input type="radio" name="day-tip-account" value="cash"><span>Наличными</span></label></div></div>
+        <button class="btn day-primary" id="day-tip-add">Записать чаевые</button>
         <div id="day-tip-list"></div>
       </details>
       <details class="day-edit" id="day-shift-details">
         <summary id="day-shift-summary">Добавить смену в график</summary>
-        <div class="spend-inputs"><label>Начало <input id="day-start" type="time"></label><label>Конец <input id="day-end" type="time"></label></div>
-        <div class="tips-actions"><button class="btn btn-ghost" id="day-shift-save">Добавить смену</button><button class="btn btn-ghost" id="day-shift-delete" hidden>Убрать смену</button></div>
+        <div class="day-shift-fields"><label>Начало<input id="day-start" type="time"></label><label>Конец<input id="day-end" type="time"></label></div>
+        <div class="day-shift-actions"><button class="btn" id="day-shift-save">Добавить смену</button><button class="btn btn-ghost" id="day-shift-delete" hidden>Убрать смену</button></div>
       </details>
-      <button class="btn btn-ghost" id="day-close">Закрыть</button>
     </div>
   </div>
 
@@ -517,11 +540,12 @@ function dayRow(k, v, total) {
 
 function openDay(view, d) {
   const nextDay = view.year + "-" + String(view.month).padStart(2,"0") + "-" + String(d.day).padStart(2,"0");
-  if (selectedDayISO !== nextDay) {
+  if (lastOpenedDayISO !== nextDay) {
     dayTipOperation = null;
     document.getElementById('day-tips-details').open=false;
     document.getElementById('day-shift-details').open=false;
   }
+  lastOpenedDayISO = nextDay;
   selectedDayISO = nextDay;
   const dt = new Date(view.year, view.month - 1, d.day);
   const wd = WD_FULL[(dt.getDay() + 6) % 7];
@@ -562,18 +586,22 @@ function openDay(view, d) {
   list.replaceChildren();
   tips.forEach(function (e) {
     const row = document.createElement("div");
-    row.className = "day-row";
+    row.className = "day-tip-record";
     const label = document.createElement("span");
-    label.textContent = "Чаевые " + (e.account === "cash" ? "наличными" : "на карту") + " · " + rub(e.amount) + " ₽";
+    label.textContent = e.account === "cash" ? "Наличными" : "На карту";
+    const amount = document.createElement("strong");
+    amount.textContent = rub(e.amount) + " ₽";
     const remove = document.createElement("button");
-    remove.type = "button"; remove.textContent = "Убрать";
+    remove.type = "button"; remove.textContent = "Удалить";
+    remove.setAttribute('aria-label','Удалить чаевые '+label.textContent+' '+amount.textContent);
     remove.onclick = function () { calendarEdit({action:"tip_delete",entry_id:e.id}); };
-    row.append(label,remove);list.appendChild(row);
+    row.append(label,amount,remove);list.appendChild(row);
   });
   document.getElementById("day").classList.add("on");
 }
 
 let selectedDayISO = null;
+let lastOpenedDayISO = null;
 let dayTipOperation = null;
 let calendarNotice = null;
 function calendarEdit(payload) {
@@ -589,12 +617,15 @@ function calendarEdit(payload) {
           await privateMoney.add({id:'local:'+payload.operation_id,kind:'income',account:payload.account,
             signed_amount:amount,category:'Чаевые',note:'из календаря',work_date:editDay,
             created_at:new Date().toISOString()});
-          dayTipOperation=null;document.getElementById('day-tip-amount').value='';
+          if (dayTipOperation===payload.operation_id) {
+            dayTipOperation=null;
+            if (lastOpenedDayISO===editDay) document.getElementById('day-tip-amount').value='';
+          }
         })()
       : privateMoney.remove(payload.entry_id);
     status.textContent='Сохраняю на устройстве…';
     task.then(function () {calendarNotice={date:editDay,text:'Сохранено на устройстве.'};if(selectedDayISO===editDay)status.textContent=calendarNotice.text;loadMonth(calYear,calMonth);load();})
-      .catch(function (e) {status.textContent=e.message;});
+      .catch(function (e) {if(selectedDayISO===editDay)status.textContent=e.message;});
     return;
   }
   status.textContent = "Сохраняю…";
@@ -604,10 +635,13 @@ function calendarEdit(payload) {
     .then(function (result) {
       calendarNotice={date:editDay,text:result.warning || "Сохранено."};
       if(selectedDayISO===editDay)status.textContent = calendarNotice.text;
-      if (payload.action === "tip_add") { dayTipOperation = null; document.getElementById("day-tip-amount").value = ""; }
+      if (payload.action === "tip_add" && dayTipOperation===payload.operation_id) {
+        dayTipOperation=null;
+        if (lastOpenedDayISO===editDay) document.getElementById("day-tip-amount").value = "";
+      }
       loadMonth(calYear,calMonth);load();
     })
-    .catch(function (e) { status.textContent = e.message || "Не получилось сохранить. Проверь данные и попробуй ещё раз."; });
+    .catch(function (e) { if(selectedDayISO===editDay)status.textContent = e.message || "Не получилось сохранить. Проверь данные и попробуй ещё раз."; });
 }
 document.getElementById("day-shift-save").onclick = function () {
   const start=document.getElementById("day-start").value;
@@ -627,16 +661,23 @@ document.getElementById("day-shift-delete").onclick = function () {
 document.getElementById("day-tip-add").onclick = function () {
   if (!dayTipOperation) dayTipOperation = crypto.randomUUID();
   calendarEdit({action:"tip_add",amount:document.getElementById("day-tip-amount").value,
-    account:document.getElementById("day-tip-account").value,operation_id:dayTipOperation});
+    account:document.querySelector('input[name="day-tip-account"]:checked').value,operation_id:dayTipOperation});
 };
 document.getElementById('day-tip-amount').oninput=function () {dayTipOperation=null;};
-document.getElementById('day-tip-account').onchange=function () {dayTipOperation=null;};
+document.querySelectorAll('input[name="day-tip-account"]').forEach(function (radio) {
+  radio.onchange=function () {dayTipOperation=null;};
+});
 
-document.getElementById("day-close").onclick = function () {
+function closeDay() {
+  selectedDayISO=null;
   document.getElementById("day").classList.remove("on");
-};
+}
+document.getElementById("day-close").onclick=closeDay;
 document.getElementById("day").addEventListener("click", function (e) {
-  if (e.target.id === "day") this.classList.remove("on");
+  if (e.target.id === "day") closeDay();
+});
+document.getElementById("day").addEventListener("keydown", function (e) {
+  if (e.key === "Escape") closeDay();
 });
 
 function loadMonth(year, month) {
