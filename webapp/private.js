@@ -89,21 +89,23 @@
     if (!raw) throw new Error('На этом устройстве нет ключа личного журнала.');
     return crypto.subtle.importKey('raw',decode(raw),{name:'AES-GCM'},false,['encrypt','decrypt']);
   }
-  async function loadLocal(requireExisting=false) {
-    const packed=await item(tg.DeviceStorage,'getItem',ledgerName);
+  async function loadLocal(requireExisting=false,packedValue,rawAesKey) {
+    const packed=packedValue===undefined?await item(tg.DeviceStorage,'getItem',ledgerName):packedValue;
     if (!packed) {
       if (requireExisting) throw new Error('Личный журнал отсутствует на этом устройстве.');
       state.entries=[];state.receipts=[];return;
     }
-    const saved=await unpackLocal(packed);
+    const saved=await unpackLocal(packed,rawAesKey);
     const entries=Array.isArray(saved)?saved:saved?.entries;
     if (!Array.isArray(entries)) throw new Error('Не удалось прочитать личный журнал.');
     state.entries=entries;
     state.receipts=Array.isArray(saved)?entries.map(e=>String(e.id)):
       Array.isArray(saved.receipts)?saved.receipts.map(String):[];
   }
-  async function unpackLocal(packed) {
-    const bytes=decode(packed),key=await aesKey(false);
+  async function unpackLocal(packed,rawAesKey) {
+    const bytes=decode(packed),key=rawAesKey
+      ? await crypto.subtle.importKey('raw',decode(rawAesKey),{name:'AES-GCM'},false,['decrypt'])
+      : await aesKey(false);
     const plain=await crypto.subtle.decrypt({name:'AES-GCM',iv:bytes.subarray(0,12)},key,bytes.subarray(12));
     const saved=JSON.parse(new TextDecoder().decode(plain));
     const entries=Array.isArray(saved)?saved:saved?.entries;
@@ -140,7 +142,15 @@
       (!tg.isVersionAtLeast || tg.isVersionAtLeast('9.0')));
   }
   async function init() {
-    const result=await request('/api/private/prepare',{});
+    // Server state and phone storage are independent; start both immediately.
+    const storage=available()?Promise.all([
+      item(tg.SecureStorage,'getItem',aesName),
+      item(tg.DeviceStorage,'getItem',ledgerName),
+      item(tg.SecureStorage,'getItem',rsaName),
+      item(tg.DeviceStorage,'getItem',exitPendingName),
+      item(tg.DeviceStorage,'getItem',archiveIndexName).catch(()=>null),
+    ]).then(values=>({values}),error=>({error})):null;
+    const result=await request('/api/private/prepare',{state_only:true});
     state.active=!!result.active;
     state.ready=true;
     state.lost=false;state.lostReason=null;state.exitArchivePending=false;
@@ -150,16 +160,13 @@
       return state;
     }
     try {
-      const [key,ledger,rsa]=await Promise.all([
-        item(tg.SecureStorage,'getItem',aesName),
-        item(tg.DeviceStorage,'getItem',ledgerName),
-        item(tg.SecureStorage,'getItem',rsaName)]);
+      const local=await storage;
+      if (local.error) throw local.error;
+      const [key,ledger,rsa,pending,rawIndex]=local.values;
       try {
-        const rawIndex=await item(tg.DeviceStorage,'getItem',archiveIndexName);
         const archives=rawIndex?JSON.parse(rawIndex):[];
         state.archiveCount=Array.isArray(archives)?archives.length:0;
       } catch (error) {state.archiveCount=0;}
-      const pending=await item(tg.DeviceStorage,'getItem',exitPendingName);
       if (!state.active && pending && pending===result.last_exit_operation) {
         try {await finishExitArchive();}
         catch (error) {state.exitArchivePending=true;}
@@ -173,11 +180,11 @@
       } else if ((key && !ledger) || (!key && ledger) || (state.active && !rsa && (key || ledger))) {
         state.lost=state.active;state.lostReason='unreadable';
       } else if (ledger) {
-        await loadLocal();
+        await loadLocal(false,ledger,key);
         if (state.active) {
-          const keys=await rsaKeys(false);
+          const keys=JSON.parse(rsa);
           if (result.public_key &&
-              (keys.publicJwk.n!==result.public_key.n || keys.publicJwk.e!==result.public_key.e)) {
+              (keys.public.n!==result.public_key.n || keys.public.e!==result.public_key.e)) {
             // A previous rotation may have succeeded locally but lost its response.
             if (!state.entries.length) {state.lost=true;state.lostReason='pending';}
           }
@@ -212,7 +219,7 @@
     try {
       await request('/api/private/activate',{entry_ids:result.entries.map(e=>e.id),public_key:keys.publicJwk});
     } catch (error) {
-      const check=await request('/api/private/prepare',{});
+      const check=await request('/api/private/prepare',{state_only:true});
       if (!check.active) throw error;
     }
     state.active=true;state.lost=false;
@@ -336,7 +343,7 @@
     if (state.active) throw new Error('Сначала перенеси личный журнал в обычный режим.');
     const operation=await item(tg.DeviceStorage,'getItem',exitPendingName);
     if (!operation) throw new Error('Не нашёл подтверждение переноса на этом телефоне.');
-    const profile=await request('/api/private/prepare',{});
+    const profile=await request('/api/private/prepare',{state_only:true});
     if (profile.active || profile.last_exit_operation!==operation)
       throw new Error('Сервер не подтвердил выход из приватного режима. Журнал сохранён.');
     const archiveName='money_ledger_archive_'+operation.replace(/-/g,'');
@@ -389,7 +396,7 @@
         await request('/api/private/deactivate',{operation_id:operation,
           public_key:publicKey,private_entries:state.entries,receipts:state.receipts});
       } catch (error) {
-        const profile=await request('/api/private/prepare',{});
+        const profile=await request('/api/private/prepare',{state_only:true});
         if (profile.active || profile.last_exit_operation!==operation) throw error;
       }
       state.active=false;state.lost=false;state.lostReason=null;
@@ -400,7 +407,7 @@
   async function restoreRecent() {
     if (!state.active || !state.lost || !['pending','unreadable'].includes(state.lostReason))
       throw new Error('Восстановление здесь не требуется.');
-    const keys=await rsaKeys(false),profile=await request('/api/private/prepare',{});
+    const keys=await rsaKeys(false),profile=await request('/api/private/prepare',{state_only:true});
     if (!profile.public_key || keys.publicJwk.n!==profile.public_key.n ||
         keys.publicJwk.e!==profile.public_key.e)
       throw new Error('Ключ на этом телефоне не подходит к временным копиям.');

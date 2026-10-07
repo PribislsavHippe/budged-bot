@@ -151,6 +151,10 @@ async def api_private_prepare(request: web.Request) -> web.Response:
     if user.get('private_money_mode'):
         return web.json_response({'active':True,'entries':[],
                                   'public_key':user.get('private_money_public_key')},headers=NO_CACHE)
+    if body.get('state_only') is True:
+        return web.json_response({'active':False,'entries':[],
+                                  'last_exit_operation':str(user['private_money_exit_operation'])
+                                      if user.get('private_money_exit_operation') else None},headers=NO_CACHE)
     entries=await db.get_all_entries(user_id)
     return web.json_response({'active':False,'entries':entries,
                               'last_exit_operation':str(user['private_money_exit_operation'])

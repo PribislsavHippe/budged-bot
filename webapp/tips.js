@@ -137,9 +137,12 @@
     $('tips-result').hidden=false;$('tips-retry').hidden=true;
   }
   async function load(){
-    if($('earnings-panel').hidden||window.privateMoney?.state?.lost)return;
+    if($('earnings-panel').hidden||!window.privateMoney?.state?.ready||window.privateMoney.state.lost)return;
     const token=++request;
-    $('tips-result').hidden=true;$('tips-error').textContent='';root.setAttribute('aria-busy','true');
+    const periodChanged=current&&(custom!==current.custom||
+      custom&&(rangeStart!==current.period.start||rangeEnd!==current.period.end));
+    if(!current||periodChanged)$('tips-result').hidden=true;
+    $('tips-error').textContent='';root.setAttribute('aria-busy','true');
     try{
       const data=await post('/api/tips_range',{...(custom?{start:rangeStart,end:rangeEnd}:{}),...(window.privateMoney?.payload||{})});
       if(token===request)render(data);
@@ -147,6 +150,7 @@
     finally{if(token===request)root.setAttribute('aria-busy','false');}
   }
   $('tips-retry').onclick=load;
+  window.addEventListener('private-money-ready',load);
   window.addEventListener('earnings-updated',load);
   load();
 })();

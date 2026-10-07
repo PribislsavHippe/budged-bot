@@ -11,6 +11,7 @@
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="/app/ux.js"></script>
 <link rel="stylesheet" href="/app/research.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=Prata&display=swap">
 <script>
@@ -361,7 +362,6 @@ function shiftsWord(n) {
 
 function render(s) {
   lastStats = s;
-  window.dispatchEvent(new CustomEvent("earnings-updated"));
   const now = new Date((s.operational_today || new Date().toISOString().slice(0,10)) + "T12:00:00");
   document.getElementById("head").innerHTML =
     MONTHS_UP[now.getMonth()] + " · " + shiftsWord(s.shifts_count);
@@ -660,7 +660,9 @@ function applyStats(s) {
     : 'Нажми на день, чтобы добавить или исправить смену и чаевые.';
   render(s);
 }
+let statsRequestSeq=0,statsAppliedSeq=0;
 function load() {
+  const requestSeq=++statsRequestSeq;
   if (window.privateMoney.state.lost) {
     const el=document.getElementById('err');el.style.display='block';
     el.textContent=window.privateMoney.state.lostReason==='missing'
@@ -674,8 +676,9 @@ function load() {
     body: JSON.stringify({ initData: tg ? tg.initData : "", ...window.privateMoney.payload }),
   })
     .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-    .then(applyStats)
+    .then(function (stats) {if(requestSeq>statsAppliedSeq){statsAppliedSeq=requestSeq;applyStats(stats);if(requestSeq>1)window.dispatchEvent(new Event('earnings-updated'));}})
     .catch(function (e) {
+      if(requestSeq!==statsRequestSeq)return;
       if (!/^HTTP /.test(e.message)) window.uxEvent?.("cabinet_load_error", "earnings", e.name === "TimeoutError" ? "timeout" : e.name === "SyntaxError" ? "invalid" : "network");
       const el = document.getElementById("err");
       el.style.display = "block";
@@ -1111,13 +1114,14 @@ document.getElementById('private-restore').onclick=async function () {
 };
 
 async function syncPrivateRecords() {
-  if (!privateMoney.active) return;
+  if (!privateMoney.active) return 0;
   const status=document.getElementById('private-sync-status');
   status.textContent='Проверяю новые личные записи…';
   try {const count=await privateMoney.sync();
     status.textContent=count?'На этом телефоне сохранено новых записей: '+count+'.':'';
     if(count)window.dispatchEvent(new Event('private-money-ready'));
-  } catch (error) {status.textContent='Не получилось перенести новые записи на телефон. Зашифрованные копии пока на сервере; открой приложение ещё раз. '+error.message;}
+    return count;
+  } catch (error) {status.textContent='Не получилось перенести новые записи на телефон. Зашифрованные копии пока на сервере; открой приложение ещё раз. '+error.message;return 0;}
 }
 
 async function startApp() {
@@ -1129,6 +1133,7 @@ async function startApp() {
       document.getElementById('private-sync-status').textContent='Не удалось подтвердить прежний перенос. Местный журнал сохранён; открой «Суперконфиденциальность».';
     window.dispatchEvent(new Event('private-money-ready'));
     privateButtonText();
+    load();iphoneCalendarRefresh();
     const imported=await privateMoney.importUrl();
     if (imported) {
       window.dispatchEvent(new Event('private-money-ready'));
@@ -1136,20 +1141,21 @@ async function startApp() {
       privateModal.hidden=false;privateModal.style.display='flex';
       document.getElementById('private-confirm').hidden=true;
     }
-    await syncPrivateRecords();
+    const count=await syncPrivateRecords();
+    if (imported || count) load();
   } catch (error) {
-    const el=document.getElementById('err');el.style.display='block';el.textContent=error.message;
+    if (privateMoney.state.ready) document.getElementById('private-sync-status').textContent=error.message;
+    else {const el=document.getElementById('err');el.style.display='block';el.textContent=error.message;}
     return;
   }
-  load();iphoneCalendarRefresh();
 }
 startApp();
 setInterval(async function () {await syncPrivateRecords();load();}, 60000);
 document.addEventListener("visibilitychange", async function () {
   if (document.hidden) return;
-  await syncPrivateRecords();
   load();
   iphoneCalendarRefresh();
+  if(await syncPrivateRecords())load();
 });
 </script>
 <script src="/app/sales.js"></script>

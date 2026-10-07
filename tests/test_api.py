@@ -798,6 +798,21 @@ def test_private_backups_require_telegram_signature_and_scope_to_current_user():
         get_backups.assert_awaited_once_with(42, 'key-label')
 
 
+def test_private_startup_reads_state_without_loading_all_entries():
+    from unittest.mock import AsyncMock
+    signed=init_data(TOKEN,42)
+    with patch.object(_db,'get_or_create_user',new=AsyncMock(return_value={
+            'id':42,'private_money_mode':False,'private_money_exit_operation':None})), \
+         patch.object(_db,'get_all_entries',new=AsyncMock(return_value=[{'id':1}])) as entries:
+        startup=run(webapp_api.api_private_prepare(Req({'initData':signed,'state_only':True})))
+        assert startup.status==200 and startup.data=={
+            'active':False,'entries':[],'last_exit_operation':None}
+        entries.assert_not_awaited()
+        activation=run(webapp_api.api_private_prepare(Req({'initData':signed})))
+        assert activation.data['entries']==[{'id':1}]
+        entries.assert_awaited_once_with(42)
+
+
 def test_private_backup_clear_requires_active_mode():
     from unittest.mock import AsyncMock
     signed = init_data(TOKEN, 42)
