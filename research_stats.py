@@ -117,9 +117,13 @@ def summarize(subjects,events,days=30,now=None,ux_version=None):
         recent=[e for e in rows if start<=dt(e['occurred_at']).astimezone(TZ).date()<=today]
         if recent:
             last=max(recent,key=lambda e:(dt(e['occurred_at']),e.get('id',0)))
+            counts=Counter(e['event'] for e in recent)
             users.append({'id':sid,'label':f"U-{selected[sid]['label']:04d}",'cohort':selected[sid]['cohort'],
                           'onboarding_version':selected[sid]['onboarding_version'],'last_at':last['occurred_at'],
-                          'last_event':last['event'],'errors':sum(e['event'] in ERROR_EVENTS for e in recent)})
+                          'last_event':last['event'],'errors':sum(e['event'] in ERROR_EVENTS for e in recent),
+                          'active_days':len({dt(e['occurred_at']).astimezone(TZ).date() for e in recent if e['event'] in ACTIVE}),
+                          'shift_saves':counts['shift_planned'],'tip_saves':counts['tip_added'],
+                          'hours_saves':counts['hours_recorded']})
     # The list is a recent activity feed. Sorting by errors/label hid active
     # people on later pages even when their actions were counted above.
     users.sort(key=lambda u:(dt(u['last_at']),u['id']),reverse=True)

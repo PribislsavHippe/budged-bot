@@ -55,6 +55,8 @@ def payload(uid,event,*,source='bot',screen='chat',step=None,error_code=None,ope
 
 def track(uid,event,**context):
     if not enabled():return
+    from admin import is_admin
+    if is_admin(uid):return
     global _worker
     try:
         record=payload(uid,event,**context)
@@ -80,6 +82,8 @@ async def drain():
 async def record(uid,event,**context):
     """For optional onboarding transitions only; never used before financial writes."""
     if not enabled():return {}
+    from admin import is_admin
+    if is_admin(uid):return {}
     try:
         return (await execute(client().rpc('record_ux_event',payload(uid,event,**context)))).data or {}
     except Exception as error:
@@ -97,6 +101,12 @@ async def subject(uid):
         from diagnostics import failure
         failure(error,area='analytics',stage='subject')
         return None
+
+
+async def owner_subject_id(uid):
+    """Resolve only the signed owner's subject ID for exclusion from research views."""
+    rows=(await execute(client().table('research_subjects').select('id').eq('user_id',uid).limit(1))).data
+    return rows[0]['id'] if rows else None
 
 
 async def pages(table,fields,configure=lambda q:q,max_rows=50000):

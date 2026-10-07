@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Пути людей — макет</title>
+<style>
+  :root{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;color:#242126;background:#bdb2ff}
+  *{box-sizing:border-box}body{margin:0}.shell{max-width:460px;min-height:100vh;margin:auto;padding:28px 20px 48px;background:#bdb2ff}
+  .eyebrow{font-size:13px;color:#716b79;margin:0 0 8px}h1{font-size:32px;line-height:1.1;font-weight:500;letter-spacing:-.04em;margin:0 0 18px}h2{font-size:23px;font-weight:500;letter-spacing:-.025em;margin:0 0 14px}
+  p{line-height:1.45}.muted{color:#68626e;font-size:14px}.notice{background:#fff9df;padding:12px 14px;border-radius:12px;font-size:13px;line-height:1.4;margin:20px 0}
+  .tabs{display:flex;gap:8px;margin:18px 0 26px}.tabs button,.back{border:0;background:transparent;font:inherit;padding:9px 0;margin-right:18px;color:#655d6d}.tabs button[aria-selected="true"]{color:#242126;border-bottom:2px solid #242126}
+  .person{display:flex;width:100%;justify-content:space-between;align-items:center;text-align:left;border:0;border-top:1px solid #cfc9d8;background:transparent;padding:16px 0;font:inherit;color:inherit}.person:last-child{border-bottom:1px solid #cfc9d8}.person strong{font-weight:500}.person small{display:block;color:#68626e;margin-top:5px;font-size:13px}.person .arrow{font-size:23px;font-weight:300}
+  .facts{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin:20px 0 24px}.fact{background:#faf8ff;border-radius:13px;padding:14px 10px;min-height:104px}.fact b{display:block;font:400 31px Georgia,serif;margin-bottom:8px}.fact span{font-size:12px;line-height:1.3;display:block}
+  .event{border-top:1px solid #cfc9d8;padding:13px 0}.event time{display:block;color:#68626e;font-size:12px;margin-bottom:5px}.event strong{font-weight:500}.event small{display:block;color:#68626e;margin-top:5px;line-height:1.4}.day{margin:28px 0 5px;font-size:18px;font-weight:500}
+  details{border-top:1px solid #cfc9d8;margin-top:18px;padding-top:15px}summary{cursor:pointer}.hidden{display:none}.note{border-left:2px solid #8580aa;padding-left:12px;margin:22px 0}
+</style>
+<main class="shell">
+  <p class="eyebrow">Исследование · пример без настоящих данных</p>
+  <section id="list">
+    <h1>Люди</h1>
+    <p class="muted">Что сотрудники делали в боте за выбранный период. Ваши действия здесь не учитываются.</p>
+    <div class="tabs" role="group" aria-label="Период"><button aria-selected="true">7 дней</button><button aria-selected="false">30 дней</button></div>
+    <h2>Сотрудники</h2>
+    <button class="person" data-person="2"><span><strong>U-0102</strong><small>3 дня с действиями · последнее 6 октября</small></span><span class="arrow">›</span></button>
+    <button class="person" data-person="3"><span><strong>U-0103</strong><small>2 дня с действиями · последнее 5 октября</small></span><span class="arrow">›</span></button>
+    <button class="person" data-person="5"><span><strong>U-0105</strong><small>1 день с действиями · последнее 4 октября</small></span><span class="arrow">›</span></button>
+    <p class="notice">Время и последовательность действий помогают подготовить вопрос, но не объясняют, почему человек остановился.</p>
+  </section>
+  <section id="detail" class="hidden">
+    <button class="back" id="back">← Все сотрудники</button>
+    <h1 id="name">U-0102</h1>
+    <p class="muted">Действия за 7 дней · время московское</p>
+    <div class="facts"><div class="fact"><b id="days">3</b><span>дня с действиями</span></div><div class="fact"><b id="shifts">1</b><span>сохранение смен</span></div><div class="fact"><b id="tips">2</b><span>записи чаевых</span></div></div>
+    <h2>Что видно</h2><div id="events"></div>
+    <p class="note muted" id="interpretation">Сохранённая смена и успешное распознавание рядом по времени позволяют проверить сценарий фото. Спроси, насколько легко было проверить результат.</p>
+    <details><summary>Что здесь не видно</summary><p class="muted">Неизвестно, прочитал ли человек напоминание, почему он не записал что-то ещё и как оценивает удобство. Суммы и содержание сообщений не собираются.</p></details>
+  </section>
+</main>
+<script>
+const sample={
+  2:{days:3,shifts:1,tips:2,events:[['6 октября','18:42','Записаны чаевые','Бот · сохранено'],['5 октября','22:18','Записано фактическое время','Бот · сохранено'],['4 октября','13:07','Сохранены смены','Бот · перед этим успешно завершилось распознавание графика']],note:'Сохранённая смена и успешное распознавание рядом по времени позволяют проверить сценарий фото. Спроси, насколько легко было проверить результат.'},
+  3:{days:2,shifts:1,tips:1,events:[['5 октября','23:10','Записаны чаевые','Миниапп · сохранено'],['5 октября','12:03','Сохранены смены','Бот · способ ввода неизвестен']],note:'Смена сохранена, но способ ввода по этим событиям установить нельзя. Спроси, как сотрудник добавил график и что было неудобно.'},
+  5:{days:1,shifts:0,tips:0,events:[['4 октября','11:14','Открыта помощь','Миниапп'],['4 октября','11:08','Знакомство пропущено','Бот']],note:'После помощи сохранённых действий не видно. Спроси, какую задачу человек хотел решить; не считай открытие помощи причиной остановки.'}
+};
+const list=document.getElementById('list'),detail=document.getElementById('detail');
+document.querySelectorAll('[data-person]').forEach(button=>button.onclick=()=>{let id=button.dataset.person,p=sample[id];document.getElementById('name').textContent='U-010'+id;for(let key of ['days','shifts','tips'])document.getElementById(key).textContent=p[key];document.getElementById('events').innerHTML=p.events.map(([day,time,label,meta],i)=>`${i===0||day!==p.events[i-1][0]?`<h3 class="day">${day}</h3>`:''}<div class="event"><time>${time}</time><strong>${label}</strong><small>${meta}</small></div>`).join('');document.getElementById('interpretation').textContent=p.note;list.classList.add('hidden');detail.classList.remove('hidden');window.scrollTo(0,0)});
+document.getElementById('back').onclick=()=>{detail.classList.add('hidden');list.classList.remove('hidden');window.scrollTo(0,0)};
+document.querySelectorAll('.tabs button').forEach(button=>button.onclick=()=>{document.querySelectorAll('.tabs button').forEach(b=>b.setAttribute('aria-selected',String(b===button)));});
+</script>
+</html>

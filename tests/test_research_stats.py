@@ -58,6 +58,17 @@ class ResearchMetricsTests(unittest.TestCase):
         self.assertEqual(d['last_observed_at'],events[-1]['occurred_at'])
         self.assertEqual(d['daily_activity'][0],{'date':'2026-09-28','active_users':2,'events':3})
 
+    def test_person_card_counts_confirmed_actions_and_active_days(self):
+        events=[event('1','cabinet_loaded',19,screen='earnings'),
+                event('1','vision_completed',19,screen='calendar'),
+                event('1','shift_planned',19,screen='calendar'),
+                event('1','tip_added',20,source='bot'),
+                event('1','tip_added',20,11,source='bot'),
+                event('1','hours_recorded',20,source='bot'),
+                event('1','cabinet_loaded',28,screen='earnings')]
+        user=summarize(self.subjects(),events,now=NOW)['users'][0]
+        self.assertEqual((user['active_days'],user['shift_saves'],user['tip_saves'],user['hours_saves']),(3,1,2,1))
+
     def test_server_confirmed_cabinet_load_counts_as_activity(self):
         d=summarize(self.subjects(),[event('1','cabinet_loaded',28,screen='earnings')],now=NOW)
         self.assertEqual(d['active_today'],1)

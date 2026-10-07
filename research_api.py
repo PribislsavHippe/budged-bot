@@ -1,5 +1,6 @@
 """Signed first-party events; only ADMIN_ID may read journeys/feedback."""
 from datetime import datetime,timedelta,timezone
+from zoneinfo import ZoneInfo
 from uuid import UUID
 import time
 from collections import OrderedDict
@@ -55,11 +56,18 @@ async def handle(request):
             days=body.get('days',30);version=body.get('version')
             if type(days) is not int or days not in (7,30):raise ValueError()
             if version is not None and (type(version) is not int or not 0<=version<=100):raise ValueError()
+            owner_sid=await research.owner_subject_id(uid)
             # Fetch subjects without the private Telegram mapping.
             subjects=await research.pages('research_subjects','id,label,cohort,onboarding_version',lambda q:q.order('label'))
             since=(datetime.now(timezone.utc)-timedelta(days=days+1)).isoformat()
+            def event_query(q):
+                q=q.gte('occurred_at',since)
+                if owner_sid:q=q.neq('subject_id',owner_sid)
+                return q.order('occurred_at').order('id')
             events=await research.pages('analytics_events','id,subject_id,event,occurred_at,onboarding_version,source,screen,step,error_code',
-                                        lambda q:q.gte('occurred_at',since).order('occurred_at').order('id'))
+                                        event_query)
+            subjects=[s for s in subjects if s['id']!=owner_sid]
+            events=[e for e in events if e['subject_id']!=owner_sid]
             if action=='export':
                 data=analysis_export(subjects,events,days,ux_version=version)
                 filename=f"ux-research-{data['summary']['from']}-{data['summary']['through']}.json"
@@ -76,12 +84,22 @@ async def handle(request):
         if action in ('journey','feedback'):
             sid=str(UUID(body['subject'])) if body.get('subject') else None
             if action=='journey' and not sid:raise ValueError()
+            if action=='journey' and sid==await research.owner_subject_id(uid):
+                return respond({'error':'Этот путь не входит в исследование.'},404)
+            if action=='journey':
+                days=body.get('days',30)
+                if type(days) is not int or days not in (7,30):raise ValueError()
+                now=datetime.now(timezone.utc)
+                start=now.astimezone(ZoneInfo('Europe/Moscow')).date()-timedelta(days=days-1)
+                since=datetime.combine(start,datetime.min.time(),tzinfo=ZoneInfo('Europe/Moscow')).astimezone(timezone.utc).isoformat()
             def query(q):
                 if sid:q=q.eq('subject_id',sid)
-                return q.order('occurred_at' if action=='journey' else 'created_at',desc=True).order('id',desc=True).limit(100)
+                if action=='journey':q=q.gte('occurred_at',since).lte('occurred_at',now.isoformat())
+                return q.order('occurred_at' if action=='journey' else 'created_at',desc=True).order('id',desc=True).limit(101 if action=='journey' else 100)
             table='analytics_events' if action=='journey' else 'feedback'
             fields='id,event,occurred_at,onboarding_version,source,screen,step,error_code' if action=='journey' else 'id,subject_id,created_at,category,body,screen,app_version'
             rows=(await research.execute(query(research.client().table(table).select(fields)))).data
+            if action=='journey':return respond({'rows':rows[:100],'limit':100,'truncated':len(rows)>100})
             if action=='feedback':
                 labels=await research.pages('research_subjects','id,label',lambda q:q.order('label'))
                 labelmap={s['id']:f"U-{s['label']:04d}" for s in labels}

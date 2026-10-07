@@ -1,6 +1,6 @@
 """Integration at signed HTTP and bot boundaries; no live services."""
 import asyncio,os,sys,unittest,logging,io
-from datetime import timedelta
+from datetime import datetime,timedelta,timezone
 from unittest.mock import patch,AsyncMock
 from types import SimpleNamespace as NS
 from uuid import uuid4
@@ -105,7 +105,7 @@ async def main():
                     await post('/api/research/event',uid=2,expected=400,event='tip_added',screen='earnings')
                     await post('/api/research/event',uid=2,expected=400,event='tip_added',
                                screen='calendar',operation=str(uuid4()))
-                with patch.object(research,'pages',new=AsyncMock(return_value=[])) as pages:
+                with patch.object(research,'owner_subject_id',new=AsyncMock(return_value=None)),patch.object(research,'pages',new=AsyncMock(return_value=[])) as pages:
                     d=await post('/api/research/overview',days=7)
                     assert d['new_users']==0 and d['retention']['d1']['rate'] is None
                     assert all('user_id' not in call.args[1] for call in pages.await_args_list)
@@ -119,6 +119,41 @@ async def main():
                     failed=await post('/api/research/export',days=7,expected=503)
                     assert failed['error']=='Не получилось отправить файл в чат. Попробуй ещё раз.'
                     app['bot'].send_document.side_effect=None
+                owner_sid,staff_sid=str(uuid4()),str(uuid4())
+                subjects=[{'id':owner_sid,'label':4,'cohort':'existing','onboarding_version':0},
+                          {'id':staff_sid,'label':5,'cohort':'existing','onboarding_version':0}]
+                stamp=datetime.now(timezone.utc).isoformat()
+                rows=[{'id':1,'subject_id':owner_sid,'event':'cabinet_loaded','occurred_at':stamp,
+                       'onboarding_version':0,'source':'server','screen':'earnings','step':None,'error_code':None},
+                      {'id':2,'subject_id':staff_sid,'event':'tip_added','occurred_at':stamp,
+                       'onboarding_version':0,'source':'bot','screen':'chat','step':None,'error_code':None}]
+                with patch.object(research,'owner_subject_id',new=AsyncMock(return_value=owner_sid)),\
+                     patch.object(research,'pages',new=AsyncMock(side_effect=[subjects,rows,subjects,rows])):
+                    d=await post('/api/research/overview')
+                    assert d['active_users']==1 and d['event_count']==1 and d['users'][0]['label']=='U-0005'
+                    assert d['versions']==[0]
+                    assert (await post('/api/research/export'))=={'sent':True}
+                    document=app['bot'].send_document.await_args.kwargs['document']
+                    assert b'U-0005' in document.data and b'U-0004' not in document.data
+                    assert owner_sid.encode() not in document.data
+                    await post('/api/research/journey',expected=404,subject=owner_sid)
+                class JourneyQuery:
+                    def __init__(self):self.calls=[]
+                    def select(self,*args):return self
+                    def eq(self,*args):self.calls.append(('eq',args));return self
+                    def gte(self,*args):self.calls.append(('gte',args));return self
+                    def lte(self,*args):self.calls.append(('lte',args));return self
+                    def order(self,*args,**kw):return self
+                    def limit(self,n):self.calls.append(('limit',n));return self
+                query=JourneyQuery()
+                with patch.object(research,'owner_subject_id',new=AsyncMock(return_value=owner_sid)),\
+                     patch.object(research,'client',return_value=NS(table=lambda name:query)),\
+                     patch.object(research,'execute',new=AsyncMock(return_value=NS(data=[rows[1]]*101))):
+                    journey=await post('/api/research/journey',subject=staff_sid,days=7)
+                    assert len(journey['rows'])==100 and journey['truncated'] is True
+                    assert ('limit',101) in query.calls
+                    assert any(name=='gte' and args[0]=='occurred_at' for name,args in query.calls if name=='gte')
+                    await post('/api/research/journey',subject=staff_sid,days=999,expected=400)
                 await post('/api/research/overview',days=999,expected=400)
                 await post('/api/research/export',days=999,expected=400)
                 with patch.dict(os.environ,{'UX_RESEARCH_ENABLED':'0'}):
@@ -131,6 +166,12 @@ async def main():
             await ux_chat.value_saved(message,{'id':1,'kind':'income','signed_amount':1500,'note':'private'})
         payload=research.payload(2,'tip_added',operation=str(uuid4()))
         assert set(payload)=={'actor','kind','origin','screen_name','step_name','failure_code','release','operation','event_time'}
+        research._queue.clear();research._worker=None
+        with patch.object(admin,'is_admin',side_effect=lambda uid:uid==1),patch.object(research,'execute',new=AsyncMock()) as execute:
+            research.track(1,'activity')
+            assert not research._queue
+            assert await research.record(1,'tip_added')=={}
+            execute.assert_not_awaited()
         # Existing user never forced; skip does not intercept ordinary text.
         with patch.object(db,'get_or_create_user',new=AsyncMock(return_value={'onboarded':True,'tutorial_step':None})):
             assert not await ux_chat.begin(message)

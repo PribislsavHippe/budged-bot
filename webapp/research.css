@@ -36,6 +36,26 @@
 #research-panel .research-user{display:flex;justify-content:space-between;align-items:center;gap:12px;text-align:left;width:100%;padding:13px 0;border-bottom:1px solid rgba(0,0,0,.13)}
 .research-user>span:last-child{flex-shrink:0;font-size:12px;color:var(--ink-soft)}
 .research-user small{display:block;margin-top:2px}
+.research-people{padding:20px 16px 16px;background:var(--tile);border-radius:16px}
+#research-panel .research-people h2{margin-bottom:4px}
+.research-people>.research-muted{margin:0 0 12px}
+.research-people .research-user:first-child{border-top:1px solid rgba(0,0,0,.13)}
+.research-people .research-user strong{font-size:16px;font-weight:500}
+.research-people .research-user>span:first-child{min-width:0}
+.research-people .research-user>span:last-child{text-align:right;max-width:110px}
+#research-panel .research-pages{justify-content:center;margin:12px 0 0}
+#research-panel .research-pages button{padding:10px}
+#research-person-content>.research-muted{margin:0 0 18px}
+.research-person-facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin:18px 0 12px}
+.research-person-facts>div{min-height:100px;background:var(--tile);border-radius:12px;padding:12px 10px}
+.research-person-facts b{display:block;font:400 27px/1.3 'Prata',Georgia,serif}
+.research-person-facts span{display:block;font-size:11px;line-height:1.35;margin-top:7px}
+#research-person-content>.research-person-day{margin:24px 0 4px;font-size:16px}
+.research-person-event{display:grid;grid-template-columns:48px 1fr;gap:8px;padding:11px 0;border-bottom:1px solid rgba(0,0,0,.13)}
+.research-person-event time{font-size:12px;color:var(--ink-soft)}
+.research-person-event strong{display:block;font-weight:500}
+.research-person-event small{display:block;margin-top:3px}
+.research-person-caveat{margin-top:20px!important}
 .research-more{margin-top:38px;border-top:1px solid rgba(0,0,0,.16);padding-top:10px}
 .research-more>summary,#research-panel details>summary{cursor:pointer;font-size:13px;padding:10px 0}
 .research-cards{display:flex;gap:10px}.research-cards article{flex:1;min-width:0;padding:14px 10px;background:var(--tile);border-radius:10px;font-size:12px}.research-cards b{display:block;font:400 27px 'Prata',Georgia,serif;margin:5px 0}
