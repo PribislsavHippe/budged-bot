@@ -31,6 +31,9 @@
 .tips-secondary strong { display:block; font:400 clamp(31px,9vw,42px)/1.3 'Prata',Georgia,serif; letter-spacing:-.06em; margin-top:2px; overflow-wrap:anywhere; }
 .expense-link { display:block; width:100%; padding:0; border:0; background:none; color:var(--ink); text-align:left; cursor:pointer; }
 .tips-secondary .expense-link span { color:var(--accent); }
+.tips-hero button:disabled { cursor:default; }
+.tips-placeholder { width:58%; border-radius:8px; background:rgba(17,17,17,.1); color:transparent; }
+.tips-secondary .tips-placeholder { width:68%; }
 .detail-backdrop { position:fixed; inset:0; z-index:88; display:flex; align-items:end; background:rgba(0,0,0,.38); }
 .detail-sheet { box-sizing:border-box; width:100%; max-width:480px; max-height:88vh; margin:0 auto; padding:20px 20px calc(20px + env(safe-area-inset-bottom)); overflow:auto; border-radius:18px 18px 0 0; background:#fff; color:var(--ink); box-shadow:0 -6px 28px #0001; }
 .detail-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
@@ -56,6 +59,5 @@
 .tips-actions { display:flex; gap:25px; border:0; padding:0; margin-top:54px; }
 .tips-actions .btn { width:auto; margin:0; padding:8px 0; border:0; background:none; box-shadow:none; color:var(--ink); font:400 14px 'Onest',sans-serif; }
 .text-action { border:0; background:none; padding:10px 0; font:14px 'Onest',sans-serif; color:var(--ink); }
-#tips-dashboard[aria-busy=true]:after { content:'Загружаю…'; font:13px 'Onest',sans-serif; display:block; margin-top:15px; }
 .app-tabs :focus-visible,#tips-dashboard :focus-visible,.calendar-disclosure :focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
 @media(max-width:370px) { .app-tabs {gap:16px} .app-tabs button[aria-selected=true] {font-size:23px!important} .privacy-link,.period-link {font-size:12px} }

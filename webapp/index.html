@@ -161,6 +161,7 @@
   .cal-wd span { font-size: 10px; color: var(--ink-soft); text-align: center; }
   .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
   .cal-cell { aspect-ratio: 1; border: 0; padding: 0; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); background: rgba(255,255,255,0.35); cursor: pointer; }
+  .cal-cell:disabled { cursor: default; opacity: .55; }
   .cal-time { font-size: 8px; line-height: 1.1; white-space: nowrap; margin-top: 2px; letter-spacing: -.3px; }
   .cal-cell.empty { background: transparent; }
   /* Кольца поверх тёмной заливки нужно осветлять, иначе их не видно */
@@ -203,7 +204,7 @@
   <section id="restaurant-panel" role="tabpanel" aria-labelledby="tab-restaurant" hidden></section>
   <section id="sales-panel" role="tabpanel" aria-labelledby="tab-sales" hidden></section>
   <section id="earnings-panel" role="tabpanel" aria-labelledby="tab-earnings">
-  <section id="tips-dashboard" aria-label="Чаевые и расходы"></section>
+  <section id="tips-dashboard" aria-label="Чаевые и расходы" aria-busy="true"></section>
   <div hidden>
   <p class="head" id="head">Загружаю…</p>
 
@@ -334,6 +335,25 @@ let lastStats = null;
 const MONTHS_UP = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
 const MONTHS_GEN = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"];
 const WD = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
+
+// The dates are available before the first API response; shift and tip data is not.
+function showCalendarShell() {
+  const day=new Date(Date.now()-3*60*60*1000); // Moscow workday begins at 06:00.
+  const year=day.getUTCFullYear(),month=day.getUTCMonth()+1;
+  const firstDow=(new Date(Date.UTC(year,month-1,1)).getUTCDay()+6)%7;
+  const days=new Date(Date.UTC(year,month,0)).getUTCDate();
+  document.getElementById('cal-title').textContent=MONTHS_UP[month-1]+' '+year;
+  document.getElementById('cal-wd').innerHTML=WD.map(x=>'<span>'+x+'</span>').join('');
+  const grid=document.getElementById('cal-grid');
+  for(let n=0;n<firstDow;n++){
+    const empty=document.createElement('span');empty.className='cal-cell empty';grid.appendChild(empty);
+  }
+  for(let n=1;n<=days;n++){
+    const cell=document.createElement('button');cell.className='cal-cell';cell.type='button';
+    cell.textContent=n;cell.disabled=true;grid.appendChild(cell);
+  }
+}
+showCalendarShell();
 
 function rub(v) { return Math.round(v).toLocaleString("ru-RU"); }
 function esc(s) {
@@ -1116,7 +1136,6 @@ document.getElementById('private-restore').onclick=async function () {
 async function syncPrivateRecords() {
   if (!privateMoney.active) return 0;
   const status=document.getElementById('private-sync-status');
-  status.textContent='Проверяю новые личные записи…';
   try {const count=await privateMoney.sync();
     status.textContent=count?'На этом телефоне сохранено новых записей: '+count+'.':'';
     if(count)window.dispatchEvent(new Event('private-money-ready'));

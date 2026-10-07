@@ -14,10 +14,12 @@
     return date(start)+' — '+date(end);
   };
   let current=null,rangeStart=null,rangeEnd=null,custom=false,request=0,detailKind=null,editing=null,pendingTip=null,busy=false;
+  const loadingHero=()=>`<div class="tips-hero"><button class="tips-gross" type="button" disabled><span>Грязные ›</span><strong class="tips-placeholder" aria-hidden="true">&nbsp;</strong></button>
+    <div class="tips-secondary"><div><span>Чистые</span><strong class="tips-placeholder" aria-hidden="true">&nbsp;</strong></div><button class="expense-link" type="button" disabled><span>Расходы ›</span><strong class="tips-placeholder" aria-hidden="true">&nbsp;</strong></button></div></div>`;
   root.innerHTML=`<div class="dashboard-controls"><button id="tips-period" class="period-link" aria-haspopup="dialog" aria-expanded="false" aria-controls="tips-range">Сегодня ›</button><button id="tips-privacy" class="privacy-link">Приватность ›</button></div>
     <div id="tips-range" class="range-backdrop" hidden><section class="range-picker" role="dialog" aria-modal="true" aria-labelledby="tips-range-title"><div class="range-head"><h2 id="tips-range-title">Выбрать период</h2><button id="tips-cancel" type="button" aria-label="Закрыть выбор периода">✕</button></div><label>Начало<input id="tips-start" type="date" min="2000-01-01"></label><label>Конец<input id="tips-end" type="date" min="2000-01-01"></label><p class="range-hint">Нажми на дату, чтобы открыть календарь.</p><p id="tips-range-error" role="alert"></p><button id="tips-apply" class="range-apply">Показать</button><button id="tips-home" class="range-home" type="button">Вернуться к последнему дню</button></section></div>
     <div id="tips-error" role="alert"></div><button id="tips-retry" class="text-action" hidden>Повторить</button>
-    <div id="tips-result" aria-live="polite"></div>
+    <div id="tips-result" aria-live="polite">${loadingHero()}</div>
     <div id="tips-detail" class="detail-backdrop" hidden><section class="detail-sheet" role="dialog" aria-modal="true" aria-labelledby="tips-detail-title"><div class="detail-head"><h2 id="tips-detail-title">—</h2><button id="tips-detail-close" type="button" aria-label="Закрыть">✕</button></div><p id="tips-detail-status" role="status"></p><div id="tips-detail-body"></div></section></div>`;
   const closeRange=()=>{$('tips-range').hidden=true;$('tips-period').setAttribute('aria-expanded','false');$('tips-period').focus();};
   $('tips-period').onclick=()=>{
@@ -130,8 +132,9 @@
     rangeStart=p.start;rangeEnd=p.end;
     $('tips-period').textContent=label(p.start,p.end,custom,data.today)+' ›';
     $('tips-start').max=data.today;$('tips-end').max=data.today;
-    $('tips-result').innerHTML=`<div class="tips-hero"><button id="tips-gross" class="tips-gross" type="button"><span>Грязные ›</span><strong>${p.has_data?money(p.gross):'—'}</strong></button>
-      <div class="tips-secondary"><div><span>Чистые</span><strong>${p.has_data?money(p.net):'—'}</strong></div><button id="tips-expense" class="expense-link" type="button"><span>Расходы ›</span><strong>${p.has_data?money(p.expenses):'—'}</strong></button></div></div>`;
+    const known=p.has_data||data.has_shift;
+    $('tips-result').innerHTML=`<div class="tips-hero"><button id="tips-gross" class="tips-gross" type="button"><span>Грязные ›</span><strong>${known?money(p.gross):'—'}</strong></button>
+      <div class="tips-secondary"><div><span>Чистые</span><strong>${known?money(p.net):'—'}</strong></div><button id="tips-expense" class="expense-link" type="button"><span>Расходы ›</span><strong>${known?money(p.expenses):'—'}</strong></button></div></div>`;
     $('tips-gross').onclick=()=>showDetail('tips');
     $('tips-expense').onclick=()=>showDetail('expenses');
     $('tips-result').hidden=false;$('tips-retry').hidden=true;
@@ -141,7 +144,7 @@
     const token=++request;
     const periodChanged=current&&(custom!==current.custom||
       custom&&(rangeStart!==current.period.start||rangeEnd!==current.period.end));
-    if(!current||periodChanged)$('tips-result').hidden=true;
+    if(periodChanged)$('tips-result').innerHTML=loadingHero();
     $('tips-error').textContent='';root.setAttribute('aria-busy','true');
     try{
       const data=await post('/api/tips_range',{...(custom?{start:rangeStart,end:rangeEnd}:{}),...(window.privateMoney?.payload||{})});

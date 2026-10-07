@@ -362,16 +362,21 @@ async def api_tips_range(request: web.Request) -> web.Response:
         today = op_today()
         entries, _ = await _entries_for_view(user_id, body)
         custom = 'start' in body or 'end' in body
+        has_shift = False
         if custom:
             start = date.fromisoformat(body['start'])
             end = date.fromisoformat(body['end'])
         else:
             shifts = await db.get_shift_dates(user_id, since=today.isoformat(), until=today.isoformat())
+            has_shift = today.isoformat() in shifts
             tip_days = [_entry_date(e) for e in entries if e['kind'] == 'income'
                         and e['category'] == 'Чаевые' and _entry_date(e) <= today]
-            start = end = today if today.isoformat() in shifts or not tip_days else max(tip_days)
+            start = end = today if has_shift or not tip_days else max(tip_days)
         if start.year < 2000 or end.year > 2100 or start > end or end > today:
             raise ValueError()
+        if custom and start == end:
+            shifts = await db.get_shift_dates(user_id, since=start.isoformat(), until=end.isoformat())
+            has_shift = start.isoformat() in shifts
     except (ValueError, TypeError, InvalidOperation):
         return web.json_response({'error': 'Проверь начало и конец периода.'}, status=400, headers=NO_CACHE)
     rows = [{'id':e['id'], 'date':_entry_date(e).isoformat(), 'kind':e['kind'],
@@ -380,7 +385,8 @@ async def api_tips_range(request: web.Request) -> web.Response:
             (e['kind'] == 'expense' or e['kind'] == 'income' and e['category'] == 'Чаевые')]
     rows.sort(key=lambda e:(e['date'],str(e['id'])),reverse=True)
     return web.json_response({'period':summarize(entries,start,end,today),
-                              'today':today.isoformat(),'custom':custom,'entries':rows},headers=NO_CACHE)
+                              'today':today.isoformat(),'custom':custom,'has_shift':has_shift,
+                              'entries':rows},headers=NO_CACHE)
 
 
 async def api_month(request: web.Request) -> web.Response:

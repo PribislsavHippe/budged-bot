@@ -365,6 +365,13 @@ def test_tips_range_defaults_to_shift_today_even_without_tips():
     assert r.status == 200
     assert r.data['period']['start'] == '2026-10-04'
     assert r.data['custom'] is False and r.data['entries'] == []
+    assert r.data['has_shift'] is True
+    assert r.data['period']['has_data'] is False and r.data['period']['gross'] == 0
+
+    with patch.object(webapp_api, 'op_today', return_value=date(2026, 10, 4)):
+        selected = run(webapp_api.api_tips_range(Req({'initData':init_data(TOKEN,42),
+            'start':'2026-10-04','end':'2026-10-04'})))
+    assert selected.data['has_shift'] is True
 
 
 def test_tips_range_defaults_to_last_tip_date_without_today_shift():
@@ -379,6 +386,7 @@ def test_tips_range_defaults_to_last_tip_date_without_today_shift():
         r = run(webapp_api.api_tips_range(Req({'initData':init_data(TOKEN,42)})))
     assert r.status == 200
     assert r.data['period']['start'] == '2026-10-02'
+    assert r.data['has_shift'] is False
     assert {e['id'] for e in r.data['entries']} == {old['id'], expense['id']}
     assert (r.data['period']['gross'], r.data['period']['expenses']) == (600,150)
 
