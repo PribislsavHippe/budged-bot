@@ -1,5 +1,5 @@
 """Isolated time, schedule import, confirmations and private persistence checks."""
-import sys,os,unittest
+import sys,os,time,unittest
 from datetime import date,datetime,timedelta
 from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock,patch
@@ -48,6 +48,9 @@ class Times(unittest.TestCase):
     def test_actual_overtime_and_rate(self):
         a,b=schedule.actual('2026-09-28','23:30','10:00:00')
         self.assertEqual(schedule.earned(a,b,350),{'hours':13.5,'income':4725})
+        self.assertEqual(schedule.earned(datetime.fromisoformat('2026-10-02T06:00:00+00:00'),
+                                         datetime.fromisoformat('2026-10-02T18:00:00+00:00'),350),
+                         {'hours':12.0,'income':4200.0})
         a,b=schedule.actual('2026-10-05','В 21:40','10:00:00')
         self.assertEqual(b.strftime('%H:%M'),'21:40')
         self.assertEqual(schedule.hours_text(schedule.earned(a,b,None)['hours']),'11 ч 40 мин')
@@ -79,6 +82,17 @@ class Flow(unittest.IsolatedAsyncioTestCase):
         await chat.cancel_work(self.cb('work:cancel'),state)
         state.clear.assert_awaited_once()
         self.assertEqual(self.message.edit_text.await_args.args[0],'Время не записываю.')
+    async def test_existing_hours_are_shown_before_replacement(self):
+        state=NS(set_state=AsyncMock(),set_data=AsyncMock())
+        store.rows={'shifts':[{'user_id':7,'shift_date':'2026-10-02','starts_at':'09:00:00'}],
+                    'worked_shifts':[{'user_id':7,'shift_date':'2026-10-02',
+                                      'actual_start':'2026-10-02T06:00:00+00:00',
+                                      'actual_end':'2026-10-02T18:00:00+00:00'}]}
+        await chat.ask_end(self.message,7,'2026-10-02',state)
+        prompt=self.message.answer.await_args.args[0]
+        self.assertIn('Уже записано: 02.10 09:00 → 02.10 21:00.',prompt)
+        self.assertIn('Новое время заменит эту запись.',prompt)
+        self.assertEqual(len(store.rows['worked_shifts']),1)
     async def test_rate_prompt_can_be_skipped_with_button(self):
         state=NS(set_state=AsyncMock(),set_data=AsyncMock(),get_state=AsyncMock(return_value=chat.Work.rate.state),clear=AsyncMock())
         await chat.ask_rate(self.cb('work:rate:2026-10-05'),state)
@@ -136,6 +150,27 @@ class Flow(unittest.IsolatedAsyncioTestCase):
             await chat.save_actual(self.cb('work:save:n'),state);state.clear.assert_awaited_once()
             self.assertIn('Записал 13 ч 30 мин.',self.message.edit_text.await_args.args[0])
             self.assertIn('4725',self.message.edit_text.await_args.args[0])
+    async def test_saved_hours_get_new_confirmation_if_message_cannot_be_edited(self):
+        data={'work_day':'2026-10-02','work_nonce':'n',
+              'actual_start':'2026-10-02T09:00:00+03:00','actual_end':'2026-10-02T21:00:00+03:00'}
+        state=NS(get_data=AsyncMock(return_value=data),get_state=AsyncMock(return_value=chat.Work.confirm.state),clear=AsyncMock())
+        self.message.edit_text=AsyncMock(side_effect=RuntimeError('message cannot be edited'))
+        with patch.object(schedule,'save_work',new=AsyncMock(return_value={'hours':12,'income':None})),patch.object(chat.research,'track'):
+            await chat.save_actual(self.cb('work:save:n'),state)
+        self.assertIn('Записал 12 ч.',self.message.answer.await_args.args[0])
+        self.assertEqual(self.message.answer.await_args.kwargs['reply_markup'].inline_keyboard[0][0].text,'Указать ставку')
+    async def test_entering_and_cancelling_hours_never_saves_them(self):
+        self.message.text='21:00'
+        data={'work_day':'2026-10-02','work_start':'09:00:00','work_nonce':'n','work_created':time.time()}
+        state=NS(get_data=AsyncMock(return_value=data),update_data=AsyncMock(),
+                 set_state=AsyncMock(),get_state=AsyncMock(return_value=chat.Work.confirm.state),clear=AsyncMock())
+        with patch.object(schedule,'save_work',new=AsyncMock()) as save:
+            await chat.end_text(self.message,state)
+            state.set_state.assert_awaited_once_with(chat.Work.confirm)
+            self.assertIn('09:00 → 02.10 21:00',self.message.answer.await_args.args[0])
+            save.assert_not_awaited()
+            await chat.cancel_work(self.cb('work:cancel'),state)
+            save.assert_not_awaited()
     async def test_private_rate_snapshot_and_export(self):
         store.rows={'users':[{'id':7,'hourly_rate':350},{'id':8,'hourly_rate':999}], 'worked_shifts':[], 'shifts':[]}
         a,b=schedule.actual('2026-09-28','23:30','10')
@@ -153,6 +188,20 @@ class Flow(unittest.IsolatedAsyncioTestCase):
             clock.now.return_value=now;clock.fromisoformat=datetime.fromisoformat;clock.combine=datetime.combine
             await chat.prompt_work_end(bot);await chat.prompt_work_end(bot)
         bot.send_message.assert_awaited_once();self.assertEqual(bot.send_message.await_args.args[0],7)
+
+    async def test_end_reminder_skips_hours_already_recorded(self):
+        now=datetime(2026,10,2,21,5,tzinfo=schedule.TZ)
+        store.rows={'shifts':[{'id':1,'user_id':7,'shift_date':'2026-10-02','starts_at':'09:00:00',
+                               'ends_at':'21:00:00','time_prompt_sent':False,'time_prompt_at':None}],
+                    'worked_shifts':[{'user_id':7,'shift_date':'2026-10-02',
+                                      'actual_start':'2026-10-02T09:00:00+03:00',
+                                      'actual_end':'2026-10-02T21:00:00+03:00'}]}
+        bot=NS(send_message=AsyncMock())
+        with patch.object(schedule,'enabled',return_value=True),patch.object(chat,'datetime') as clock:
+            clock.now.return_value=now;clock.fromisoformat=datetime.fromisoformat;clock.combine=datetime.combine
+            await chat.prompt_work_end(bot)
+        bot.send_message.assert_not_awaited()
+        self.assertTrue(store.rows['shifts'][0]['time_prompt_sent'])
 
     async def test_evening_reminder_sends_to_every_scheduled_user_once(self):
         store.rows={'users':[{'id':7,'shift_reminders_enabled':True},

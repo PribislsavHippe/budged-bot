@@ -244,9 +244,16 @@ async def photo_month(message):
 async def ask_end(message,uid,day,state):
     row=await schedule.load_shift(uid,day)
     start=row.get('starts_at') if row else None
+    recorded=await db.get_worked_shift_details(uid,day,day)
+    previous=''
+    if recorded:
+        old=recorded[0]
+        old_start=datetime.fromisoformat(old['actual_start'].replace('Z','+00:00')).astimezone(schedule.TZ)
+        old_end=datetime.fromisoformat(old['actual_end'].replace('Z','+00:00')).astimezone(schedule.TZ)
+        previous=f"Уже записано: {old_start:%d.%m %H:%M} → {old_end:%d.%m %H:%M}. Новое время заменит эту запись. "
     await state.set_state(Work.end)
     await state.set_data({'work_day':day,'work_start':start,'work_nonce':uuid4().hex[:12],'work_created':time.time()})
-    await message.answer(f'Смена {human_date(day)}. Во сколько ты ушёл?'+(f' Начало по графику — {start[:5]}.' if start else '')+
+    await message.answer(f'Смена {human_date(day)}. {previous}Во сколько ты ушёл?'+(f' Начало по графику — {start[:5]}.' if start else '')+
                          '\nМожно указать и фактическое начало: 10–23:30.',
                          reply_markup=buttons([('Отмена','work:cancel')]))
 
@@ -332,7 +339,11 @@ async def save_actual(callback,state):
     await state.clear();research.track(callback.from_user.id,'hours_recorded',screen='calendar')
     text=f"Записал {schedule.hours_text(result['hours'])}."
     if result['income'] is not None:text+=f" Заработок по ставке: {result['income']:g} ₽. Чаевые считаются отдельно."
-    await callback.message.edit_text(text,reply_markup=buttons([('Указать ставку',f"work:rate:{data['work_day']}")]) if result['income'] is None else None)
+    markup=buttons([('Указать ставку',f"work:rate:{data['work_day']}")]) if result['income'] is None else None
+    try:
+        await callback.message.edit_text(text,reply_markup=markup)
+    except Exception:
+        await callback.message.answer(text,reply_markup=markup)
 
 
 @router.callback_query(F.data=='work:cancel')
@@ -422,6 +433,12 @@ async def prompt_work_end(bot):
             if not end<=now<=end+timedelta(hours=12):continue
             if row.get('time_prompt_at') and datetime.fromisoformat(row['time_prompt_at'].replace('Z','+00:00'))>now:continue
             uid=row['user_id'];day=row['shift_date']
+            recorded=(await db._execute(db.supabase.table('worked_shifts').select('shift_date')
+                                        .eq('user_id',uid).eq('shift_date',day).limit(1))).data
+            if recorded:
+                await db._execute(db.supabase.table('shifts').update({'time_prompt_sent':True})
+                                  .eq('id',row['id']).eq('time_prompt_sent',False))
+                continue
             claimed=(await db._execute(db.supabase.table('shifts').update({'time_prompt_sent':True,'time_prompt_at':now.isoformat()})
                                        .eq('id',row['id']).eq('time_prompt_sent',False))).data
             if not claimed:continue

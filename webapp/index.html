@@ -538,6 +538,14 @@ function dayRow(k, v, total) {
     '<span class="k">' + k + '</span><span class="v">' + v + "</span></div>";
 }
 
+function workClock(iso) {
+  const instant = new Date(iso);
+  if (!Number.isFinite(instant.getTime())) return null;
+  return new Intl.DateTimeFormat('ru-RU', {
+    timeZone: 'Europe/Moscow', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).format(instant);
+}
+
 function openDay(view, d) {
   const nextDay = view.year + "-" + String(view.month).padStart(2,"0") + "-" + String(d.day).padStart(2,"0");
   if (lastOpenedDayISO !== nextDay) {
@@ -557,7 +565,11 @@ function openDay(view, d) {
   const planned = (view.planned_times || []).find(function (s) { return s.shift_date === selectedDayISO; });
   const worked = (view.worked_times || []).find(function (s) { return s.shift_date === selectedDayISO; });
   if (planned) rows.push(dayRow("По графику", planned.starts_at && planned.ends_at ? planned.starts_at.slice(0,5) + "–" + planned.ends_at.slice(0,5) : "время не указано"));
-  if (worked) rows.push(dayRow("Фактически", worked.actual_start.slice(11,16) + "–" + worked.actual_end.slice(11,16)));
+  if (worked) {
+    const start = workClock(worked.actual_start);
+    const end = workClock(worked.actual_end);
+    rows.push(dayRow("Фактически", start && end ? start + "–" + end : "не удалось показать время"));
+  }
   if (d.tips > 0) {
     rows.push(dayRow("Чаевые", rub(d.tips) + " ₽"));
   }
