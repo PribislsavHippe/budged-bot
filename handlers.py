@@ -113,7 +113,9 @@ def undo_kb(entry_ids: list[int], toggle_entry: dict | None = None) -> InlineKey
 # ─── /start и знакомство ─────────────────────────────────────────────────────
 
 def _welcome_text(name: str) -> str:
-    return f"Привет, {html.escape(name)}! Спасибо, что тестируешь бота вместе с нами 💛"
+    return (f"Привет, {html.escape(name)}! 💛\n\n"
+            "Можно сразу записать чаевые: пришли сумму, например <i>чай 1500</i>. "
+            "Если хочешь начать с графика, пришли его фото.")
 
 
 
@@ -128,7 +130,7 @@ async def _greet(message: Message, name: str):
     import research
     research.track(message.from_user.id,'user_started')
     from ux_chat import begin
-    await begin(message)
+    await begin(message,prompt=False)
 
 
 @router.message(CommandStart())
@@ -191,45 +193,8 @@ async def send_help(message: Message,user_id: int):
     import research
     from ux_chat import help_buttons
     research.track(user_id,'help_opened')
-    await message.answer('Помощь\n\nЕсли что-то не работает или есть идея — напиши нам.',reply_markup=help_buttons())
-    await message.answer(
-        "<b>Как я работаю</b>\n\n"
-        "Чаевые: <i>500</i> или <i>чай 500</i>. Расход — с названием: <i>кофе 200</i>.\n"
-        "Перешли одно или несколько сообщений банка о чаевых — сложу суммы и запишу одним итогом.\n\n"
-        "🧾 Записать расход — внести траты за смену (мойка, бар, еда…), "
-        "покажу чистыми за смену\n"
-        "📋 История — последние записи\n"
-        "📊 Статистика — графики и календарь\n\n"
-        "Продажи: <i>бокал</i> · <i>коктейль 2</i> · <i>открытка</i> · <i>двд</i>\n"
-        "Суммы: <i>бутылка 3500</i> · <i>десерты 1200</i> · <i>оборот 25000</i>\n"
-        "Личный сервисный сбор: <i>сс 2000</i> — начисление к зарплате, в чаевые не входит\n"
-        "<i>план продаж вино 143000; коктейли 110; десерты 82000; оборот 1570000</i>\n"
-        "<i>цена бокала 850</i> — оценка, не подтвержденная выручка\n"
-        "<i>отчёт по 13 сентября, вино 73 238, коктейли 57</i> — итог с начала месяца\n"
-        "/calendar — повторить отправку смен в Google\n\n"
-        "<i>работаю 22 24 26</i> — поставить смены на эти дни; напомню о начале и завершении\n"
-        "<i>план 2500</i> — цель по чаю на смену\n"
-        "/undo — отменить последнюю запись\n"
-        "/reset — очистить журнал\n\n"
-        "🔒 /privacy — какие данные хранятся\n"
-        "/export — забрать свои записи файлом\n"
-        "/delete — удалить свои данные"
-    )
-    import schedule
-    if schedule.enabled():
-        await message.answer('Пришли фото графика → «График смен» или ссылку на Google Таблицу → выбери свою строку и месяц.\n'
-                             '/sheet ссылка — прочитать открытую Google Таблицу с графиком\n'
-                             '/hours — записать время ухода; /hours вчера — за прошлую смену\n'
-                             '/rate 350 — твоя ставка за час\n/work — часы и заработок за месяц\n'
-                             '/reminders — напоминания о смене\n'
-                             '/learn — пройти знакомство ещё раз')
-    from identity_chat import enabled
-    if enabled():
-        from identity_chat import buttons
-        await message.answer('Твой ресторан, сотрудники и приглашения — по кнопкам ниже.',
-                             reply_markup=buttons([[('Мой ресторан','ident:showprofile')],
-                                                   [('Сотрудники и заявки','ident:showteam')],
-                                                   [('Создать приглашение','ident:showinvite')]]))
+    await message.answer('Чем помочь? Можно написать Леше напрямую или найти короткий ответ здесь.',
+                         reply_markup=help_buttons())
 
 
 # ─── история ─────────────────────────────────────────────────────────────────

@@ -110,7 +110,9 @@ async def register_name(message,state):
         await message.answer(f"{identity.STATUSES[result['status']]}. Посмотреть свой ресторан можно по кнопке ниже.",
                              reply_markup=buttons([[('Мой ресторан','ident:showprofile')]]))
         from ux_chat import begin
-        await begin(message)
+        if await begin(message,prompt=False):
+            await message.answer('Можно сразу записать чаевые: пришли сумму, например <i>чай 1500</i>. '
+                                 'Если хочешь начать с графика, пришли его фото.')
     except Exception as exc: await error(message,exc)
 
 

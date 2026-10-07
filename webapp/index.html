@@ -206,6 +206,25 @@
   .calendar-disclosure>summary { font-size:24px; color:var(--ink); font-weight:400; padding:0 0 18px; }
   .app-footer { display:flex; flex-direction:row; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:8px; border:0; margin:48px 0 10px; padding:0; }
   .app-footer button { appearance:none; -webkit-appearance:none; border:0; border-radius:0; box-shadow:none; background:transparent; padding:8px 0; min-height:40px; color:var(--ink); font:400 clamp(10px, 3vw, 12px) 'Onest',sans-serif; white-space:nowrap; cursor:pointer; }
+  #help-panel { position:fixed; inset:0; z-index:100; background:rgba(0,0,0,.35); display:none; align-items:flex-end; }
+  #help-panel.on { display:flex; }
+  #help-panel .sheet { max-height:min(85vh,760px); overflow-y:auto; padding-bottom:calc(20px + env(safe-area-inset-bottom)); }
+  .help-head { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px; }
+  .help-head button { border:0; background:transparent; font:inherit; color:var(--ink-soft); padding:8px 0; min-height:44px; cursor:pointer; }
+  .help-copy { font-size:14px; line-height:1.5; color:var(--ink-soft); margin-bottom:16px; }
+  .help-action { display:block; width:100%; border:1px solid var(--faint); border-radius:12px; background:#fff; padding:16px; margin:10px 0; text-align:left; font:inherit; font-size:16px; color:var(--ink); cursor:pointer; }
+  .help-action:active { background:#f4f4f4; }
+  .help-action.primary { background:var(--ink); border-color:var(--ink); color:#fff; }
+  .help-status { font-size:13px; line-height:1.4; color:var(--ink-soft); min-height:0; }
+  .help-status.error { color:#8d2b39; }
+  .help-manual { display:inline-block; font-size:13px; margin-top:8px; color:var(--accent); }
+  .help-question { border-bottom:1px solid var(--faint); padding:16px 0; }
+  .help-question summary { cursor:pointer; font-size:15px; list-style:none; }
+  .help-question summary::-webkit-details-marker { display:none; }
+  .help-question summary::after { content:'›'; float:right; }
+  .help-question[open] summary::after { content:'⌄'; }
+  .help-question p { margin-top:12px; font-size:14px; line-height:1.5; color:var(--ink-soft); }
+  .help-question p + p { margin-top:8px; }
   #ux-access-retry:not([hidden]) { width:100%; text-align:left; }
   .calendar-disclosure>summary { list-style:none; }
   .calendar-disclosure>summary::-webkit-details-marker { display:none; }
@@ -299,6 +318,27 @@
   </div>
 
   <footer class="app-footer"><button id="open-history">История и правки ›</button><button id="ux-help">Помощь и обратная связь ›</button><button id="ux-access-retry" hidden>Не все разделы загрузились · повторить</button></footer>
+
+  <div id="help-panel" role="dialog" aria-modal="true" aria-labelledby="help-title">
+    <div class="sheet">
+      <div class="help-head"><p class="sheet-title" id="help-title">Чем помочь?</p><button id="help-close" type="button">Закрыть</button></div>
+      <div id="help-home">
+        <p class="help-copy">Если что-то не получается, расскажи Леше, что случилось. Или посмотри ответы на частые вопросы.</p>
+        <button class="help-action primary" id="help-contact" type="button">Написать Леше ↗</button>
+        <button class="help-action" id="help-faq-open" type="button">Частые вопросы ›</button>
+      </div>
+      <div id="help-faq" hidden>
+        <p class="help-copy">Короткие ответы на задачи, которые уже есть в боте.</p>
+        <details class="help-question"><summary>Как записать чаевые или расход?</summary><p>Пришли боту сумму: <b>чай 1500</b>. Расход укажи с названием: <b>такси 430</b>. Бот покажет, сколько осталось чистыми.</p></details>
+        <details class="help-question"><summary>Как исправить запись?</summary><p>Открой «История и правки» внизу миниаппа. Если запись относится к конкретной смене, выбери её день в календаре.</p></details>
+        <details class="help-question"><summary>Как добавить график?</summary><p>Пришли боту фото графика или ссылку на открытую Google Таблицу. Перед сохранением бот покажет найденные смены, чтобы ты мог их проверить.</p></details>
+        <button class="help-action" id="help-faq-back" type="button">← Назад</button>
+        <button class="help-action primary" id="help-faq-contact" type="button">Не нашёл ответ? Написать Леше ↗</button>
+      </div>
+      <p class="help-status" id="help-status" role="status"></p>
+      <a class="help-manual" id="help-manual" hidden target="_blank" rel="noopener">Открыть чат в Telegram ↗</a>
+    </div>
+  </div>
 
   <!-- Панель трат за смену -->
   <div id="spend">

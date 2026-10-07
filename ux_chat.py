@@ -10,15 +10,35 @@ router=Router()
 router.message.filter(F.chat.type=='private')
 router.callback_query.filter(F.message.chat.type=='private')
 
+SUPPORT_URL='https://t.me/lechatsergeev'
+
+FAQ={
+    'tips':('Как записать чаевые или расход?',
+            'Пришли сумму: <b>чай 1500</b>. Расход укажи с названием: <b>такси 430</b>. '
+            'Бот покажет, сколько осталось чистыми.'),
+    'edit':('Как исправить запись?',
+            'Открой «Статистику» → «История и правки». Если запись относится к смене, '
+            'выбери её день в календаре.'),
+    'schedule':('Как добавить график?',
+            'Пришли фото графика или ссылку на открытую Google Таблицу. '
+            'Перед сохранением проверь найденные смены.'),
+}
+
 class Feedback(StatesGroup):
     text=State()
 
 
 def help_buttons():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text='Как пользоваться ботом',callback_data='ux:help')],
-        [InlineKeyboardButton(text='Сообщить о проблеме',callback_data='ux:feedback')],
-        [InlineKeyboardButton(text='Попробовать на деле',callback_data='ux:learn')]])
+        [InlineKeyboardButton(text='Написать Леше',url=SUPPORT_URL)],
+        [InlineKeyboardButton(text='Частые вопросы',callback_data='ux:faq')]])
+
+
+def faq_buttons():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        *[[InlineKeyboardButton(text=title,callback_data=f'ux:faq:{key}')]
+          for key,(title,_) in FAQ.items()],
+        [InlineKeyboardButton(text='Написать Леше',url=SUPPORT_URL)]])
 
 
 def skip_button():
@@ -35,7 +55,7 @@ def first_action_buttons():
         [InlineKeyboardButton(text='Не сейчас',callback_data='ux:skip')]])
 
 
-async def begin(message, *, uid=None, repeat=False):
+async def begin(message, *, uid=None, repeat=False, prompt=True):
     import db
     uid=uid or message.from_user.id
     user=await db.get_or_create_user(uid)
@@ -43,12 +63,9 @@ async def begin(message, *, uid=None, repeat=False):
     await db._execute(db.supabase.table('users').update({'tutorial_step':'tip','onboarded':True}).eq('id',uid))
     await research.record(uid,'onboarding_started')
     research.track(uid,'onboarding_step',step='tip')
-    await message.answer('<b>Твои смены — в одном месте</b>\n\n'
-                         '💸 Чаевые и расходы → сколько осталось чистыми\n'
-                         '🗓 График → напоминание накануне\n'
-                         '📊 Статистика → итоги по неделям и месяцам\n\n'
-                         'С чего начнём? Можно сразу написать боту — это будет настоящая запись.',
-                         reply_markup=first_action_buttons())
+    if prompt:
+        await message.answer('Что хочешь сделать сейчас? Выбери вариант или просто пришли запись — '
+                             'она сразу сохранится.',reply_markup=first_action_buttons())
     return True
 
 
@@ -121,6 +138,22 @@ async def help_button(callback):
     await callback.answer()
     from handlers import send_help
     await send_help(callback.message,callback.from_user.id)
+
+
+@router.callback_query(F.data=='ux:faq')
+async def faq_open(callback):
+    await callback.answer()
+    await callback.message.answer('Что хочешь узнать?',reply_markup=faq_buttons())
+
+
+@router.callback_query(F.data.startswith('ux:faq:'))
+async def faq_answer(callback):
+    key=callback.data.rsplit(':',1)[-1]
+    if key not in FAQ:
+        await callback.answer('Этот ответ не найден.');return
+    await callback.answer()
+    title,answer=FAQ[key]
+    await callback.message.answer(f'<b>{title}</b>\n\n{answer}',reply_markup=faq_buttons())
 
 
 @router.message(Command('learn'))

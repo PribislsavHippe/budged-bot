@@ -19,7 +19,9 @@ class Flows(unittest.IsolatedAsyncioTestCase):
         message=self.message('/start');state=NS(clear=AsyncMock())
         with patch.object(handlers.db,'get_or_create_user',new=AsyncMock(return_value={'id':5,'onboarded':False,'tutorial_step':'new'})),patch.object(handlers.db,'set_onboarded',new=AsyncMock()),patch.object(research,'subject',new=AsyncMock(return_value={'cohort':'new','onboarding_state':'not_started'})),patch.object(research,'record',new=AsyncMock(return_value={'state':'started'})),patch.object(research,'track'):
             await handlers.cmd_start(message,state)
-        self.assertTrue(any('С чего начнём?' in c.args[0] for c in message.answer.await_args_list))
+        self.assertEqual(message.answer.await_count,1)
+        self.assertIn('чай 1500',message.answer.await_args.args[0])
+        self.assertNotIn('Твои смены — в одном месте',message.answer.await_args.args[0])
         recorded=AsyncMock(return_value={'first_value':True,'was_learning':True})
         message=await self.run_entry('чай 1500',recorded)
         self.assertEqual(recorded.await_args.args,(5,'tip_added'))
@@ -34,7 +36,7 @@ class Flows(unittest.IsolatedAsyncioTestCase):
         with patch.object(handlers.db,'get_or_create_user',new=AsyncMock(return_value={'id':5,'onboarded':True,'tutorial_step':None})),patch.object(handlers.db,'_execute',new=AsyncMock()) as saved,patch.object(research,'record',new=AsyncMock(return_value=None)),patch.object(research,'track'):
             await ux_chat.learn_message(message)
             saved.assert_awaited_once()
-            self.assertIn('С чего начнём?',message.answer.await_args.args[0])
+            self.assertIn('Что хочешь сделать сейчас?',message.answer.await_args.args[0])
     async def test_invite_name_then_new_user_lesson(self):
         import identity_chat
         message=self.message('Тест Имя')
@@ -42,7 +44,21 @@ class Flows(unittest.IsolatedAsyncioTestCase):
         with patch.object(identity_chat.identity,'request',new=AsyncMock(return_value={'status':'pending'})),patch.object(handlers.db,'get_or_create_user',new=AsyncMock(return_value={'id':5,'tutorial_step':'new'})),patch.object(handlers.db,'_execute',new=AsyncMock()),patch.object(research,'record',new=AsyncMock(return_value=None)),patch.object(research,'track'):
             await identity_chat.register_name(message,state)
             state.clear.assert_awaited_once()
-            self.assertIn('С чего начнём?',message.answer.await_args.args[0])
+            self.assertIn('чай 1500',message.answer.await_args.args[0])
+
+    async def test_help_is_one_short_choice_and_faq_has_an_answer(self):
+        message=self.message('/help')
+        with patch.object(research,'track'):
+            await handlers.send_help(message,5)
+        self.assertEqual(message.answer.await_count,1)
+        self.assertNotIn('/reset',message.answer.await_args.args[0])
+        markup=message.answer.await_args.kwargs['reply_markup']
+        self.assertEqual(markup.inline_keyboard[0][0].text,'Написать Леше')
+        self.assertEqual(markup.inline_keyboard[0][0].url,'https://t.me/lechatsergeev')
+        self.assertEqual(markup.inline_keyboard[1][0].text,'Частые вопросы')
+        callback=NS(data='ux:faq:tips',message=message,answer=AsyncMock())
+        await ux_chat.faq_answer(callback)
+        self.assertIn('чай 1500',message.answer.await_args.args[0])
 
     async def test_first_action_buttons_keep_real_input(self):
         message=self.message('');message.edit_reply_markup=AsyncMock()
