@@ -102,7 +102,7 @@ def undo_kb(entry_ids: list[int], toggle_entry: dict | None = None) -> InlineKey
     if toggle_entry is not None and toggle_entry["kind"] != "accrual":
         other = db.CASH if toggle_entry["account"] == db.CARD else db.CARD
         rows.append([InlineKeyboardButton(
-            text=f"Перенести на {db.ACCOUNT_LABELS[other].lower()}",
+            text=f"Изменить на {'наличные' if other==db.CASH else 'безналичные'}",
             callback_data=f"acc:{toggle_entry['id']}",
         )])
     ids = ",".join(str(i) for i in entry_ids)
@@ -499,7 +499,7 @@ async def cb_toggle_account(callback: CallbackQuery):
         entry_line(entry) + "\n\n" + await today_block(callback.from_user.id),
         reply_markup=undo_kb([entry_id], toggle_entry=entry),
     )
-    await callback.answer(f"Перенёс на {db.ACCOUNT_LABELS[other].lower()}")
+    await callback.answer(f"Теперь {'наличные' if other==db.CASH else 'безналичные'}")
 
 
 # ─── план смены ──────────────────────────────────────────────────────────────
@@ -694,10 +694,23 @@ async def _send_private_record(message: Message, record: dict, index: int,
         failure(error,area='private_money',stage='backup_save')
         await message.answer('Не получил подтверждение сохранения. Открой личный журнал и проверь запись перед повтором.')
         return False
-    intro = confirmation or ('Сервисный сбор записан как начисление к зарплате.'
-             if record['kind'] == 'accrual' else 'Запись сохранена в зашифрованной копии.')
-    reply=await message.answer(intro+' Она появится на телефоне, когда откроешь «Статистику». '
-                               'Открой её в течение 14 дней.')
+    amount=f"<b>{fmt(abs(float(record['signed_amount'])))} ₽</b>"
+    label='наличные' if record['account']==db.CASH else 'безналичные'
+    if record['kind']=='accrual':
+        intro=f'Записал сервисный сбор: {amount} · к зарплате.'
+    else:
+        title='чаевые' if record['category']=='Чаевые' else (
+            'расход' if record['kind']=='expense' else html.escape(str(record['category']).lower()))
+        intro=(confirmation.rstrip('.') if confirmation else f'Записал {title}: {amount}')
+        intro+=f' · {label}.'
+    info=' В «Статистике» запись появится автоматически.'
+    markup=None
+    if record['kind'] in ('income','expense'):
+        other=db.CASH if record['account']==db.CARD else db.CARD
+        markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+            text=f'Изменить на {"наличные" if other==db.CASH else "безналичные"}',
+            callback_data=f'pacc:{message.message_id}:{index}:{other}')]])
+    reply=await message.answer(intro+info,reply_markup=markup)
     if delete_source:
         failed=False
         for source in (source_messages or [message]):
@@ -712,11 +725,46 @@ async def _send_private_record(message: Message, record: dict, index: int,
                 warning=('Исходное сообщение осталось в чате — удали его вручную.'
                          if len(source_messages or [message])==1 else
                          'Некоторые исходные сообщения остались в чате — удали их вручную.')
-                await reply.edit_text(intro+' Она появится на телефоне, когда откроешь «Статистику». '
-                                      +warning)
+                await reply.edit_text(intro+info+' '+warning,reply_markup=markup)
             except Exception:
                 pass
     return True
+
+
+@router.callback_query(F.data.startswith('pacc:'))
+async def cb_private_account(callback: CallbackQuery):
+    import private_payload
+    from datetime import datetime, timezone
+    try:
+        _,message_id,index,account=callback.data.split(':')
+        if not message_id.isdecimal() or not index.isdecimal() or account not in (db.CASH,db.CARD):
+            raise ValueError('account')
+        user=await db.get_or_create_user(callback.from_user.id)
+        if not user.get('private_money_mode') or not user.get('private_money_public_key'):
+            await callback.answer('Личный журнал сейчас недоступен.',show_alert=True)
+            return
+        target=f'telegram:{callback.message.chat.id}:{message_id}:{index}'
+        change={'id':f'{target}:account:{callback.id}','kind':'account_change',
+                'target_id':target,'account':account,'signed_amount':0,
+                'created_at':datetime.now(timezone.utc).isoformat()}
+        sealed,_=private_payload.seal(callback.from_user.id,
+            user['private_money_public_key'],change,os.environ['BOT_TOKEN'])
+        await db.save_private_backup(callback.from_user.id,change['id'],sealed,
+                                     private_payload.key_id(user['private_money_public_key']))
+    except Exception as error:
+        from diagnostics import failure
+        failure(error,area='private_money',stage='account_change')
+        await callback.answer('Не получилось изменить способ получения. Попробуй ещё раз.',show_alert=True)
+        return
+    label='наличные' if account==db.CASH else 'безналичные'
+    updated=re.sub(r'· (наличные|безналичные)',f'· {label}',callback.message.text or '',count=1)
+    other=db.CASH if account==db.CARD else db.CARD
+    markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+        text=f'Изменить на {"наличные" if other==db.CASH else "безналичные"}',
+        callback_data=f'pacc:{message_id}:{index}:{other}')]])
+    try:await callback.message.edit_text(html.escape(updated),reply_markup=markup)
+    except Exception:pass
+    await callback.answer(f'Теперь {label}. В «Статистике» обновится автоматически.')
 
 
 async def _save_bank_tips(message: Message, notif: dict, source_messages=None):
@@ -951,7 +999,7 @@ async def handle_text(message: Message, state: FSMContext):
     body = "\n".join(entry_line(e) for e in saved)
     if is_first_tx:
         body += (
-            "\n\n👌 Записал. Не тот счёт — кнопка «Перенести», "
+            "\n\n👌 Записал. Не тот способ получения — кнопка под записью, "
             "нужно убрать — «Отменить»."
         )
     toggle = saved[0] if len(saved) == 1 else None

@@ -15,7 +15,7 @@ import sys
 import types
 import time
 from datetime import date
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from urllib.parse import urlencode
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -312,6 +312,20 @@ def test_shift_spend_requires_idempotency_key():
 def test_shift_spend_unauthorized():
     r = run(webapp_api.api_shift_spend(Req({"initData":"","amount":500})))
     assert r.status == 401
+
+
+def test_shift_spend_confirms_write_without_waiting_for_stats():
+    from uuid import uuid4
+    operation=str(uuid4())
+    with patch.object(_db,'supabase',types.SimpleNamespace(rpc=lambda *_args:object()),create=True), \
+         patch.object(_db,'_execute',new=AsyncMock(return_value=types.SimpleNamespace(data={'id':7})),create=True), \
+         patch.object(webapp_api,'_stats_payload',new=AsyncMock()) as refresh, \
+         patch.object(webapp_api,'_track_saved_money_entry'):
+        r=run(webapp_api.api_shift_spend(Req({
+            'initData':init_data(TOKEN,42),'operation_id':operation,
+            'amount':430,'category':'Такси'})))
+    assert r.status==200 and r.data=={'saved':True}
+    refresh.assert_not_awaited()
 
 
 def test_bad_json_400():

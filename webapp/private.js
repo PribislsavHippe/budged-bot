@@ -12,6 +12,7 @@
     exitArchivePending:false,exitConflict:false,exiting:false,archiveCount:0,today:null};
   let syncing=null;
   let deactivating=false;
+  let cachedAesKey=null;
   const storageTimeoutMs=15000;
   const requestTimeoutMs=30000;
 
@@ -34,6 +35,7 @@
   function item(storage,method,key,value) {
     return new Promise((resolve,reject)=>{
       let settled=false;
+      let probeTimer;
       const area=storage===tg.SecureStorage?'Защищённое хранилище Telegram':'Журнал на телефоне';
       const areaInSentence=area[0].toLowerCase()+area.slice(1);
       const timer=setTimeout(()=>{
@@ -54,14 +56,24 @@
       },storageTimeoutMs);
       const done=(error,result)=>{
         if (settled) return;
-        settled=true;clearTimeout(timer);
+        settled=true;clearTimeout(timer);clearTimeout(probeTimer);
         if (error) reject(error instanceof Error?error:new Error(String(error)));
         else if (method==='setItem' && result!==true)
           reject(new Error('Устройство не подтвердило сохранение. Записи в базе не удалены.'));
         else resolve(result);
       };
       try {
-        if (method==='setItem') storage.setItem(key,value,done);
+        if (method==='setItem') {
+          storage.setItem(key,value,done);
+          // Some Telegram clients write successfully but never call setItem's callback.
+          // An exact read of this freshly encrypted value is also confirmation.
+          if (!settled) probeTimer=setTimeout(()=>{
+            if (settled) return;
+            try {storage.getItem(key,(error,stored)=>{
+              if (!error && stored===value) done(null,true);
+            });} catch (_) { /* Keep waiting for the write callback or final check. */ }
+          },350);
+        }
         else storage.getItem(key,done);
       } catch (error) {done(error);}
     });
@@ -81,13 +93,15 @@
     } finally {clearTimeout(timer);}
   }
   async function aesKey(create) {
+    if (cachedAesKey) return cachedAesKey;
     let raw=await item(tg.SecureStorage,'getItem',aesName);
     if (!raw && create) {
       raw=encode(crypto.getRandomValues(new Uint8Array(32)));
       await item(tg.SecureStorage,'setItem',aesName,raw);
     }
     if (!raw) throw new Error('На этом устройстве нет ключа личного журнала.');
-    return crypto.subtle.importKey('raw',decode(raw),{name:'AES-GCM'},false,['encrypt','decrypt']);
+    cachedAesKey=await crypto.subtle.importKey('raw',decode(raw),{name:'AES-GCM'},false,['encrypt','decrypt']);
+    return cachedAesKey;
   }
   async function loadLocal(requireExisting=false,packedValue,rawAesKey) {
     const packed=packedValue===undefined?await item(tg.DeviceStorage,'getItem',ledgerName):packedValue;
@@ -244,6 +258,7 @@
       publicJwk.alg='RSA-OAEP-256';
       await item(tg.SecureStorage,'setItem',rsaName,JSON.stringify({private:privateJwk,public:publicJwk}));
       await item(tg.SecureStorage,'setItem',aesName,encode(crypto.getRandomValues(new Uint8Array(32))));
+      cachedAesKey=null;
       state.entries=[];await saveLocal();await loadLocal();
       state.lostReason='pending';
     }
@@ -292,11 +307,14 @@
       additionalData:new TextEncoder().encode(uid)},aes,bytes.subarray(269));
     const record=JSON.parse(new TextDecoder().decode(plain));
     if (!record || !['string','number'].includes(typeof record.id) ||
-        !Number.isFinite(Number(record.signed_amount)))
+        !Number.isFinite(Number(record.signed_amount)) ||
+        (record.kind==='account_change' &&
+          (typeof record.target_id!=='string' || !['cash','card'].includes(record.account) ||
+           Number(record.signed_amount)!==0)))
       throw new Error('Зашифрованная запись повреждена.');
     return record;
   }
-  async function backupRecords() {
+  async function backupRecords(seen=new Set()) {
     const result=await request('/api/private/backups',{});
     if (!Array.isArray(result.backups) || result.backups.length>5000)
       throw new Error('Не удалось прочитать временные копии.');
@@ -304,6 +322,7 @@
     for (const row of result.backups) {
       if (!row || typeof row.record_id!=='string' || typeof row.payload!=='string')
         throw new Error('Временная копия повреждена.');
+      if (seen.has(row.record_id)) continue;
       const record=await decryptRecord(row.payload);
       if (String(record.id)!==row.record_id)
         throw new Error('Временная копия не совпадает с записью.');
@@ -318,13 +337,18 @@
   }
   async function syncOnce() {
     if (!state.active || state.lost || state.exiting) return 0;
-    const records=await backupRecords();
     const seen=new Set(state.receipts);
-    const fresh=records.filter(e=>!seen.has(String(e.id)));
+    const fresh=await backupRecords(seen);
     if (!fresh.length) return 0;
     const previous=state.entries,receipts=state.receipts;
     const byId=new Map(previous.map(e=>[String(e.id),e]));
-    fresh.forEach(e=>byId.set(String(e.id),e));
+    const additions=fresh.filter(e=>e.kind!=='account_change');
+    additions.forEach(e=>byId.set(String(e.id),e));
+    fresh.filter(e=>e.kind==='account_change').forEach(change=>{
+      const original=byId.get(change.target_id);
+      if (original && original.kind!=='accrual')
+        byId.set(change.target_id,{...original,account:change.account});
+    });
     state.entries=[...byId.values()];
     state.receipts=[...new Set([...receipts,...fresh.map(e=>String(e.id))])];
     const saved=JSON.stringify({entries:state.entries,receipts:state.receipts});
@@ -333,7 +357,7 @@
       if (JSON.stringify({entries:state.entries,receipts:state.receipts})!==saved)
         throw new Error('Телефон не подтвердил сохранение личных записей.');
     } catch (error) {state.entries=previous;state.receipts=receipts;throw error;}
-    fresh.forEach(record=>{
+    additions.forEach(record=>{
       if (record.kind==='income' && record.category==='Чаевые') window.uxEvent?.('tip_added','earnings');
       else if (record.kind==='expense') window.uxEvent?.('expense_added','earnings');
     });
@@ -411,12 +435,20 @@
     if (!profile.public_key || keys.publicJwk.n!==profile.public_key.n ||
         keys.publicJwk.e!==profile.public_key.e)
       throw new Error('Ключ на этом телефоне не подходит к временным копиям.');
-    const records=await backupRecords();
+    const backups=await backupRecords();
+    const byId=new Map(backups.filter(e=>e.kind!=='account_change')
+      .map(e=>[String(e.id),e]));
+    backups.filter(e=>e.kind==='account_change').forEach(change=>{
+      const original=byId.get(change.target_id);
+      if (original && original.kind!=='accrual')
+        byId.set(change.target_id,{...original,account:change.account});
+    });
+    const records=[...byId.values()];
     if (!records.length) throw new Error('Временных копий за последние 14 дней нет.');
     const old=await item(tg.DeviceStorage,'getItem',ledgerName);
     if (old) await item(tg.DeviceStorage,'setItem',damagedLedgerName,old);
     const previous=state.entries,receipts=state.receipts;
-    state.entries=records;state.receipts=[...new Set(records.map(e=>String(e.id)))];
+    state.entries=records;state.receipts=[...new Set(backups.map(e=>String(e.id)))];
     const saved=JSON.stringify({entries:state.entries,receipts:state.receipts});
     try {
       await saveLocal();await loadLocal();

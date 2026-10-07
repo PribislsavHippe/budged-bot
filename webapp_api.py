@@ -313,7 +313,6 @@ async def api_shift_spend(request: web.Request) -> web.Response:
         if not 1<=len(category)<=60 or any(ord(c)<32 for c in category):raise ValueError()
     except (ValueError,InvalidOperation,TypeError):
         return web.json_response({'error':'Проверь сумму и название расхода.'},status=400,headers=NO_CACHE)
-    await db.get_or_create_user(user_id)
     try:
         result=(await db._execute(db.supabase.rpc('add_miniapp_expense',
             {'actor':user_id,'operation':operation,'amount':float(amount),'category_name':category}))).data
@@ -323,13 +322,8 @@ async def api_shift_spend(request: web.Request) -> web.Response:
         return web.json_response({'error':'Не получил подтверждение. Повтори — второй расход не появится.',
                                   'code':code,'reference':reference},status=503,headers=NO_CACHE)
     _track_saved_money_entry(user_id,result['id'],'expense_added')
-    # Saving succeeded even if refreshing the chart fails. Never ask to re-enter it.
-    try:stats=await _stats_payload(request.app,user_id)
-    except Exception as error:
-        from diagnostics import failure
-        failure(error,area='expense',stage='refresh')
-        stats=None
-    return web.json_response({'saved':True,'stats':stats},headers=NO_CACHE)
+    # Confirm the write immediately. The miniapp refreshes totals separately.
+    return web.json_response({'saved':True},headers=NO_CACHE)
 
 
 async def api_tips_compare(request: web.Request) -> web.Response:

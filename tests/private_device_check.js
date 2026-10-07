@@ -145,6 +145,11 @@ function client(storage,url='https://example.com/app',fastTimeouts=false) {
     category:'Такси',work_date:'2026-10-04',created_at:'2026-10-04T20:04:00+03:00'});
   assert.deepEqual(reopened.emitted[1],{event:'expense_added',screen:'earnings'});
   const beforeFailedSave=reopened.emitted.length,write=phone.DeviceStorage.setItem;
+  phone.DeviceStorage.setItem=(key,value)=>write(key,value,()=>{});
+  const started=Date.now();
+  await reopened.pm.edit('local:expense',{signed_amount:-55});
+  assert.ok(Date.now()-started<2000,'an exact read should confirm a silent write promptly');
+  phone.DeviceStorage.setItem=write;
   phone.DeviceStorage.setItem=(_key,_value,callback)=>callback(null,false);
   await assert.rejects(reopened.pm.add({id:'local:failed',kind:'income',account:'cash',
     signed_amount:1,category:'Чаевые',work_date:'2026-10-04'}));
@@ -170,6 +175,16 @@ function client(storage,url='https://example.com/app',fastTimeouts=false) {
   await reopened.pm.edit(pendingRecord.id,{signed_amount:800});
   assert.equal(await reopened.pm.sync(),0);
   assert.equal(reopened.pm.entries.find(e=>e.id===pendingRecord.id).signed_amount,800);
+  const amendment={id:pendingRecord.id+':account:callback-1',kind:'account_change',
+    target_id:pendingRecord.id,account:'cash',signed_amount:0};
+  const sealedAmendment=JSON.parse(execFileSync('.venv/bin/python',['-c',
+    `import json,sys,private_payload\nr=json.load(sys.stdin)\np,_=private_payload.seal(7,r['key'],r['record'],'test-bot-token')\nprint(json.dumps({'payload':p}))`],
+    {input:JSON.stringify({key:server.publicKey,record:amendment})}));
+  server.backups.push({record_id:amendment.id,payload:sealedAmendment.payload});
+  assert.equal(await reopened.pm.sync(),1);
+  assert.equal(reopened.pm.entries.find(e=>e.id===pendingRecord.id).account,'cash');
+  assert.equal(reopened.pm.entries.length,6);
+  assert.equal(await reopened.pm.sync(),0);
   await reopened.pm.remove(pendingRecord.id);
   assert.equal(await reopened.pm.sync(),0);
   assert.equal(reopened.pm.entries.some(e=>e.id===pendingRecord.id),false);
@@ -181,6 +196,7 @@ function client(storage,url='https://example.com/app',fastTimeouts=false) {
   await assert.rejects(damaged.pm.rotate());
   assert.equal(await damaged.pm.restoreRecent(),1);
   assert.equal(damaged.pm.entries[0].id,pendingRecord.id);
+  assert.equal(damaged.pm.entries[0].account,'cash');
   assert.equal(phone._local.get('money_ledger_damaged_v1'),'corrupted');
   await damaged.pm.clear();
   assert.equal(server.backups.length,0);

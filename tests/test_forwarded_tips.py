@@ -71,7 +71,63 @@ class ForwardedTips(unittest.IsolatedAsyncioTestCase):
         save.assert_awaited_once()
         self.assertEqual(sealed[0]['signed_amount'],400.0)
         self.assertIn('400 ₽',messages[0].answer.await_args.args[0])
+        self.assertIn('безналичные',messages[0].answer.await_args.args[0])
+        self.assertNotIn('14 дней',messages[0].answer.await_args.args[0])
+        self.assertEqual(messages[0].answer.await_args.kwargs['reply_markup'].inline_keyboard[0][0].callback_data,
+                         'pacc:21:0:cash')
         self.assertEqual(self.bot.delete_message.await_count,3)
+
+    async def test_private_account_change_is_encrypted_and_confirmed(self):
+        change=[]
+        callback=NS(id='callback-1',data='pacc:21:0:cash',from_user=NS(id=7),
+                    message=NS(chat=NS(id=7),text='Записал чаевые: 400 ₽ · безналичные.\nВ «Статистике» появится автоматически.',
+                               edit_text=AsyncMock()),answer=AsyncMock())
+        def seal(_uid,_key,record,_token):
+            change.append(record)
+            return 'encrypted','signature'
+        with patch.dict(os.environ,{'BOT_TOKEN':'token'}), \
+             patch.object(handlers.db,'get_or_create_user',new=AsyncMock(return_value={
+                 'private_money_mode':True,'private_money_public_key':{'n':'key'}})), \
+             patch.object(handlers.db,'save_private_backup',new=AsyncMock()) as save, \
+             patch.object(private_payload,'seal',side_effect=seal), \
+             patch.object(private_payload,'key_id',return_value='key-id'):
+            await handlers.cb_private_account(callback)
+        self.assertEqual(change[0]['target_id'],'telegram:7:21:0')
+        self.assertEqual(change[0]['account'],'cash')
+        self.assertEqual(change[0]['kind'],'account_change')
+        save.assert_awaited_once()
+        self.assertIn('наличные',callback.message.edit_text.await_args.args[0])
+
+    async def test_private_chat_expense_reply_shows_amount_without_deadline(self):
+        message=self.message(45)
+        with patch.dict(os.environ,{'BOT_TOKEN':'token'}), \
+             patch.object(handlers.db,'get_or_create_user',new=AsyncMock(return_value={
+                 'private_money_mode':True,'private_money_public_key':{'n':'key'}})), \
+             patch.object(handlers.db,'save_private_backup',new=AsyncMock()), \
+             patch.object(private_payload,'seal',return_value=('encrypted','signature')), \
+             patch.object(private_payload,'key_id',return_value='key-id'):
+            saved=await handlers._send_private_record(message,{
+                'kind':'expense','account':'cash','signed_amount':-430,
+                'category':'Такси','note':'такси 430'},0)
+        self.assertTrue(saved)
+        reply=message.answer.await_args.args[0]
+        self.assertIn('430 ₽',reply)
+        self.assertIn('наличные',reply)
+        self.assertNotIn('14 дней',reply)
+
+    async def test_failed_account_change_does_not_claim_success(self):
+        callback=NS(id='callback-2',data='pacc:21:0:card',from_user=NS(id=7),
+                    message=NS(chat=NS(id=7),text='Записал чаевые: 400 ₽ · наличные.',
+                               edit_text=AsyncMock()),answer=AsyncMock())
+        with patch.dict(os.environ,{'BOT_TOKEN':'token'}), \
+             patch.object(handlers.db,'get_or_create_user',new=AsyncMock(return_value={
+                 'private_money_mode':True,'private_money_public_key':{'n':'key'}})), \
+             patch.object(handlers.db,'save_private_backup',new=AsyncMock(side_effect=RuntimeError('write failed'))), \
+             patch.object(private_payload,'seal',return_value=('encrypted','signature')), \
+             patch.object(private_payload,'key_id',return_value='key-id'):
+            await handlers.cb_private_account(callback)
+        callback.message.edit_text.assert_not_awaited()
+        self.assertIn('Не получилось',callback.answer.await_args.args[0])
 
     async def test_unreadable_forward_stops_whole_batch(self):
         messages=[self.message(31,100),self.message(32,None)]

@@ -857,7 +857,8 @@ async function submitSpend() {
       await privateMoney.add({id:'local:'+spendPending.operation_id,kind:'expense',account:'cash',
         signed_amount:-spendPending.amount,category:spendPending.category,note:'трата из миниаппа',
         work_date:spendPending.date,created_at:new Date().toISOString()});
-      document.getElementById('spend-note').textContent='Расход сохранён на этом устройстве.';
+      document.getElementById('spend-note').textContent='Расход '+
+        spendPending.amount.toLocaleString('ru-RU',{maximumFractionDigits:2})+' ₽ сохранён на этом устройстве.';
       spendPending=null;document.getElementById('spend-amount').value='';document.getElementById('spend-name').value='';
       document.getElementById('spend-submit').textContent='Внести';load();if(calYear)loadMonth(calYear,calMonth);
       return;
@@ -867,8 +868,9 @@ async function submitSpend() {
     const r=await fetch(historical?'/api/calendar_edit':'/api/shift_spend',{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',signal:AbortSignal.timeout(20000),body:JSON.stringify({...spendPending,...(historical?{action:'expense_add',operation_id:spendPending.operation_id}:{}),initData:tg?.initData||''})});
     const data=await r.json();
     if(!r.ok){if(r.status===400)spendPending=null;throw new Error(data.error||'Не получил подтверждение. Повтори — дубля не будет.');}
-    if(data.stats)applyStats(data.stats);else load();
-    document.getElementById('spend-note').textContent='Расход записан'+(data.stats?'.':'. Статистика обновится позже.');
+    load();
+    document.getElementById('spend-note').textContent='Расход '+
+      spendPending.amount.toLocaleString('ru-RU',{maximumFractionDigits:2})+' ₽ записан. Обновляю итог…';
     spendPending=null;document.getElementById('spend-amount').value='';document.getElementById('spend-name').value='';
     document.getElementById('spend-submit').textContent='Внести';window.dispatchEvent(new Event('earnings-updated'));
   }catch(e){document.getElementById('spend-note').textContent=e.name==='TimeoutError'?'Ответ задерживается. Повтори — дубля не будет.':e.message;document.getElementById('spend-submit').textContent=spendPending?'Повторить':'Внести';}
@@ -1226,14 +1228,19 @@ document.getElementById('private-restore').onclick=async function () {
   finally {this.disabled=false;}
 };
 
-async function syncPrivateRecords() {
+async function syncPrivateRecords(refresh=true) {
   if (!privateMoney.active) return 0;
   const status=document.getElementById('private-sync-status');
   try {const count=await privateMoney.sync();
-    status.textContent=count?'На этом телефоне сохранено новых записей: '+count+'.':'';
-    if(count)window.dispatchEvent(new Event('private-money-ready'));
+    status.textContent=count?'Личный журнал обновлён.':'';
+    if(count&&refresh)window.dispatchEvent(new Event('private-money-ready'));
     return count;
-  } catch (error) {status.textContent='Не получилось перенести новые записи на телефон. Зашифрованные копии пока на сервере; открой приложение ещё раз. '+error.message;return 0;}
+  } catch (error) {
+    status.textContent='Не получилось обновить личный журнал. Зашифрованные копии пока сохранены; попробуй открыть приложение снова. '+error.message;
+    const notice=document.getElementById('err');
+    notice.style.display='block';notice.textContent='Не получилось обновить записи. Попробуй открыть приложение снова.';
+    return null;
+  }
 }
 
 async function startApp() {
@@ -1243,18 +1250,16 @@ async function startApp() {
       document.getElementById('private-sync-status').textContent='Обычный режим включён. Открой «Суперконфиденциальность», чтобы завершить сохранение архивной копии на телефоне.';
     if (privateMoney.state.exitConflict)
       document.getElementById('private-sync-status').textContent='Не удалось подтвердить прежний перенос. Местный журнал сохранён; открой «Суперконфиденциальность».';
-    window.dispatchEvent(new Event('private-money-ready'));
-    privateButtonText();
-    load();iphoneCalendarRefresh();
     const imported=await privateMoney.importUrl();
     if (imported) {
-      window.dispatchEvent(new Event('private-money-ready'));
       document.getElementById('private-status').textContent=imported;
       privateModal.hidden=false;privateModal.style.display='flex';
       document.getElementById('private-confirm').hidden=true;
     }
-    const count=await syncPrivateRecords();
-    if (imported || count) load();
+    if (await syncPrivateRecords(false)===null) return;
+    window.dispatchEvent(new Event('private-money-ready'));
+    privateButtonText();
+    load();iphoneCalendarRefresh();
   } catch (error) {
     if (privateMoney.state.ready) document.getElementById('private-sync-status').textContent=error.message;
     else {const el=document.getElementById('err');el.style.display='block';el.textContent=error.message;}
@@ -1262,12 +1267,12 @@ async function startApp() {
   }
 }
 startApp();
-setInterval(async function () {await syncPrivateRecords();load();}, 60000);
+setInterval(async function () {if(await syncPrivateRecords()!==null)load();}, 60000);
 document.addEventListener("visibilitychange", async function () {
-  if (document.hidden) return;
-  load();
-  iphoneCalendarRefresh();
-  if(await syncPrivateRecords())load();
+  if (document.hidden || !privateMoney.state.ready) return;
+  if (await syncPrivateRecords(false)===null) return;
+  window.dispatchEvent(new Event('private-money-ready'));
+  load();iphoneCalendarRefresh();
 });
 </script>
 <script src="/app/sales.js"></script>

@@ -37,9 +37,10 @@ async def main():
                     d=await post('/api/stats',expected=503);assert 'SECRET' not in str(d)
                 # Restored expense accepts only validated operations, trusts signed user, and preserves saved success.
                 operation=str(uuid4())
-                with patch.object(db,'get_or_create_user',new=AsyncMock(return_value={'id':2,'private_money_mode':False})),patch.object(db.supabase,'rpc',create=True) as rpc,patch.object(db,'_execute',new=AsyncMock(return_value=NS(data={'id':31}))),patch.object(webapp_api,'_stats_payload',new=AsyncMock(side_effect=RuntimeError('SECRET'))):
+                with patch.object(db,'get_or_create_user',new=AsyncMock(return_value={'id':2,'private_money_mode':False})),patch.object(db.supabase,'rpc',create=True) as rpc,patch.object(db,'_execute',new=AsyncMock(return_value=NS(data={'id':31}))),patch.object(webapp_api,'_stats_payload',new=AsyncMock(side_effect=RuntimeError('SECRET'))) as refresh:
                     d=await post('/api/shift_spend',uid=2,user_id=1,operation_id=operation,amount=430,category='Такси')
-                    assert d['saved'] and d['stats'] is None
+                    assert d=={'saved':True}
+                    refresh.assert_not_awaited()
                     assert rpc.call_args.args[1]['actor']==2
                     assert rpc.call_args.args[1]['operation']==operation
                     for amount in (0,-1,'NaN',1.234):
