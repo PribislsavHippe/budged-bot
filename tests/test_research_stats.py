@@ -1,6 +1,6 @@
 import unittest
 from datetime import datetime,timezone
-from research_stats import summarize
+from research_stats import summarize,analysis_export
 
 NOW=datetime(2026,9,28,12,tzinfo=timezone.utc)
 def event(sid,kind,day,hour=10,**kw):
@@ -107,3 +107,21 @@ class ResearchMetricsTests(unittest.TestCase):
         self.assertEqual(s['repeat'],1)
         self.assertEqual(s['repeat_eligible'],1)
         self.assertEqual(s['saved'],1)
+
+    def test_analysis_export_matches_summary_and_excludes_private_fields(self):
+        subjects=self.subjects()
+        events=[event('1','cabinet_loaded',28,screen='earnings',source='miniapp',
+                      onboarding_version=1,id='private-event',amount=500,body='private'),
+                event('1','cabinet_loaded',28,11,screen='earnings',source='miniapp',onboarding_version=1),
+                event('2','tip_added',28,source='bot',onboarding_version=1),
+                event('3','activity',19,source='bot',onboarding_version=1)]
+        data=analysis_export(subjects,events,days=7,now=NOW)
+        self.assertEqual(data['summary']['event_count'],3)
+        self.assertEqual(len(data['events']),3)
+        self.assertEqual(data['summary']['active_users'],2)
+        loaded=next(row for row in data['event_breakdown'] if row['event']=='cabinet_loaded')
+        self.assertEqual((loaded['events'],loaded['people']),(2,1))
+        self.assertEqual(data['events'][0]['person'],'U-0001')
+        encoded=str(data)
+        for secret in ('private-event','private','amount','body','subject_id',"'id': '1'"):
+            self.assertNotIn(secret,encoded)

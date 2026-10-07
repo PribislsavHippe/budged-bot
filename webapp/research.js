@@ -10,6 +10,7 @@
   let days=30,version=null,page=0,loading=false,serial=0,task=null,latest=null;
   panel.innerHTML=`<header class="research-head"><h1>Исследование</h1><button id="research-refresh">Обновить</button></header>
     <div class="research-controls"><div class="research-period"><button data-days="7" aria-pressed="false">7 дней</button><button data-days="30" aria-pressed="true">30 дней</button></div><label>Знакомство <select id="research-version"><option value="">Все версии</option></select></label></div>
+    <button id="research-export" class="research-export">Сохранить данные для разбора ↓</button><p class="research-muted research-export-note">В файле будут действия и пути людей под кодами. Сумм и текстов обращений в нём нет.</p>
     <p id="research-error" role="alert"></p><p id="research-state" role="status"></p>
     <div id="research-home"><div id="research-overview"></div><div id="research-task-cards"></div><p class="research-muted">График и чаевые — две самостоятельные задачи. Человек может вести только одну из них.</p></div>
     <div id="research-task" hidden><button id="research-back">← К двум задачам</button><div id="research-task-content"></div><div id="research-task-journey" hidden></div></div>
@@ -81,6 +82,21 @@
   $('research-version').onchange=()=>{version=$('research-version').value===''?null:Number($('research-version').value);page=0;load();};
   $('research-prev').onclick=()=>{if(!loading){page=Math.max(0,page-1);load();}};$('research-next').onclick=()=>{if(!loading){page++;load();}};
   $('research-refresh').onclick=load;
+  $('research-export').onclick=async()=>{
+    const button=$('research-export');button.disabled=true;$('research-error').textContent='';$('research-state').textContent='Готовлю файл…';
+    try{
+      const data=await api('export',{days,version});
+      const name=`ux-research-${data.summary.from}-${data.summary.through}.json`;
+      const file=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+      const url=URL.createObjectURL(file),link=document.createElement('a');
+      link.href=url;link.download=name;document.body.appendChild(link);link.click();link.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),60000);
+      $('research-state').textContent='Файл предложен для сохранения. Проверь загрузки на телефоне.';
+    }catch(e){
+      if(e.name==='AbortError')$('research-state').textContent='Сохранение отменено.';
+      else{error(e);$('research-state').textContent='Не удалось подготовить файл.';}
+    }finally{button.disabled=false;}
+  };
   $('research-feedback-load').onclick=async()=>{const button=$('research-feedback-load');button.disabled=true;try{const d=await api('feedback');$('research-feedback').innerHTML=d.rows.map(r=>`<article class="research-feedback"><button data-subject="${esc(r.subject_id)}" data-label="${esc(r.label)}">${esc(r.label)}</button><small>${time(r.created_at)} · ${esc({broken:'Сбой',confusing:'Непонятно',idea:'Идея'}[r.category])}</small><p>${esc(r.body)}</p></article>`).join('')||'<p>Обращений пока нет.</p>';}catch(e){error(e);}finally{button.disabled=false;}};
   $('tab-research').onclick=()=>{for(const key of ['earnings','sales','restaurant','research']){$(key+'-panel').hidden=key!=='research';$('tab-'+key).setAttribute('aria-selected',String(key==='research'));}load();};
 })();

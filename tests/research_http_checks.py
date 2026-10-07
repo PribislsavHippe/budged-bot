@@ -82,7 +82,7 @@ async def main():
                                action='shift_save',start='10:00',end='22:00')
                     assert len(events)==before
                 # Ownership alone does not grant research access; request body cannot override signed user.
-                for action in ['overview','journey','feedback']:
+                for action in ['overview','export','journey','feedback']:
                     await post('/api/research/'+action,uid=2,expected=403,user_id=1,subject=str(uuid4()))
                 r=await client.post('/api/research/overview',json={'initData':'forged'});assert r.status==401
                 await post('/api/research/event',uid=2,expected=400,event='first_value_action',screen='chat')
@@ -108,7 +108,12 @@ async def main():
                     d=await post('/api/research/overview',days=7)
                     assert d['new_users']==0 and d['retention']['d1']['rate'] is None
                     assert all('user_id' not in call.args[1] for call in pages.await_args_list)
+                    d=await post('/api/research/export',days=7)
+                    assert d['format']=='ux-research-analysis-v1' and d['events']==[]
+                    assert d['summary']['event_count']==0
+                    assert all('user_id' not in call.args[1] for call in pages.await_args_list)
                 await post('/api/research/overview',days=999,expected=400)
+                await post('/api/research/export',days=999,expected=400)
                 with patch.dict(os.environ,{'UX_RESEARCH_ENABLED':'0'}):
                     assert (await post('/api/research/access'))['available']
                     assert not (await post('/api/research/access',uid=2))['available']

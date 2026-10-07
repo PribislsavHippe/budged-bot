@@ -5,7 +5,7 @@ import time
 from collections import OrderedDict
 from aiohttp import web
 import research
-from research_stats import summarize
+from research_stats import summarize,analysis_export
 
 CLIENT_EVENTS={'cabinet_opened','cabinet_loaded','cabinet_load_error','tab_opened','help_opened'}
 PRIVATE_MONEY_EVENTS={'tip_added','expense_added'}
@@ -49,7 +49,7 @@ async def handle(request):
     if not is_admin(uid):return respond({'error':'Раздел доступен владельцу бота.'},403)
     if not allowed(uid,'read',30):return respond({'error':'Подожди минуту и повтори.'},429)
     try:
-        if action=='overview':
+        if action in ('overview','export'):
             days=body.get('days',30);version=body.get('version')
             if type(days) is not int or days not in (7,30):raise ValueError()
             if version is not None and (type(version) is not int or not 0<=version<=100):raise ValueError()
@@ -58,6 +58,8 @@ async def handle(request):
             since=(datetime.now(timezone.utc)-timedelta(days=days+1)).isoformat()
             events=await research.pages('analytics_events','id,subject_id,event,occurred_at,onboarding_version,source,screen,step,error_code',
                                         lambda q:q.gte('occurred_at',since).order('occurred_at').order('id'))
+            if action=='export':
+                return respond(analysis_export(subjects,events,days,ux_version=version))
             data=summarize(subjects,events,days,ux_version=version)
             data['versions']=sorted({s['onboarding_version'] for s in subjects})
             data['user_count']=len(data['users']);page=body.get('page',0)
@@ -82,7 +84,7 @@ async def handle(request):
     except (ValueError,KeyError,TypeError):return respond({'error':'Проверь выбранный период или пользователя.'},400)
     except Exception as error:
         from diagnostics import failure
-        code,reference=failure(error,area='research',stage=action if action in {'overview','journey','feedback'} else 'unknown')
+        code,reference=failure(error,area='research',stage=action if action in {'overview','export','journey','feedback'} else 'unknown')
         return respond({'error':'Исследования пока не загрузились. Попробуй ещё раз.','code':code,'reference':reference},503)
 
 

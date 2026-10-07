@@ -138,3 +138,39 @@ def summarize(subjects,events,days=30,now=None,ux_version=None):
                          'count':sum(e['event']==name for e in window)} for name in sorted({e['event'] for e in window})],
             'tasks':task_metrics(selected,window,today),
             'users':users}
+
+
+def analysis_export(subjects, events, days=30, now=None, ux_version=None):
+    """Share dashboard inputs without database IDs, money, or free text."""
+    now=now or datetime.now(timezone.utc)
+    summary=summarize(subjects,events,days,now,ux_version)
+    labels={s['id']:f"U-{s['label']:04d}" for s in subjects
+            if ux_version is None or s['onboarding_version']==ux_version}
+    start=datetime.fromisoformat(summary['from']).date()
+    today=datetime.fromisoformat(summary['through']).date()
+    rows=[]
+    for event in events:
+        if event['subject_id'] not in labels:continue
+        moment=dt(event['occurred_at'])
+        if moment>now or not start<=moment.astimezone(TZ).date()<=today:continue
+        rows.append({'person':labels[event['subject_id']],
+                     'event':event['event'],'occurred_at':event['occurred_at'],
+                     'source':event.get('source'),'screen':event.get('screen'),
+                     'step':event.get('step'),'error_code':event.get('error_code'),
+                     'onboarding_version':event['onboarding_version']})
+    rows.sort(key=lambda event:(event['occurred_at'],event['person'],event['event']))
+    breakdown=defaultdict(lambda:{'events':0,'people':set()})
+    for row in rows:
+        key=(row['event'],row['source'],row['screen'])
+        breakdown[key]['events']+=1
+        breakdown[key]['people'].add(row['person'])
+    summary['users']=[{key:value for key,value in user.items() if key!='id'} for user in summary['users']]
+    for task in summary['tasks'].values():
+        task['recent']=[{key:value for key,value in user.items() if key!='id'} for user in task['recent']]
+    return {'format':'ux-research-analysis-v1','generated_at':now.isoformat(),
+            'scope':{'days':days,'version':ux_version,'timezone':'Europe/Moscow',
+                     'profiles':len(labels)},'summary':summary,
+            'event_breakdown':[{'event':key[0],'source':key[1],'screen':key[2],
+                                'events':value['events'],'people':len(value['people'])}
+                               for key,value in sorted(breakdown.items(),key=lambda item:(item[0][0],str(item[0][1]),str(item[0][2])))],
+            'events':rows}
