@@ -19,6 +19,11 @@
 .restaurant-member th,.restaurant-member td{text-align:right;padding:10px 3px;border-bottom:1px solid #edf0f2}
 .restaurant-member th:first-child{text-align:left;font-weight:400}
 .restaurant-actions{display:flex;gap:8px;flex-wrap:wrap}
+.restaurant-transfer{margin-top:12px;padding:14px;border:1px solid #dbe1e4;border-radius:10px;background:rgba(255,255,255,.5)}
+.restaurant-transfer label{font-size:13px}
+.restaurant-transfer select{display:block;width:100%;min-height:44px;margin-top:7px;padding:8px 10px;border:1px solid #bdc8cd;border-radius:8px;background:#fff;font:inherit}
+.restaurant-transfer p{margin:0 0 10px;color:#52616b;font-size:12px;line-height:1.5}
+.restaurant-transfer .restaurant-actions button:first-child{font-weight:600}
 .restaurant-pages{display:flex;justify-content:space-between;align-items:center;margin:12px 0;font-size:13px}
 .restaurant-invite{margin-top:24px}.restaurant-invite summary{cursor:pointer;padding:10px 0}
 #restaurant-error{color:#9a3426;line-height:1.5}#restaurant-notice{color:#315547;font-size:14px}

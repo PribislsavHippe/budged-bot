@@ -44,6 +44,23 @@ async def action(uid, kind, args):
         raise ValueError('Пока не получается подключить тебя к ресторану. Сообщи администратору — он поможет.') from None
 
 
+async def transfer(uid, link_id, source_id, target_id):
+    try:
+        return (await db._execute(db.supabase.rpc('identity_transfer', {
+            'actor':uid,'link_id':link_id,'source_id':source_id,'target_id':target_id}))).data
+    except APIError as error:
+        detail=str(error)
+        if 'identity_forbidden' in detail:
+            raise ValueError('Переносить можно только между своими ресторанами.') from None
+        if 'identity_stale' in detail:
+            raise ValueError('Сотрудник уже перемещён или его статус изменился. Обнови список.') from None
+        if error.code == '23505':
+            raise ValueError('В новом ресторане уже есть сотрудник с таким именем или кодом.') from None
+        if error.code in ('PGRST202','42883'):
+            raise ValueError('Перенос пока недоступен. Попроси владельца проекта обновить базу.') from None
+        raise ValueError('Не удалось перенести сотрудника. Обнови списки ресторанов и проверь результат.') from None
+
+
 async def owner_restaurants(uid):
     return await db._pages(lambda:db.supabase.table('restaurants').select('id,name')
                            .eq('owner_id',uid).order('created_at').order('id'))

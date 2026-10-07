@@ -53,6 +53,15 @@ async def handle(request):
             target=str(UUID(str(body.get('id',''))))
             await identity.action(uid,action,{'id':target,'restaurant_id':restaurant['id']})
             return response({'ok':True})
+        if action=='transfer':
+            link_id=str(UUID(str(body.get('id',''))))
+            target_id=str(UUID(str(body.get('target_restaurant_id',''))))
+            if target_id==restaurant['id']:raise ValueError('Выбери другой ресторан.')
+            destination=await identity.owner_restaurant(uid,target_id)
+            if not destination:return response({'error':'Переносить можно только между своими ресторанами.'},403)
+            stage='transfer'
+            await identity.transfer(uid,link_id,restaurant['id'],target_id)
+            return response({'ok':True,'restaurant':destination})
         if action!='view':return response({'error':'Такой страницы нет.'},404)
         month=month_key(body.get('month',op_today().strftime('%Y-%m')))
         page=body.get('page',0)
@@ -89,7 +98,8 @@ async def handle(request):
         code,reference=failure(error,area='restaurant',stage=stage)
         from research import track
         track(uid,'cabinet_load_error',source='server',screen='restaurant',error_code=code)
-        return response({'error':'Не получилось загрузить кабинет. Попробуй ещё раз чуть позже.',
+        message='Не удалось подтвердить перенос. Проверь списки обоих ресторанов перед повтором.' if stage=='transfer' else 'Не получилось загрузить кабинет. Попробуй ещё раз чуть позже.'
+        return response({'error':message,
                          'code':code,'reference':reference},503)
 
 

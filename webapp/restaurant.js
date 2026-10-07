@@ -32,10 +32,12 @@
     $('restaurant-rows').hidden=false;
     $('restaurant-rows').innerHTML=data.rows.length?data.rows.map(row=>{
       const sales=row.sales;const m=sales?.metrics,cutoffs=sales?.report_dates||[];
-      const controls=row.status==='pending'?`<button data-action="approve" data-id="${esc(row.id)}">Подтвердить</button><button data-action="reject" data-id="${esc(row.id)}">Отклонить</button>`:row.status==='approved'?`<button data-action="revoke" data-id="${esc(row.id)}">Отозвать доступ</button>`:'';
+      const canTransfer=row.status==='approved'&&restaurants.some(r=>r.id!==selectedId);
+      const controls=row.status==='pending'?`<button data-action="approve" data-id="${esc(row.id)}">Подтвердить</button><button data-action="reject" data-id="${esc(row.id)}">Отклонить</button>`:row.status==='approved'?`<button data-action="revoke" data-id="${esc(row.id)}">Отозвать доступ</button>${canTransfer?'<button data-action="transfer-open">Перенести</button>':''}`:'';
+      const transfer=canTransfer?`<div class="restaurant-transfer" hidden><label>В какой ресторан<select aria-label="Новый ресторан для ${esc(row.report_name)}">${restaurants.filter(r=>r.id!==selectedId).map(r=>`<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('')}</select></label><p>После переноса прежний ресторан перестанет видеть сотрудника. Новый увидит планы и продажи, записанные после переноса; прежние личные записи останутся у сотрудника.</p><div class="restaurant-actions"><button data-action="transfer-confirm" data-id="${esc(row.id)}">Перенести сотрудника</button><button data-action="transfer-cancel">Отмена</button></div></div>`:'';
       return `<article class="restaurant-member"><details><summary><span><strong>${esc(row.report_name)}</strong><small>${sales?'Отчёт: '+date(cutoffs[0]):states[row.status]}</small></span>${m?`<span class="restaurant-turnover">${m.turnover.estimated?'≈ ':''}${num(m.turnover.total)}${m.turnover.total==null?'':' ₽'}<small>оборот</small></span>`:''}</summary>
         <p class="restaurant-id">Telegram ID: ${esc(row.user_id)}</p>${m?`<table><thead><tr><th>Показатель</th><th>Сейчас</th><th>План</th></tr></thead><tbody>${Object.entries(names).map(([k,label])=>`<tr><th>${label}, ${['cocktails','postcards','dvd'].includes(k)?'шт.':'₽'}${m[k].cutoff&&m[k].cutoff!==cutoffs[0]?`<small>Отчёт по ${date(m[k].cutoff)}</small>`:''}</th><td>${m[k].estimated?'≈ ':''}${num(m[k].total)}</td><td>${num(m[k].target)}</td></tr>`).join('')}</tbody></table>`:''}
-        <div class="restaurant-actions">${row.status==='pending'?'':controls}</div></details>${row.status==='pending'?`<div class="restaurant-actions">${controls}</div>`:''}</article>`;
+        <div class="restaurant-actions">${row.status==='pending'?'':controls}</div>${transfer}</details>${row.status==='pending'?`<div class="restaurant-actions">${controls}</div>`:''}</article>`;
     }).join(''):`<p class="restaurant-empty">${status==='pending'?'Новых заявок нет.':status==='approved'?'Здесь появятся сотрудники, которых ты подтвердил.':'Список пока пуст.'}</p>`;
     $('restaurant-prev').hidden=page===0;$('restaurant-next').hidden=!data.more;
     $('restaurant-page').textContent=page||data.more?'Страница '+(page+1):'';
@@ -65,7 +67,10 @@
     try{const data=await api(action,body);
       if(action==='create'){selectedId=data.restaurant.id;page=0;status='approved';$('restaurant-name').value='';$('restaurant-link').hidden=true;}
       if(action==='invite'){$('restaurant-url').value=data.url;$('restaurant-link').hidden=false;}
-      else{$('restaurant-notice').textContent=action==='approve'?'Сотрудник подтверждён.':action==='create'?'Кабинет готов.':'Готово.';}
+      else{
+        if(action==='transfer'){selectedId=data.restaurant.id;page=0;status='approved';}
+        $('restaurant-notice').textContent=action==='transfer'?'Сотрудник перенесён в «'+data.restaurant.name+'».':action==='approve'?'Сотрудник подтверждён.':action==='create'?'Кабинет готов.':'Готово.';
+      }
     }catch(e){failure=e.name==='TimeoutError'?'Ответ задерживается. Обнови список, прежде чем повторять действие.':e.message;$('restaurant-error').textContent=failure;$('restaurant-retry').hidden=false;}
     finally{busy=false;lock();}
     if(action!=='invite'&&!failure)await load();
@@ -73,6 +78,12 @@
   }
   panel.addEventListener('click',e=>{const b=e.target.closest('button');if(!b||busy)return;
     if(b.dataset.status){status=b.dataset.status;page=0;load();}
+    if(b.dataset.action==='transfer-open'){b.closest('.restaurant-member').querySelector('.restaurant-transfer').hidden=false;return;}
+    if(b.dataset.action==='transfer-cancel'){b.closest('.restaurant-transfer').hidden=true;return;}
+    if(b.dataset.action==='transfer-confirm'){
+      const destination=b.closest('.restaurant-transfer').querySelector('select').value;
+      change('transfer',{id:b.dataset.id,target_restaurant_id:destination});return;
+    }
     if(b.dataset.action)change(b.dataset.action,{id:b.dataset.id});
   });
   $('restaurant-add').onclick=()=>{$('restaurant-create').hidden=false;$('restaurant-name').focus();};

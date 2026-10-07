@@ -57,6 +57,19 @@ async def main():
                 selected=await post('view',restaurant_id=second)
                 assert selected['restaurant']['id']==second and not selected['rows']
                 await post('view',restaurant_id='bbbbbbbb-0000-0000-0000-000000000002',status=403)
+                with patch.object(identity,'transfer',new=AsyncMock(return_value={})) as transfer:
+                    moved=await post('transfer',restaurant_id='aaaaaaaa-0000-0000-0000-000000000001',
+                                     target_restaurant_id=second,id=ids[0])
+                    assert moved['restaurant']['id']==second
+                    transfer.assert_awaited_once_with(1,ids[0],
+                        'aaaaaaaa-0000-0000-0000-000000000001',second)
+                    await post('transfer',uid=3,status=403,restaurant_id='aaaaaaaa-0000-0000-0000-000000000001',
+                               target_restaurant_id=second,id=ids[0])
+                    await post('transfer',status=403,restaurant_id='aaaaaaaa-0000-0000-0000-000000000001',
+                               target_restaurant_id='bbbbbbbb-0000-0000-0000-000000000002',id=ids[0])
+                    await post('transfer',status=400,restaurant_id='aaaaaaaa-0000-0000-0000-000000000001',
+                               target_restaurant_id='aaaaaaaa-0000-0000-0000-000000000001',id=ids[0])
+                    transfer.assert_awaited_once()
                 with patch.dict(os.environ,{'IDENTITY_ENABLED':'0'}):await post('view',status=404)
                 assert set(store.tables)<={'restaurants','employee_links','sales_months','sales_events','sales_reports'},store.tables
     print('Restaurant HTTP checks passed: signed identity, owner isolation, membership boundaries, no tips access, actions and feature flag.')
