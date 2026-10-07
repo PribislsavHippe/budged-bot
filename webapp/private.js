@@ -34,7 +34,24 @@
   function item(storage,method,key,value) {
     return new Promise((resolve,reject)=>{
       let settled=false;
-      const timer=setTimeout(()=>done(new Error('Телефон не ответил на запрос хранилища. Открой приложение снова и проверь состояние журнала.')),storageTimeoutMs);
+      const area=storage===tg.SecureStorage?'Защищённое хранилище Telegram':'Журнал на телефоне';
+      const areaInSentence=area[0].toLowerCase()+area.slice(1);
+      const timer=setTimeout(()=>{
+        if (method!=='setItem') {
+          done(new Error(area+' не отвечает при чтении. Обнови Telegram и открой приложение снова.'));
+          return;
+        }
+        // Some clients may persist the value without delivering the write callback.
+        // Only accept such a write if an independent read confirms the exact value.
+        const verifyTimer=setTimeout(()=>done(new Error('Нет подтверждения записи: '+areaInSentence+'. Открой приложение снова и проверь журнал.')),5000);
+        try {
+          storage.getItem(key,(error,stored)=>{
+            clearTimeout(verifyTimer);
+            done(error || stored!==value
+              ? new Error('Нет подтверждения записи: '+areaInSentence+'. Открой приложение снова и проверь журнал.') : null,true);
+          });
+        } catch (error) {clearTimeout(verifyTimer);done(error);}
+      },storageTimeoutMs);
       const done=(error,result)=>{
         if (settled) return;
         settled=true;clearTimeout(timer);

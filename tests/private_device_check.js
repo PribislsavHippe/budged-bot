@@ -26,7 +26,7 @@ function client(storage,url='https://example.com/app',fastTimeouts=false) {
   const window={Telegram:{WebApp:tg},crypto:webcrypto,
     uxEvent:(event,screen)=>emitted.push({event,screen})};
   const context=vm.createContext({window,crypto:webcrypto,location,URL,TextEncoder,TextDecoder,
-    AbortController,setTimeout:fastTimeouts?(fn,ms)=>setTimeout(fn,Math.min(ms,20)):setTimeout,clearTimeout,
+    AbortController,setTimeout:fastTimeouts?(fn,ms)=>setTimeout(fn,ms===15000||ms===5000?20:ms):setTimeout,clearTimeout,
     btoa:s=>Buffer.from(s,'binary').toString('base64'),
     atob:s=>Buffer.from(s,'base64').toString('binary'),
     history:{replaceState:(_a,_b,next)=>{location.href='https://example.com'+next;}},
@@ -92,9 +92,26 @@ function client(storage,url='https://example.com/app',fastTimeouts=false) {
   const silent=device(),silentClient=client(silent,'https://example.com/app',true);
   await silentClient.pm.init();
   silent.SecureStorage.getItem=()=>{};
-  await assert.rejects(silentClient.pm.activate(),/Телефон не ответил/);
+  await assert.rejects(silentClient.pm.activate(),/Защищённое хранилище Telegram не отвечает/);
   assert.equal(server.active,false);
   assert.equal(server.entries.length,2);
+
+  const noWrite=device(),noWriteClient=client(noWrite,'https://example.com/app',true);
+  await noWriteClient.pm.init();
+  noWrite.SecureStorage.setItem=()=>{};
+  await assert.rejects(noWriteClient.pm.activate(),/Нет подтверждения записи: защищённое хранилище Telegram/);
+  assert.equal(server.active,false);
+
+  const quietWrite=device(),quietClient=client(quietWrite,'https://example.com/app',true);
+  await quietClient.pm.init();
+  const secureWrite=quietWrite.SecureStorage.setItem;
+  quietWrite.SecureStorage.setItem=(key,value)=>secureWrite(key,value,()=>{});
+  const localWrite=quietWrite.DeviceStorage.setItem;
+  quietWrite.DeviceStorage.setItem=(key,value)=>localWrite(key,value,()=>{});
+  assert.equal(await quietClient.pm.activate(),2);
+  assert.equal(server.active,true);
+  assert.equal(quietClient.pm.entries.length,2);
+  server.active=false;server.entries=quietClient.pm.entries.slice();server.publicKey=null;
 
   const phone=device(),first=client(phone);
   await first.pm.init();

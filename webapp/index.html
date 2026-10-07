@@ -80,7 +80,7 @@
   .chip.sel { background: var(--ink); color: #fff; border-color: var(--ink); }
   .spend-inputs { display: none; gap: 8px; margin-bottom: 6px; }
   .spend-inputs.on { display: flex; }
-  #day .spend-inputs { display: flex; }
+  #day details[open] .spend-inputs { display: flex; }
   [hidden] { display: none !important; }
   .spend-inputs input { flex: 1; min-width: 0; font-family: inherit; font-size: 15px; padding: 11px 12px; border: 1px solid var(--faint); border-radius: 10px; background: #fff; }
   #spend-amount { font-family: var(--font-mono); }
@@ -91,6 +91,12 @@
   /* ── разбор дня из календаря ── */
   #day { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 92; display: none; }
   #day.on { display: flex; align-items: flex-end; }
+  #day .sheet { max-height: min(85vh, 760px); overflow-y: auto; }
+  .day-edit { border-top: 1px solid #eee; margin-top: 12px; padding-top: 2px; }
+  #day details:not([open]) > :not(summary) { display: none !important; }
+  .day-edit summary { cursor: pointer; padding: 12px 0; font-size: 15px; list-style-position: inside; }
+  .day-edit[open] summary { margin-bottom: 6px; }
+  .day-edit .tips-actions { margin-bottom: 6px; }
   .day-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f2f2f2; }
   .day-row:last-child { border-bottom: none; }
   .day-row .k { font-size: 14px; color: var(--ink-soft); }
@@ -99,6 +105,7 @@
   .day-row.total .k { color: var(--ink); font-weight: 400; font-size: 15px; }
   .day-row.total .v { font-size: 19px; font-weight: 400; }
   .day-note { font-size: 14px; color: var(--ink-soft); padding: 10px 0 2px; }
+  #day-status:empty { display: none; }
 
   /* ── история и правки ── */
   #history { position: fixed; inset: 0; background: #fff; z-index: 95; display: none; overflow-y: auto; }
@@ -289,11 +296,17 @@
       <p class="sheet-title" id="day-title">—</p>
       <div id="day-body"></div>
       <p class="sheet-sub" id="day-status" role="status"></p>
-      <div class="spend-inputs"><label>Начало <input id="day-start" type="time"></label><label>Конец <input id="day-end" type="time"></label></div>
-      <div class="tips-actions"><button class="btn btn-ghost" id="day-shift-save">Добавить смену</button><button class="btn btn-ghost" id="day-shift-delete" hidden>Убрать смену</button></div>
-      <div class="spend-inputs" id="day-tip-inputs"><input id="day-tip-amount" type="number" inputmode="decimal" min="0.01" max="10000000" step="0.01" placeholder="Чаевые ₽" aria-label="Сумма чаевых"><select id="day-tip-account" aria-label="Счёт"><option value="card">Карта</option><option value="cash">Наличные</option></select></div>
-      <button class="btn btn-ghost" id="day-tip-add">Добавить чаевые</button>
-      <div id="day-tip-list"></div>
+      <details class="day-edit" id="day-tips-details">
+        <summary id="day-tips-summary">Добавить чаевые</summary>
+        <div class="spend-inputs" id="day-tip-inputs"><input id="day-tip-amount" type="number" inputmode="decimal" min="0.01" max="10000000" step="0.01" placeholder="Сумма ₽" aria-label="Сумма чаевых"><select id="day-tip-account" aria-label="Счёт"><option value="card">Карта</option><option value="cash">Наличные</option></select></div>
+        <button class="btn btn-ghost" id="day-tip-add">Записать чаевые</button>
+        <div id="day-tip-list"></div>
+      </details>
+      <details class="day-edit" id="day-shift-details">
+        <summary id="day-shift-summary">Добавить смену в график</summary>
+        <div class="spend-inputs"><label>Начало <input id="day-start" type="time"></label><label>Конец <input id="day-end" type="time"></label></div>
+        <div class="tips-actions"><button class="btn btn-ghost" id="day-shift-save">Добавить смену</button><button class="btn btn-ghost" id="day-shift-delete" hidden>Убрать смену</button></div>
+      </details>
       <button class="btn btn-ghost" id="day-close">Закрыть</button>
     </div>
   </div>
@@ -484,7 +497,11 @@ function dayRow(k, v, total) {
 
 function openDay(view, d) {
   const nextDay = view.year + "-" + String(view.month).padStart(2,"0") + "-" + String(d.day).padStart(2,"0");
-  if (selectedDayISO !== nextDay) dayTipOperation = null;
+  if (selectedDayISO !== nextDay) {
+    dayTipOperation = null;
+    document.getElementById('day-tips-details').open=false;
+    document.getElementById('day-shift-details').open=false;
+  }
   selectedDayISO = nextDay;
   const dt = new Date(view.year, view.month - 1, d.day);
   const wd = WD_FULL[(dt.getDay() + 6) % 7];
@@ -498,15 +515,7 @@ function openDay(view, d) {
   if (planned) rows.push(dayRow("По графику", planned.starts_at && planned.ends_at ? planned.starts_at.slice(0,5) + "–" + planned.ends_at.slice(0,5) : "время не указано"));
   if (worked) rows.push(dayRow("Фактически", worked.actual_start.slice(11,16) + "–" + worked.actual_end.slice(11,16)));
   if (d.tips > 0) {
-    rows.push(dayRow("Чаевые до расходов", rub(d.tips) + " ₽"));
-    if (d.cash > 0 && d.card > 0) {
-      rows.push(dayRow("наличными", rub(d.cash) + " ₽"));
-      rows.push(dayRow("картой", rub(d.card) + " ₽"));
-    } else if (d.cash > 0) {
-      rows.push(dayRow("всё наличными", rub(d.cash) + " ₽"));
-    } else if (d.card > 0) {
-      rows.push(dayRow("всё картой", rub(d.card) + " ₽"));
-    }
+    rows.push(dayRow("Чаевые", rub(d.tips) + " ₽"));
   }
   // Итог показываем, только если есть что вычитать: без трат он дословно
   // повторял бы строку «Чай».
@@ -521,11 +530,14 @@ function openDay(view, d) {
   document.getElementById("day-start").value = planned && planned.starts_at ? planned.starts_at.slice(0,5) : "";
   document.getElementById("day-end").value = planned && planned.ends_at ? planned.ends_at.slice(0,5) : "";
   document.getElementById("day-shift-save").textContent = planned ? "Изменить время смены" : "Добавить смену";
+  document.getElementById("day-shift-summary").textContent = planned ? "Изменить смену в графике" : "Добавить смену в график";
   document.getElementById("day-shift-delete").hidden = !planned;
+  document.getElementById('day-tips-details').hidden=privateMoney.state.lost;
   document.getElementById('day-tip-inputs').hidden=privateMoney.state.lost;
   document.getElementById('day-tip-add').hidden=privateMoney.state.lost;
   document.getElementById("day-status").textContent = calendarNotice?.date===selectedDayISO ? calendarNotice.text : "";
   const tips = privateMoney.state.lost ? [] : (view.tip_entries || []).filter(function (e) { return e.date === selectedDayISO; });
+  document.getElementById('day-tips-summary').textContent=tips.length?'Чаевые: добавить или убрать':'Добавить чаевые';
   const list = document.getElementById("day-tip-list");
   list.replaceChildren();
   tips.forEach(function (e) {
