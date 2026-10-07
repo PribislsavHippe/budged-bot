@@ -4,10 +4,14 @@
   const tg = window.Telegram && window.Telegram.WebApp;
   const ledgerName = 'money_ledger_v1';
   const damagedLedgerName = 'money_ledger_damaged_v1';
+  const exitPendingName = 'money_exit_pending_v1';
+  const archiveIndexName = 'money_ledger_archives_v1';
   const aesName = 'money_aes_key_v1';
   const rsaName = 'money_rsa_private_v1';
-  const state = {active:false,ready:false,lost:false,lostReason:null,entries:[],receipts:[],today:null};
+  const state = {active:false,ready:false,lost:false,lostReason:null,entries:[],receipts:[],
+    exitArchivePending:false,exitConflict:false,exiting:false,archiveCount:0,today:null};
   let syncing=null;
+  let deactivating=false;
 
   function encode(bytes) {
     let value='';
@@ -50,14 +54,20 @@
       if (requireExisting) throw new Error('Личный журнал отсутствует на этом устройстве.');
       state.entries=[];state.receipts=[];return;
     }
-    const bytes=decode(packed),key=await aesKey(false);
-    const plain=await crypto.subtle.decrypt({name:'AES-GCM',iv:bytes.subarray(0,12)},key,bytes.subarray(12));
-    const saved=JSON.parse(new TextDecoder().decode(plain));
+    const saved=await unpackLocal(packed);
     const entries=Array.isArray(saved)?saved:saved?.entries;
     if (!Array.isArray(entries)) throw new Error('Не удалось прочитать личный журнал.');
     state.entries=entries;
     state.receipts=Array.isArray(saved)?entries.map(e=>String(e.id)):
       Array.isArray(saved.receipts)?saved.receipts.map(String):[];
+  }
+  async function unpackLocal(packed) {
+    const bytes=decode(packed),key=await aesKey(false);
+    const plain=await crypto.subtle.decrypt({name:'AES-GCM',iv:bytes.subarray(0,12)},key,bytes.subarray(12));
+    const saved=JSON.parse(new TextDecoder().decode(plain));
+    const entries=Array.isArray(saved)?saved:saved?.entries;
+    if (!Array.isArray(entries)) throw new Error('Не удалось прочитать личный журнал.');
+    return saved;
   }
   async function saveLocal() {
     const key=await aesKey(true),iv=crypto.getRandomValues(new Uint8Array(12));
@@ -91,7 +101,8 @@
     const result=await request('/api/private/prepare',{});
     state.active=!!result.active;
     state.ready=true;
-    state.lost=false;state.lostReason=null;
+    state.lost=false;state.lostReason=null;state.exitArchivePending=false;
+    state.exitConflict=false;state.archiveCount=0;
     if (!available()) {
       state.lost=state.active;state.lostReason='unsupported';
       return state;
@@ -101,6 +112,18 @@
         item(tg.SecureStorage,'getItem',aesName),
         item(tg.DeviceStorage,'getItem',ledgerName),
         item(tg.SecureStorage,'getItem',rsaName)]);
+      try {
+        const rawIndex=await item(tg.DeviceStorage,'getItem',archiveIndexName);
+        const archives=rawIndex?JSON.parse(rawIndex):[];
+        state.archiveCount=Array.isArray(archives)?archives.length:0;
+      } catch (error) {state.archiveCount=0;}
+      const pending=await item(tg.DeviceStorage,'getItem',exitPendingName);
+      if (!state.active && pending && pending===result.last_exit_operation) {
+        try {await finishExitArchive();}
+        catch (error) {state.exitArchivePending=true;}
+        return state;
+      }
+      if (!state.active && pending) state.exitConflict=true;
       if (state.active && !key && !ledger && !rsa) {
         state.lost=true;state.lostReason='missing';
       } else if (state.active && !ledger) {
@@ -175,6 +198,7 @@
     state.lost=false;state.lostReason=null;
   }
   async function add(record) {
+    if (deactivating) throw new Error('Дождись завершения переноса личного журнала.');
     if (!state.active || state.lost) throw new Error('Личный журнал на этом устройстве недоступен.');
     if (state.entries.some(e=>String(e.id)===String(record.id))) return false;
     const previous=state.entries,receipts=state.receipts;
@@ -185,11 +209,13 @@
     return true;
   }
   async function remove(id) {
+    if (deactivating) throw new Error('Дождись завершения переноса личного журнала.');
     const previous=state.entries;
     state.entries=previous.filter(e=>String(e.id)!==String(id));
     try {await saveLocal();} catch (e) {state.entries=previous;throw e;}
   }
   async function clear() {
+    if (deactivating) throw new Error('Дождись завершения переноса личного журнала.');
     if (!state.active || state.lost) throw new Error('Личный журнал на этом устройстве недоступен.');
     await request('/api/private/clear_backups',{});
     const previous=state.entries,receipts=state.receipts;
@@ -197,6 +223,7 @@
     try {await saveLocal();} catch (e) {state.entries=previous;state.receipts=receipts;throw e;}
   }
   async function edit(id,patch) {
+    if (deactivating) throw new Error('Дождись завершения переноса личного журнала.');
     const previous=state.entries;
     state.entries=previous.map(e=>String(e.id)===String(id)?{...e,...patch}:e);
     try {await saveLocal();} catch (e) {state.entries=previous;throw e;}
@@ -237,7 +264,7 @@
     try {return await syncing;} finally {syncing=null;}
   }
   async function syncOnce() {
-    if (!state.active || state.lost) return 0;
+    if (!state.active || state.lost || state.exiting) return 0;
     const records=await backupRecords();
     const seen=new Set(state.receipts);
     const fresh=records.filter(e=>!seen.has(String(e.id)));
@@ -258,6 +285,71 @@
       else if (record.kind==='expense') window.uxEvent?.('expense_added','earnings');
     });
     return fresh.length;
+  }
+  async function finishExitArchive() {
+    if (state.active) throw new Error('Сначала перенеси личный журнал в обычный режим.');
+    const operation=await item(tg.DeviceStorage,'getItem',exitPendingName);
+    if (!operation) throw new Error('Не нашёл подтверждение переноса на этом телефоне.');
+    const profile=await request('/api/private/prepare',{});
+    if (profile.active || profile.last_exit_operation!==operation)
+      throw new Error('Сервер не подтвердил выход из приватного режима. Журнал сохранён.');
+    const archiveName='money_ledger_archive_'+operation.replace(/-/g,'');
+    let archived=await item(tg.DeviceStorage,'getItem',archiveName);
+    if (!archived) {
+      const current=await item(tg.DeviceStorage,'getItem',ledgerName);
+      if (!current) throw new Error('Не нашёл журнал для архивной копии.');
+      await unpackLocal(current);
+      await item(tg.DeviceStorage,'setItem',archiveName,current);
+      archived=await item(tg.DeviceStorage,'getItem',archiveName);
+      if (archived!==current) throw new Error('Телефон не подтвердил архивную копию журнала.');
+    }
+    await unpackLocal(archived);
+    const rawIndex=await item(tg.DeviceStorage,'getItem',archiveIndexName);
+    const index=rawIndex?JSON.parse(rawIndex):[];
+    if (!Array.isArray(index) || index.some(id=>typeof id!=='string'))
+      throw new Error('Не удалось прочитать список архивных копий.');
+    if (!index.includes(operation)) {
+      const updated=JSON.stringify([...index,operation]);
+      await item(tg.DeviceStorage,'setItem',archiveIndexName,updated);
+      if (await item(tg.DeviceStorage,'getItem',archiveIndexName)!==updated)
+        throw new Error('Телефон не подтвердил список архивных копий.');
+    }
+    state.archiveCount=index.includes(operation)?index.length:index.length+1;
+    const previous=state.entries,receipts=state.receipts;
+    state.entries=[];state.receipts=[];
+    try {
+      await saveLocal();await loadLocal();
+      if (state.entries.length || state.receipts.length)
+        throw new Error('Телефон не подтвердил отделение архивной копии от рабочего журнала.');
+      await item(tg.DeviceStorage,'setItem',exitPendingName,'');
+      state.exitArchivePending=false;state.exitConflict=false;
+    } catch (error) {state.entries=previous;state.receipts=receipts;throw error;}
+  }
+  async function deactivate() {
+    if (!state.active || state.lost || deactivating)
+      throw new Error('Открой личный журнал на телефоне, где он был создан.');
+    deactivating=true;
+    try {
+      await sync();
+      const publicKey=(await rsaKeys(false)).publicJwk;
+      const random=crypto.getRandomValues(new Uint8Array(16));
+      random[6]=(random[6]&15)|64;random[8]=(random[8]&63)|128;
+      const hex=[...random].map(b=>b.toString(16).padStart(2,'0')).join('');
+      const operation=[hex.slice(0,8),hex.slice(8,12),hex.slice(12,16),hex.slice(16,20),hex.slice(20)].join('-');
+      state.exiting=true;
+      await item(tg.DeviceStorage,'setItem',exitPendingName,operation);
+      const count=state.entries.length;
+      try {
+        await request('/api/private/deactivate',{operation_id:operation,
+          public_key:publicKey,private_entries:state.entries,receipts:state.receipts});
+      } catch (error) {
+        const profile=await request('/api/private/prepare',{});
+        if (profile.active || profile.last_exit_operation!==operation) throw error;
+      }
+      state.active=false;state.lost=false;state.lostReason=null;
+      try {await finishExitArchive();return {count,archivePending:false};}
+      catch (error) {state.exitArchivePending=true;return {count,archivePending:true};}
+    } finally {state.exiting=false;deactivating=false;}
   }
   async function restoreRecent() {
     if (!state.active || !state.lost || !['pending','unreadable'].includes(state.lostReason))
@@ -295,7 +387,7 @@
     history.replaceState(null,'',url.pathname+url.search+url.hash);
     return added ? 'Запись сохранена на этом устройстве.' : 'Эта запись уже есть на устройстве.';
   }
-  window.privateMoney={state,init,activate,rotate,add,remove,clear,edit,sync,restoreRecent,importUrl,request,available,
+  window.privateMoney={state,init,activate,deactivate,finishExitArchive,rotate,add,remove,clear,edit,sync,restoreRecent,importUrl,request,available,
     get active(){return state.active && !state.lost;},get entries(){return state.entries;},
     get payload(){return state.active && !state.lost?{private_entries:state.entries}:{}}};
 })();

@@ -809,6 +809,43 @@ def test_private_backup_clear_requires_active_mode():
         clear.assert_not_awaited()
 
 
+def test_private_exit_rejects_duplicate_ids_and_invalid_amounts():
+    entry={'id':'local:1','kind':'accrual','account':'pending','signed_amount':1200,
+           'category':'Сервисный сбор','work_date':'2026-10-05',
+           'created_at':'2026-10-05T20:00:00+03:00'}
+    operation='00112233-4455-4677-8899-aabbccddeeff'
+    accepted=webapp_api._private_exit_payload({'operation_id':operation,
+        'private_entries':[entry],'receipts':['local:1']})
+    assert accepted[0]==operation and len(accepted[1])==1
+    for changed in ([entry,entry], [{**entry,'signed_amount':1200.001}],
+                    [{**entry,'created_at':'not-a-date'}]):
+        try:webapp_api._private_exit_payload({'operation_id':operation,
+            'private_entries':changed,'receipts':['local:1']})
+        except (ValueError,TypeError):pass
+        else:raise AssertionError('invalid exit journal accepted')
+
+
+def test_private_exit_is_signed_and_scoped_to_user():
+    from unittest.mock import AsyncMock,Mock
+    entry={'id':'local:1','kind':'accrual','account':'pending','signed_amount':1200,
+           'category':'Сервисный сбор','work_date':'2026-10-05',
+           'created_at':'2026-10-05T20:00:00+03:00'}
+    body={'operation_id':'00112233-4455-4677-8899-aabbccddeeff',
+          'private_entries':[entry],'receipts':['local:1'],'public_key':{'n':'device-key'}}
+    rpc=Mock(return_value='scoped-rpc')
+    with patch.object(_db,'supabase',new=types.SimpleNamespace(rpc=rpc),create=True), \
+         patch.object(_db,'_execute',new=AsyncMock(),create=True) as execute, \
+         patch.object(webapp_api.private_payload,'validate_public_key'):
+        rejected=run(webapp_api.api_private_deactivate(Req({'initData':'forged',**body})))
+        accepted=run(webapp_api.api_private_deactivate(Req({
+            'initData':init_data(TOKEN,42),**body})))
+        assert rejected.status==401 and accepted.status==200
+        assert accepted.data['count']==1
+        call=rpc.call_args.args
+        assert call[0]=='deactivate_private_money' and call[1]['actor']==42
+        execute.assert_awaited_once_with('scoped-rpc')
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

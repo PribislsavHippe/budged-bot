@@ -58,7 +58,7 @@ async def run_polling(bot: Bot, dp: Dispatcher):
 
 async def run_webhook(bot: Bot, dp: Dispatcher):
     me = await bot.get_me()
-    app = web.Application()
+    app = web.Application(client_max_size=8 * 1024 ** 2)
     app.router.add_get("/", lambda _: web.Response(text="OK"))
     secret = os.getenv("WEBHOOK_SECRET") or hmac.new(
         BOT_TOKEN.encode(), b"telegram-webhook", hashlib.sha256

@@ -258,8 +258,9 @@
       <p id="private-description">Личный журнал будет на этом устройстве. Зашифрованные копии записей останутся на сервере на 14 дней для повторного переноса при сбое. Без ключа этого телефона суммы не прочитать. При потере телефона данные не восстановятся.</p>
       <p id="private-status" role="status"></p>
       <button class="btn" id="private-confirm">Перенести записи и включить</button>
+      <button class="btn btn-ghost" id="private-exit" hidden>Вернуться к обычному режиму</button>
       <button class="btn btn-ghost" id="private-restore" hidden>Восстановить записи за 14 дней</button>
-      <button class="btn btn-ghost" id="private-clear" hidden>Удалить личный журнал и временные копии</button>
+      <button class="btn btn-ghost" id="private-clear" hidden>Удалить текущий журнал и временные копии</button>
       <button class="btn btn-ghost" id="private-cancel">Закрыть</button>
     </div>
   </div>
@@ -1001,19 +1002,27 @@ function privateButtonText() {
 function openPrivacy() {
   const state=privateMoney.state;
   const action=document.getElementById('private-confirm');
+  const exit=document.getElementById('private-exit');
   const restore=document.getElementById('private-restore');
-  document.getElementById('private-clear').hidden=!privateMoney.entries.length;
+  document.getElementById('private-clear').hidden=!state.active || state.lost || !privateMoney.entries.length;
+  exit.hidden=true;
   restore.hidden=true;
   document.getElementById('private-status').textContent='';
   if (!privateMoney.available()) {
     document.getElementById('private-description').textContent='Для личного журнала нужен Telegram с поддержкой безопасного хранилища. Обнови приложение Telegram и открой журнал снова.';
     action.hidden=true;
+  } else if (!state.active && state.exitArchivePending) {
+    document.getElementById('private-description').textContent='Обычный режим уже включён и записи сохранены в базе. Не получилось завершить сохранение архивной копии на телефоне. Повтори здесь.';
+    action.hidden=true;exit.hidden=false;exit.textContent='Завершить сохранение копии';
+  } else if (!state.active && state.exitConflict) {
+    document.getElementById('private-description').textContent='Не удалось подтвердить результат предыдущего переноса. Местный журнал сохранён. Обратись в поддержку, прежде чем снова менять режим.';
+    action.hidden=true;
   } else if (!state.active && state.lostReason==='unreadable') {
     document.getElementById('private-description').textContent='Прежний местный журнал не читается. Записи в базе сохранены; перенос остановлен, чтобы не стереть возможные данные на этом устройстве.';
     action.hidden=true;
   } else if (state.active && !state.lost) {
-    document.getElementById('private-description').textContent='Личный журнал хранится на этом устройстве. Бот сохраняет новые записи в зашифрованной копии на 14 дней, а приложение переносит их при открытии. Записи, созданные до этого обновления, в копию не попали. Суммы в копии нельзя прочитать без ключа телефона. При потере телефона данные не восстановятся.';
-    action.hidden=true;
+    document.getElementById('private-description').textContent='Личный журнал хранится на этом устройстве. Бот сохраняет новые записи в зашифрованной копии на 14 дней, а приложение переносит их при открытии. Записи, созданные до этого обновления, в копию не попали. Суммы в копии нельзя прочитать без ключа телефона. При потере телефона данные не восстановятся.'+(state.archiveCount?' От прежних выходов сохранено архивных копий на этом телефоне: '+state.archiveCount+'.':'');
+    action.hidden=true;exit.hidden=false;exit.textContent='Вернуться к обычному режиму';
   } else if (state.active && ['missing','pending'].includes(state.lostReason)) {
     document.getElementById('private-description').textContent=state.lostReason==='pending'
       ? 'Журнал на этом телефоне не найден. Если ключ сохранился, можно восстановить записи из зашифрованных копий за последние 14 дней. Более старые записи в копии не входят.'
@@ -1027,7 +1036,7 @@ function openPrivacy() {
     action.hidden=true;
     restore.hidden=state.lostReason==='unreadable';
   } else {
-    document.getElementById('private-description').textContent='Перенесу личные записи на этот телефон. После проверки исходные суммы в базе заменятся зашифрованными копиями на 14 дней. Бот будет сохранять новые записи сразу, а приложение перенесёт их на телефон при открытии. Без ключа этого телефона копии не прочитать; при потере телефона журнал не восстановится.';
+    document.getElementById('private-description').textContent='Перенесу личные записи на этот телефон. После проверки исходные суммы в базе заменятся зашифрованными копиями на 14 дней. Бот будет сохранять новые записи сразу, а приложение перенесёт их на телефон при открытии. Без ключа этого телефона копии не прочитать; при потере телефона журнал не восстановится.'+(state.archiveCount?' Архивные копии прежних журналов остаются на телефоне и не участвуют в подсчётах: '+state.archiveCount+'.':'');
     action.hidden=false;action.textContent='Перенести записи и включить';
   }
   privateModal.hidden=false;privateModal.style.display='flex';
@@ -1036,9 +1045,9 @@ document.getElementById('private-open').onclick=openPrivacy;
 document.addEventListener('tips-open-privacy',openPrivacy);
 document.getElementById('private-cancel').onclick=function () {privateModal.hidden=true;privateModal.style.display='none';};
 document.getElementById('private-clear').onclick=async function () {
-  if (!confirm('Удалить личный журнал с телефона и все временные копии с сервера? Восстановить их не получится.')) return;
+  if (!confirm('Удалить текущий личный журнал с телефона и все временные копии с сервера? Архивные копии прежних журналов останутся на телефоне.')) return;
   const status=document.getElementById('private-status');
-  try {await privateMoney.clear();status.textContent='Личный журнал и временные копии удалены.';this.hidden=true;load();if(calYear)loadMonth(calYear,calMonth);}
+  try {await privateMoney.clear();status.textContent='Текущий журнал и временные копии удалены. Архивные копии остались на телефоне.';this.hidden=true;load();if(calYear)loadMonth(calYear,calMonth);}
   catch (error) {status.textContent=error.message;}
 };
 document.getElementById('private-confirm').onclick=async function () {
@@ -1050,6 +1059,32 @@ document.getElementById('private-confirm').onclick=async function () {
     status.textContent='Готово. Личные записи теперь на этом устройстве.';
     privateButtonText();load();if(calYear)loadMonth(calYear,calMonth);
     this.hidden=true;
+  } catch (error) {status.textContent=error.message;}
+  finally {this.disabled=false;}
+};
+document.getElementById('private-exit').onclick=async function () {
+  const status=document.getElementById('private-status');
+  if (privateMoney.state.exitArchivePending) {
+    this.disabled=true;status.textContent='Сохраняю архивную копию на телефоне…';
+    try {await privateMoney.finishExitArchive();status.textContent='Готово. Архивная копия осталась на этом телефоне.';this.hidden=true;
+      document.getElementById('private-sync-status').textContent='';}
+    catch (error) {status.textContent=error.message;}
+    finally {this.disabled=false;}
+    return;
+  }
+  if (!confirm('Перенести все личные записи в обычный журнал? Суммы будут храниться в базе и станут доступны владельцу серверного доступа. Зашифрованная копия прежнего журнала останется на этом телефоне; временные серверные копии будут удалены.')) return;
+  this.disabled=true;status.textContent='Переношу записи в обычный журнал…';
+  try {
+    const result=await privateMoney.deactivate();
+    status.textContent=result.archivePending
+      ? 'Записи перенесены в базу, обычный режим включён. Архивная копия ещё не подтверждена на телефоне — нажми «Завершить сохранение копии».'
+      : 'Готово. Перенесено записей: '+result.count+'. Зашифрованная копия осталась на этом телефоне.';
+    if (result.archivePending) this.textContent='Завершить сохранение копии';
+    else this.hidden=true;
+    document.getElementById('private-clear').hidden=true;
+    document.getElementById('private-restore').hidden=true;
+    privateButtonText();window.dispatchEvent(new Event('private-money-ready'));
+    load();if(calYear)loadMonth(calYear,calMonth);
   } catch (error) {status.textContent=error.message;}
   finally {this.disabled=false;}
 };
@@ -1076,6 +1111,10 @@ async function syncPrivateRecords() {
 async function startApp() {
   try {
     await privateMoney.init();
+    if (privateMoney.state.exitArchivePending)
+      document.getElementById('private-sync-status').textContent='Обычный режим включён. Открой «Суперконфиденциальность», чтобы завершить сохранение архивной копии на телефоне.';
+    if (privateMoney.state.exitConflict)
+      document.getElementById('private-sync-status').textContent='Не удалось подтвердить прежний перенос. Местный журнал сохранён; открой «Суперконфиденциальность».';
     window.dispatchEvent(new Event('private-money-ready'));
     privateButtonText();
     const imported=await privateMoney.importUrl();

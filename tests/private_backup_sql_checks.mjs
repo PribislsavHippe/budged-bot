@@ -7,8 +7,10 @@ const source=name=>fs.readFile(new URL('../'+name,import.meta.url),'utf8');
 try {
   await db.exec('CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS');
   await db.exec(await source('schema.sql'));
+  await db.exec("ALTER TABLE entries ADD COLUMN work_date DATE NOT NULL DEFAULT CURRENT_DATE; ALTER TABLE entries ADD COLUMN source_key TEXT; CREATE UNIQUE INDEX entries_user_source_key ON entries(user_id,source_key) WHERE source_key IS NOT NULL");
   await db.exec(await source('migration_v15.sql'));
   await db.exec(await source('migration_v20.sql'));
+  await db.exec(await source('migration_v21.sql'));
   await db.exec("INSERT INTO users(id) VALUES(7); INSERT INTO entries(user_id,kind,account,signed_amount,category) VALUES(7,'income','card',500,'Чаевые')");
   const key={kty:'RSA',alg:'RSA-OAEP-256',n:'public-modulus',e:'AQAB'};
   await assert.rejects(db.query('SELECT activate_private_money_with_backups($1,$2,$3,$4)',
@@ -29,10 +31,36 @@ try {
   await db.query('SELECT store_private_money_backup($1,$2,$3,$4)',
     [7,'telegram:7:2:0','ciphertext',keyId]);
   assert.equal((await db.query("SELECT count(*)::int n FROM private_money_backups WHERE user_id=7 AND record_id='telegram:7:2:0'")).rows[0].n,1);
+  const operation='00112233-4455-4677-8899-aabbccddeeff';
+  const items=[
+    {id:1,kind:'income',account:'card',signed_amount:500,category:'Чаевые',
+      work_date:'2026-10-04',created_at:'2026-10-04T20:00:00+03:00'},
+    {id:'telegram:7:2:0',kind:'accrual',account:'pending',signed_amount:700,
+      category:'Сервисный сбор',work_date:'2026-10-05',created_at:'2026-10-05T20:00:00+03:00'}];
+  await assert.rejects(db.query('SELECT deactivate_private_money($1,$2,$3,$4,$5)',
+    [7,operation,key,[items[0],items[0]],['1','telegram:7:2:0']]),/private_exit_entries_invalid/);
+  assert.equal((await db.query('SELECT private_money_mode FROM users WHERE id=7')).rows[0].private_money_mode,true);
+  await assert.rejects(db.query('SELECT deactivate_private_money($1,$2,$3,$4,$5)',
+    [7,operation,{...key,n:'wrong'},items,['1','telegram:7:2:0']]),/private_key_changed/);
+  await assert.rejects(db.query('SELECT deactivate_private_money($1,$2,$3,$4,$5)',
+    [7,operation,key,items,['1']]),/private_backups_pending/);
+  assert.equal((await db.query('SELECT private_money_mode FROM users WHERE id=7')).rows[0].private_money_mode,true);
+  const exit=await db.query('SELECT deactivate_private_money($1,$2,$3,$4,$5) AS count',
+    [7,operation,key,items,['1','telegram:7:2:0']]);
+  assert.equal(exit.rows[0].count,2);
+  assert.equal((await db.query('SELECT private_money_mode FROM users WHERE id=7')).rows[0].private_money_mode,false);
+  assert.equal((await db.query('SELECT count(*)::int n FROM entries WHERE user_id=7')).rows[0].n,2);
+  assert.equal((await db.query('SELECT count(*)::int n FROM private_money_backups WHERE user_id=7')).rows[0].n,0);
+  const retry=await db.query('SELECT deactivate_private_money($1,$2,$3,$4,$5) AS count',
+    [7,operation,key,items,['1','telegram:7:2:0']]);
+  assert.equal(retry.rows[0].count,2);
+  assert.equal((await db.query('SELECT count(*)::int n FROM entries WHERE user_id=7')).rows[0].n,2);
+  await assert.rejects(db.query('SELECT deactivate_private_money($1,$2,$3,$4,$5)',
+    [7,'11112233-4455-4677-8899-aabbccddeeff',key,items,['1','telegram:7:2:0']]),/private_mode_off/);
   await db.exec('SET ROLE anon');
   await assert.rejects(db.query('SELECT * FROM private_money_backups'),/permission denied/);
   await db.exec('RESET ROLE');
   await db.exec('DELETE FROM users WHERE id=7');
   assert.equal((await db.query('SELECT count(*)::int n FROM private_money_backups')).rows[0].n,0);
-  console.log('Private backup SQL: atomic activation, idempotency, key check, access and cascade OK');
+  console.log('Private backup SQL: atomic activation and exit, idempotency, key check, access and cascade OK');
 } finally {await db.close();}

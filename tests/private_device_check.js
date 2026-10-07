@@ -10,7 +10,8 @@ const server={active:false,entries:[
    note:'из банка',work_date:'2026-10-04',created_at:'2026-10-04T20:00:00+03:00'},
   {id:2,user_id:7,kind:'expense',account:'cash',signed_amount:-100,category:'Такси',
    note:'трата смены',work_date:'2026-10-04',created_at:'2026-10-04T20:01:00+03:00'}],publicKey:null,
-   injectBeforeActivate:false,backups:[]};
+   injectBeforeActivate:false,injectBeforeDeactivate:false,backups:[],
+   exitOperation:null,loseExitResponse:false};
 const token='test-bot-token';
 function device() {
   const local=new Map(),secure=new Map();
@@ -32,7 +33,7 @@ function client(storage,url='https://example.com/app') {
       const body=JSON.parse(options.body);
       let status=200,response;
       if(path==='/api/private/prepare') response={active:server.active,entries:server.active?[]:server.entries,
-        public_key:server.publicKey};
+        public_key:server.publicKey,last_exit_operation:server.exitOperation};
       else if(path==='/api/private/activate') {
         if(server.injectBeforeActivate) {
           server.injectBeforeActivate=false;
@@ -47,6 +48,21 @@ function client(storage,url='https://example.com/app') {
         }
       } else if(path==='/api/private/backups') response={backups:server.backups};
       else if(path==='/api/private/clear_backups') {server.backups=[];response={cleared:true};}
+      else if(path==='/api/private/deactivate') {
+        if(server.injectBeforeDeactivate) {
+          server.injectBeforeDeactivate=false;
+          server.backups.push({record_id:'telegram:7:late:0',payload:'sealed-later'});
+        }
+        if(server.active && server.backups.some(e=>!body.receipts.includes(e.record_id))) {
+          status=409;response={error:'Есть записи, которые ещё не перенесены на телефон.'};
+        } else if(server.active) {
+          server.entries=body.private_entries.map((e,i)=>({...e,id:i+4,user_id:7}));
+          server.active=false;server.backups=[];server.exitOperation=body.operation_id;
+          response={active:false,count:server.entries.length,operation_id:body.operation_id};
+          if(server.loseExitResponse) {server.loseExitResponse=false;throw new Error('network response lost');}
+        } else if(server.exitOperation===body.operation_id) response={active:false,count:server.entries.length};
+        else {status=409;response={error:'Режим уже выключен.'};}
+      }
       else if(path==='/api/private/verify') {
         const sig=createHmac('sha256',token).update('7:'+body.payload).digest('hex');
         response={valid:sig===body.signature};if(!response.valid)status=400;
@@ -144,15 +160,65 @@ function client(storage,url='https://example.com/app') {
   await damaged.pm.clear();
   assert.equal(server.backups.length,0);
   assert.equal(damaged.pm.entries.length,0);
+  await damaged.pm.add({id:'local:exit',kind:'accrual',account:'pending',signed_amount:1200,
+    category:'Сервисный сбор',work_date:'2026-10-05',created_at:'2026-10-05T20:00:00+03:00'});
+  server.loseExitResponse=true;
+  phone.DeviceStorage.setItem=(key,value,callback)=>key==='money_ledger_v1'
+    ? callback(null,false) : write(key,value,callback);
+  const exited=await damaged.pm.deactivate();
+  assert.equal(exited.archivePending,true);
+  assert.equal(server.active,false);
+  assert.equal(server.entries.length,1);
+  assert.equal(server.entries[0].signed_amount,1200);
+  const archiveKey='money_ledger_archive_'+server.exitOperation.replace(/-/g,'');
+  assert.equal(phone._local.get(archiveKey),phone._local.get('money_ledger_v1'));
+  assert.deepEqual(JSON.parse(phone._local.get('money_ledger_archives_v1')),[server.exitOperation]);
+  phone.DeviceStorage.setItem=write;
+  phone._local.set('money_ledger_v1','corrupted-after-exit');
+  const returned=client(phone);
+  await returned.pm.init();
+  assert.equal(returned.pm.state.exitArchivePending,false);
+  assert.equal(returned.pm.state.archiveCount,1);
+  assert.ok(phone._local.get(archiveKey));
+  assert.equal(returned.pm.entries.length,0);
+  assert.equal(await returned.pm.activate(),1); // Re-entering does not duplicate the old local record.
+  assert.equal(server.active,true);
+  server.injectBeforeDeactivate=true;
+  const blockedExit=returned.pm.deactivate();
+  await assert.rejects(returned.pm.deactivate());
+  await assert.rejects(blockedExit);
+  assert.equal(server.active,true);
+  assert.equal(returned.pm.entries.length,1);
+  server.backups=[];
+  const firstArchive=phone._local.get(archiveKey);
+  const secondExit=await returned.pm.deactivate();
+  assert.equal(secondExit.archivePending,false);
+  assert.equal(returned.pm.state.archiveCount,2);
+  assert.equal(phone._local.get(archiveKey),firstArchive);
+  const afterAgain=client(phone);
+  await afterAgain.pm.init();
+  assert.equal(afterAgain.pm.state.archiveCount,2);
+  assert.equal(await afterAgain.pm.activate(),1);
+  const beforeQuota=phone._local.get('money_ledger_v1');
+  phone.DeviceStorage.setItem=(key,value,callback)=>key.startsWith('money_ledger_archive_')
+    ? callback(null,false) : write(key,value,callback);
+  const quotaExit=await afterAgain.pm.deactivate();
+  assert.equal(quotaExit.archivePending,true);
+  assert.equal(phone._local.get('money_ledger_v1'),beforeQuota);
+  phone.DeviceStorage.setItem=write;
+  await afterAgain.pm.finishExitArchive();
+  assert.equal(afterAgain.pm.state.archiveCount,3);
+  assert.equal(await afterAgain.pm.activate(),1);
 
   const second=client(device());
   await second.pm.init();
   assert.equal(second.pm.state.lost,true);
   assert.equal(second.pm.state.lostReason,'missing');
   assert.equal(second.pm.active,false);
+  await assert.rejects(second.pm.deactivate());
   await second.pm.rotate();
   assert.equal(second.pm.active,true);
   assert.equal(second.pm.entries.length,0);
   assert.equal(server.active,true);
-  console.log('private device migration, backup recovery, deletion and device loss: OK');
+  console.log('private device migration, backup recovery, exit, deletion and device loss: OK');
 })().catch(error=>{console.error(error);process.exitCode=1;});

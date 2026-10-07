@@ -12,7 +12,7 @@ import secrets
 import time
 import uuid
 from calendar import monthrange
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from urllib.parse import parse_qsl, urlsplit
 
@@ -75,6 +75,41 @@ def _private_entries(body: dict) -> list[dict]:
     return entries
 
 
+def _private_exit_payload(body: dict) -> tuple[str, list[dict], list[str]]:
+    from uuid import UUID
+    operation=str(UUID(str(body['operation_id'])))
+    entries=_private_entries(body)
+    receipts=body['receipts']
+    if not isinstance(receipts,list) or len(receipts)>10000 or any(
+        not isinstance(r,str) or not 1<=len(r)<=128 for r in receipts):
+        raise ValueError('private_exit_receipts_invalid')
+    ids=[str(e['id']) for e in entries]
+    if len(ids)!=len(set(ids)) or not set(ids).issubset(set(receipts)):
+        raise ValueError('private_exit_ids_invalid')
+    for e in entries:
+        amount=Decimal(str(e['signed_amount']))
+        if amount!=amount.quantize(Decimal('.01')) or (
+            e['kind'] in {'income','accrual'} and amount<=0) or (
+            e['kind']=='expense' and amount>=0):
+            raise ValueError('private_exit_amount_invalid')
+        note=e.get('note')
+        if note is not None and (not isinstance(note,str) or len(note)>4096):
+            raise ValueError('private_exit_note_invalid')
+        for field,limit,precision in [('order_amount',Decimal('10000000'),Decimal('.01')),
+                                      ('tip_percent',Decimal('1000'),Decimal('.1'))]:
+            value=e.get(field)
+            if value is not None:
+                number=Decimal(str(value))
+                if not number.is_finite() or abs(number)>limit or number!=number.quantize(precision):
+                    raise ValueError('private_exit_number_invalid')
+        created_value=e.get('created_at')
+        if not isinstance(created_value,str):raise ValueError('private_exit_date_invalid')
+        created=datetime.fromisoformat(created_value.replace('Z','+00:00'))
+        if created.tzinfo is None or not 1<=len(str(e['id']))<=128:
+            raise ValueError('private_exit_date_invalid')
+    return operation,entries,receipts
+
+
 async def _entries_for_view(user_id: int, body: dict) -> tuple[list[dict],bool]:
     user=await db.get_or_create_user(user_id)
     private=bool(user.get('private_money_mode'))
@@ -117,7 +152,9 @@ async def api_private_prepare(request: web.Request) -> web.Response:
         return web.json_response({'active':True,'entries':[],
                                   'public_key':user.get('private_money_public_key')},headers=NO_CACHE)
     entries=await db.get_all_entries(user_id)
-    return web.json_response({'active':False,'entries':entries},headers=NO_CACHE)
+    return web.json_response({'active':False,'entries':entries,
+                              'last_exit_operation':str(user['private_money_exit_operation'])
+                                  if user.get('private_money_exit_operation') else None},headers=NO_CACHE)
 
 
 async def api_private_activate(request: web.Request) -> web.Response:
@@ -171,6 +208,31 @@ async def api_private_clear_backups(request: web.Request) -> web.Response:
         return web.json_response({'error':'Личный журнал ещё не включён.'},status=409,headers=NO_CACHE)
     await db.clear_private_backups(user_id)
     return web.json_response({'cleared':True},headers=NO_CACHE)
+
+
+async def api_private_deactivate(request: web.Request) -> web.Response:
+    user_id,body=await _auth(request)
+    if user_id is None:return body
+    try:
+        operation,entries,receipts=_private_exit_payload(body)
+        public_key=body['public_key']
+        private_payload.validate_public_key(public_key)
+    except (KeyError,ValueError,TypeError,InvalidOperation,OverflowError):
+        return web.json_response({'error':'Не получилось проверить личный журнал. Обнови приложение и повтори.'},
+                                 status=400,headers=NO_CACHE)
+    try:
+        await db._execute(db.supabase.rpc('deactivate_private_money',{
+            'actor':user_id,'operation':operation,'expected_public_key':public_key,
+            'items':entries,'receipts':receipts}))
+    except Exception as error:
+        from diagnostics import failure
+        failure(error,area='private_money',stage='deactivate')
+        if 'private_backups_pending' in str(error):
+            message='Есть записи, которые ещё не перенесены на телефон. Обнови журнал и повтори.'
+        else:
+            message='Не получил подтверждение переноса. Личный журнал на телефоне сохранён; проверь режим и повтори.'
+        return web.json_response({'error':message},status=409,headers=NO_CACHE)
+    return web.json_response({'active':False,'count':len(entries),'operation_id':operation},headers=NO_CACHE)
 
 
 async def api_private_rotate(request: web.Request) -> web.Response:
@@ -747,6 +809,7 @@ def register_webapp_routes(app: web.Application, bot_token: str, bot_username: s
     app.router.add_post("/api/private/activate", api_private_activate)
     app.router.add_post("/api/private/backups", api_private_backups)
     app.router.add_post("/api/private/clear_backups", api_private_clear_backups)
+    app.router.add_post("/api/private/deactivate", api_private_deactivate)
     app.router.add_post("/api/private/rotate", api_private_rotate)
     app.router.add_post("/api/private/verify", api_private_verify)
     app.router.add_post("/api/entries", api_entries)
