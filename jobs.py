@@ -64,6 +64,15 @@ async def self_ping():
         logging.warning(f"self-ping failed: {e}")
 
 
+async def prune_private_money_backups():
+    """Remove recovery ciphertext after its 14-day minimum retention."""
+    try:
+        await db.prune_private_backups()
+    except Exception as error:
+        from diagnostics import failure
+        failure(error,area='private_money',stage='prune')
+
+
 def setup_scheduler(bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
     scheduler.add_job(tomorrow_shift_reminder, "cron", hour=19, minute=0, args=[bot],max_instances=1)
@@ -74,4 +83,6 @@ def setup_scheduler(bot) -> AsyncIOScheduler:
     from schedule_chat import prompt_work_end
     scheduler.add_job(prompt_work_end,"interval",minutes=5,args=[bot],max_instances=1)
     scheduler.add_job(self_ping, "interval", minutes=10)
+    scheduler.add_job(prune_private_money_backups, "interval", hours=1, max_instances=1)
+    scheduler.add_job(prune_private_money_backups, max_instances=1)
     return scheduler

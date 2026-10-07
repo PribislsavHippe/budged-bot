@@ -10,7 +10,7 @@ const server={active:false,entries:[
    note:'из банка',work_date:'2026-10-04',created_at:'2026-10-04T20:00:00+03:00'},
   {id:2,user_id:7,kind:'expense',account:'cash',signed_amount:-100,category:'Такси',
    note:'трата смены',work_date:'2026-10-04',created_at:'2026-10-04T20:01:00+03:00'}],publicKey:null,
-   injectBeforeActivate:false};
+   injectBeforeActivate:false,backups:[]};
 const token='test-bot-token';
 function device() {
   const local=new Map(),secure=new Map();
@@ -31,7 +31,8 @@ function client(storage,url='https://example.com/app') {
     fetch:async(path,options)=>{
       const body=JSON.parse(options.body);
       let status=200,response;
-      if(path==='/api/private/prepare') response={active:server.active,entries:server.active?[]:server.entries};
+      if(path==='/api/private/prepare') response={active:server.active,entries:server.active?[]:server.entries,
+        public_key:server.publicKey};
       else if(path==='/api/private/activate') {
         if(server.injectBeforeActivate) {
           server.injectBeforeActivate=false;
@@ -44,7 +45,9 @@ function client(storage,url='https://example.com/app') {
         assert.equal(storage.DeviceStorage.getItem instanceof Function,true);
         server.publicKey=body.public_key;server.entries=[];server.active=true;response={active:true};
         }
-      } else if(path==='/api/private/verify') {
+      } else if(path==='/api/private/backups') response={backups:server.backups};
+      else if(path==='/api/private/clear_backups') {server.backups=[];response={cleared:true};}
+      else if(path==='/api/private/verify') {
         const sig=createHmac('sha256',token).update('7:'+body.payload).digest('hex');
         response={valid:sig===body.signature};if(!response.valid)status=400;
       } else if(path==='/api/private/rotate') {server.publicKey=body.public_key;response={active:true};}
@@ -108,6 +111,40 @@ function client(storage,url='https://example.com/app') {
   assert.equal(reopened.emitted.length,beforeFailedSave);
   assert.equal(server.entries.length,0);
 
+  const pendingRecord={id:'telegram:7:100:0',kind:'income',account:'card',signed_amount:700,
+    category:'Чаевые',work_date:'2026-10-04',created_at:'2026-10-04T20:05:00+03:00'};
+  const pending=JSON.parse(execFileSync('.venv/bin/python',['-c',
+    `import json,sys,private_payload\nr=json.load(sys.stdin)\np,_=private_payload.seal(7,r['key'],r['record'],'test-bot-token')\nprint(json.dumps({'payload':p}))`],
+    {input:JSON.stringify({key:server.publicKey,record:pendingRecord})}));
+  server.backups=[{record_id:pendingRecord.id,payload:pending.payload}];
+  phone.DeviceStorage.setItem=(_key,_value,callback)=>callback(null,false);
+  await assert.rejects(reopened.pm.sync());
+  assert.equal(reopened.pm.entries.length,5);
+  assert.equal(reopened.emitted.length,beforeFailedSave);
+  phone.DeviceStorage.setItem=write;
+  assert.equal(await reopened.pm.sync(),1);
+  assert.equal(await reopened.pm.sync(),0);
+  assert.equal(reopened.pm.entries.length,6);
+  assert.equal(reopened.emitted.length,beforeFailedSave+1);
+  await reopened.pm.edit(pendingRecord.id,{signed_amount:800});
+  assert.equal(await reopened.pm.sync(),0);
+  assert.equal(reopened.pm.entries.find(e=>e.id===pendingRecord.id).signed_amount,800);
+  await reopened.pm.remove(pendingRecord.id);
+  assert.equal(await reopened.pm.sync(),0);
+  assert.equal(reopened.pm.entries.some(e=>e.id===pendingRecord.id),false);
+
+  phone._local.set('money_ledger_v1','corrupted');
+  const damaged=client(phone);
+  await damaged.pm.init();
+  assert.equal(damaged.pm.state.lostReason,'unreadable');
+  await assert.rejects(damaged.pm.rotate());
+  assert.equal(await damaged.pm.restoreRecent(),1);
+  assert.equal(damaged.pm.entries[0].id,pendingRecord.id);
+  assert.equal(phone._local.get('money_ledger_damaged_v1'),'corrupted');
+  await damaged.pm.clear();
+  assert.equal(server.backups.length,0);
+  assert.equal(damaged.pm.entries.length,0);
+
   const second=client(device());
   await second.pm.init();
   assert.equal(second.pm.state.lost,true);
@@ -117,10 +154,5 @@ function client(storage,url='https://example.com/app') {
   assert.equal(second.pm.active,true);
   assert.equal(second.pm.entries.length,0);
   assert.equal(server.active,true);
-  phone._local.set('money_ledger_v1','corrupted');
-  const damaged=client(phone);
-  await damaged.pm.init();
-  assert.equal(damaged.pm.state.lostReason,'unreadable');
-  await assert.rejects(damaged.pm.rotate());
-  console.log('private device migration, encrypted handoff and device loss: OK');
+  console.log('private device migration, backup recovery, deletion and device loss: OK');
 })().catch(error=>{console.error(error);process.exitCode=1;});

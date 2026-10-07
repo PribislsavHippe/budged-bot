@@ -1,7 +1,7 @@
-"""One-shot encrypted handoff from a forwarded chat message to one device.
+"""Encrypt personal records for one device and sign legacy handoff links.
 
-The server only stores the recipient's public key. The amount is encrypted into
-the Mini App button URL and is never written to the server database.
+Only ciphertext is kept in the temporary server recovery table. The private
+decryption key remains in Telegram SecureStorage on the same device.
 """
 import base64
 import hashlib
@@ -20,6 +20,12 @@ def _decode(value: str) -> bytes:
 
 def _encode(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).decode().rstrip('=')
+
+
+def key_id(jwk: dict) -> str:
+    """Non-secret device key label; SQL computes md5(public_key->>'n')."""
+    validate_public_key(jwk)
+    return hashlib.md5(jwk['n'].encode(), usedforsecurity=False).hexdigest()
 
 
 def validate_public_key(jwk: dict):

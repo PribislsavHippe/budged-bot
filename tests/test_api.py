@@ -782,6 +782,33 @@ def test_service_charge_view_is_personal_and_private_mode_uses_device():
         _db.private_ids.remove(42)
 
 
+def test_private_backups_require_telegram_signature_and_scope_to_current_user():
+    from unittest.mock import AsyncMock
+    signed = init_data(TOKEN, 42)
+    with patch.object(_db, 'get_or_create_user', new=AsyncMock(return_value={
+        'id': 42, 'private_money_mode': True, 'private_money_public_key': {'n': 'device-key'}})), \
+         patch.object(webapp_api.private_payload, 'key_id', return_value='key-label'), \
+         patch.object(_db, 'get_private_backups', new=AsyncMock(return_value=[
+             {'record_id': 'telegram:42:1:0', 'payload': 'ciphertext'}]), create=True) as get_backups:
+        rejected = run(webapp_api.api_private_backups(Req({'initData': 'forged'})))
+        accepted = run(webapp_api.api_private_backups(Req({'initData': signed})))
+        assert rejected.status == 401
+        assert accepted.status == 200
+        assert accepted.data['backups'][0]['record_id'] == 'telegram:42:1:0'
+        get_backups.assert_awaited_once_with(42, 'key-label')
+
+
+def test_private_backup_clear_requires_active_mode():
+    from unittest.mock import AsyncMock
+    signed = init_data(TOKEN, 42)
+    with patch.object(_db, 'get_or_create_user', new=AsyncMock(return_value={
+        'id': 42, 'private_money_mode': False})), \
+         patch.object(_db, 'clear_private_backups', new=AsyncMock(), create=True) as clear:
+        response = run(webapp_api.api_private_clear_backups(Req({'initData': signed})))
+        assert response.status == 409
+        clear.assert_not_awaited()
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

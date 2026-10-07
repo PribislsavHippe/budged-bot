@@ -72,9 +72,35 @@ async def delete_user(user_id: int) -> None:
     Удаляем явно, а не полагаясь на ON DELETE CASCADE, чтобы результат не
     зависел от того, как заведены внешние ключи в конкретной базе.
     """
+    await _execute(supabase.table("private_money_backups").delete().eq("user_id", user_id))
     await _execute(supabase.table("entries").delete().eq("user_id", user_id))
     await _execute(supabase.table("shifts").delete().eq("user_id", user_id))
     await _execute(supabase.table("users").delete().eq("id", user_id))
+
+
+async def save_private_backup(user_id: int, record_id: str, payload: str, key_id: str) -> None:
+    """Store ciphertext only after checking the user's current device key in SQL."""
+    await _execute(supabase.rpc("store_private_money_backup", {
+        "actor": user_id, "source_id": record_id, "sealed": payload,
+        "expected_key_id": key_id,
+    }))
+
+
+async def get_private_backups(user_id: int, key_id: str) -> list[dict]:
+    now = datetime.now(timezone.utc).isoformat()
+    return await _pages(lambda: supabase.table("private_money_backups")
+                        .select("record_id,payload,expires_at")
+                        .eq("user_id", user_id).eq("key_id", key_id)
+                        .gt("expires_at", now).order("created_at").order("record_id"))
+
+
+async def clear_private_backups(user_id: int) -> None:
+    await _execute(supabase.table("private_money_backups").delete().eq("user_id", user_id))
+
+
+async def prune_private_backups() -> None:
+    await _execute(supabase.table("private_money_backups").delete()
+                   .lt("expires_at", datetime.now(timezone.utc).isoformat()))
 
 
 # ─── entries ─────────────────────────────────────────────────────────────────

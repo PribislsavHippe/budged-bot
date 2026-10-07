@@ -133,8 +133,14 @@ async def api_private_activate(request: web.Request) -> web.Response:
     except (KeyError,ValueError,TypeError):
         return web.json_response({'error':'Не получилось подготовить приватный режим.'},status=400,headers=NO_CACHE)
     try:
-        await db._execute(db.supabase.rpc('activate_private_money',
-            {'actor':user_id,'expected_ids':ids,'public_key':public_key}))
+        entries=await db.get_all_entries(user_id)
+        if sorted(e['id'] for e in entries)!=ids:
+            return web.json_response({'error':'Записи изменились во время переноса. Повтори перенос.'},status=409,headers=NO_CACHE)
+        backups=[{'record_id':str(e['id']),
+                  'payload':private_payload.seal(user_id,public_key,e,request.app['bot_token'])[0]}
+                 for e in entries]
+        await db._execute(db.supabase.rpc('activate_private_money_with_backups',
+            {'actor':user_id,'expected_ids':ids,'public_key':public_key,'backups':backups}))
     except Exception as error:
         from diagnostics import failure
         failure(error,area='private_money',stage='activate')
@@ -142,6 +148,29 @@ async def api_private_activate(request: web.Request) -> web.Response:
             return web.json_response({'active':True},headers=NO_CACHE)
         return web.json_response({'error':'Не получил подтверждение переноса. Проверь режим и повтори попытку.'},status=409,headers=NO_CACHE)
     return web.json_response({'active':True},headers=NO_CACHE)
+
+
+async def api_private_backups(request: web.Request) -> web.Response:
+    user_id, body=await _auth(request)
+    if user_id is None:return body
+    user=await db.get_or_create_user(user_id)
+    if not user.get('private_money_mode'):
+        return web.json_response({'error':'Личный журнал ещё не включён.'},status=409,headers=NO_CACHE)
+    key=user.get('private_money_public_key')
+    try:key_id=private_payload.key_id(key)
+    except ValueError:
+        return web.json_response({'error':'Ключ личного журнала недоступен.'},status=409,headers=NO_CACHE)
+    rows=await db.get_private_backups(user_id,key_id)
+    return web.json_response({'backups':rows},headers=NO_CACHE)
+
+
+async def api_private_clear_backups(request: web.Request) -> web.Response:
+    user_id, body=await _auth(request)
+    if user_id is None:return body
+    if not (await db.get_or_create_user(user_id)).get('private_money_mode'):
+        return web.json_response({'error':'Личный журнал ещё не включён.'},status=409,headers=NO_CACHE)
+    await db.clear_private_backups(user_id)
+    return web.json_response({'cleared':True},headers=NO_CACHE)
 
 
 async def api_private_rotate(request: web.Request) -> web.Response:
@@ -716,6 +745,8 @@ def register_webapp_routes(app: web.Application, bot_token: str, bot_username: s
     app.router.add_post("/api/calendar_edit", api_calendar_edit)
     app.router.add_post("/api/private/prepare", api_private_prepare)
     app.router.add_post("/api/private/activate", api_private_activate)
+    app.router.add_post("/api/private/backups", api_private_backups)
+    app.router.add_post("/api/private/clear_backups", api_private_clear_backups)
     app.router.add_post("/api/private/rotate", api_private_rotate)
     app.router.add_post("/api/private/verify", api_private_verify)
     app.router.add_post("/api/entries", api_entries)

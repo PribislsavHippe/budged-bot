@@ -326,13 +326,14 @@ async def cmd_privacy(message: Message):
     """Короткий и скучный список того, что лежит в базе. Скучность — это и есть аргумент."""
     if (await db.get_or_create_user(message.from_user.id)).get('private_money_mode'):
         await message.answer('<b>🔒 Суперконфиденциальность включена</b>\n\n'
-            'Чаевые и расходы хранятся только на устройстве, где ты включил этот режим. '
-            'Пересланное банковское сообщение видят Telegram и бот при обработке; '
-            'чтобы запись попала на устройство, нажми кнопку в ответе бота. '
-            'Суммы не сохраняются в Supabase.\n\n'
+            'Личный журнал находится на устройстве, где ты включил этот режим. '
+            'Бот сразу сохраняет новые записи в зашифрованных копиях на сервере на 14 дней. '
+            'При открытии приложения копии автоматически переносятся на телефон. '
+            'Без ключа этого телефона прочитать суммы из копий нельзя. '
+            'Пересланное банковское сообщение видят Telegram и бот при обработке.\n\n'
             'На сервере остаются твой Telegram ID, график и часы работы для напоминаний, '
-            'открытый ключ устройства, отдельно созданные продажи, разрешения Google и события использования: время и тип действий, включая факт добавления чаевых или расхода, без суммы и содержимого записи. '
-            'При смене телефона личный журнал не восстановится. Удалить его с этого устройства можно в «Статистике».')
+            'открытый ключ устройства, зашифрованные временные копии, отдельно созданные продажи, разрешения Google и события использования: время и тип действий, включая факт добавления чаевых или расхода, без суммы и содержимого записи. '
+            'При потере телефона или ключа личный журнал не восстановится. В «Статистике» можно удалить журнал вместе с временными копиями.')
         return
     shifts = await db.get_shift_dates(message.from_user.id)
     lines = [
@@ -705,30 +706,30 @@ async def undo_sale(callback: CallbackQuery):
 
 async def _send_private_record(message: Message, record: dict, index: int,
                                delete_source: bool = True):
-    """Encrypted one-shot handoff. No financial record is inserted into Supabase."""
+    """Store an encrypted 14-day copy; the phone imports it on next open."""
     import private_payload
     from datetime import datetime, timezone
     user=await db.get_or_create_user(message.from_user.id)
-    if not WEBHOOK_HOST or not user.get('private_money_public_key'):
+    if not user.get('private_money_public_key'):
         await message.answer('Открой «Статистику» на своём устройстве и настрой приватный журнал.')
         return False
     payload={**record,'id':f'telegram:{message.chat.id}:{message.message_id}:{index}',
              'work_date':op_today().isoformat(),
              'created_at':datetime.now(timezone.utc).isoformat()}
     try:
-        sealed,signature=private_payload.seal(message.from_user.id,
+        sealed,_=private_payload.seal(message.from_user.id,
             user['private_money_public_key'],payload,os.environ['BOT_TOKEN'])
+        await db.save_private_backup(message.from_user.id,str(payload['id']),sealed,
+                                     private_payload.key_id(user['private_money_public_key']))
     except Exception as error:
         from diagnostics import failure
-        failure(error,area='private_money',stage='handoff')
-        await message.answer('Не удалось подготовить запись. Открой приватный журнал и попробуй ещё раз.')
+        failure(error,area='private_money',stage='backup_save')
+        await message.answer('Не получил подтверждение сохранения. Открой личный журнал и проверь запись перед повтором.')
         return False
-    url=f'{WEBHOOK_HOST}/app?private_entry={sealed}&private_sig={signature}'
-    markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
-        text='🔒 Сохранить на устройстве',web_app=WebAppInfo(url=url))]])
-    intro = (f"Сервисный сбор {fmt(record['signed_amount'])} ₽ — начисление к зарплате. "
-             if record['kind'] == 'accrual' else 'Разобрал запись. ')
-    reply=await message.answer(intro+'Сохрани её на этом устройстве:',reply_markup=markup)
+    intro = ('Сервисный сбор записан как начисление к зарплате. '
+             if record['kind'] == 'accrual' else 'Запись сохранена в зашифрованной копии. ')
+    reply=await message.answer(intro+'Она появится на телефоне, когда откроешь «Статистику». '
+                               'Открой её в течение 14 дней.')
     if delete_source:
         try:
             await message.bot.delete_message(message.chat.id,message.message_id)
@@ -736,8 +737,8 @@ async def _send_private_record(message: Message, record: dict, index: int,
             from diagnostics import failure
             failure(error,area='private_money',stage='delete_source')
             try:
-                await reply.edit_text(intro+'Сохрани её на этом устройстве. '
-                                      'Исходное сообщение осталось в чате — удали его вручную.',reply_markup=markup)
+                await reply.edit_text(intro+'Она появится на телефоне, когда откроешь «Статистику». '
+                                      'Исходное сообщение осталось в чате — удали его вручную.')
             except Exception:
                 pass
     return True
