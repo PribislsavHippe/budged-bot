@@ -209,21 +209,56 @@
   :root[data-palette=mauve] { --page:var(--mauve); }
   :root[data-palette=porcelain] { --page:var(--porcelain); }
   #bg { background:var(--page); }
-  /* Static highlights keep the glass light on the phone's renderer. */
+  /* Glass controls: translucent body, filtered backdrop and optical rim. */
   .cal-cell,.iphone-calendar-toggle {
-    background-color:rgba(255,255,252,.38);
-    background-image:linear-gradient(145deg,rgba(255,255,255,.48),rgba(255,255,255,.06) 58%);
-    border:1px solid rgba(255,255,255,.66);
-    box-shadow:var(--cal-ring,inset 0 0 0 0 transparent),inset 0 1px 0 rgba(255,255,255,.48),0 3px 10px rgba(52,49,87,.07);
+    position:relative;
+    overflow:hidden;
+    background-color:rgba(255,255,252,.1);
+    background-image:radial-gradient(ellipse at 12% 0%,rgba(255,255,255,.28),transparent 64%),linear-gradient(155deg,rgba(255,255,255,.04) 45%,rgba(255,255,255,.14));
+    border:1px solid transparent;
+    -webkit-backdrop-filter:blur(10px) saturate(135%);
+    backdrop-filter:blur(10px) saturate(135%);
+    box-shadow:var(--cal-ring,inset 0 0 0 0 transparent),inset 0 1px 1px rgba(255,255,255,.65),inset 0 -1px 1px rgba(255,255,255,.32),inset 1px 0 2px rgba(255,255,255,.22),inset -1px 0 2px rgba(52,49,87,.08),0 5px 12px rgba(52,49,87,.1);
+    transition:transform 180ms ease,background-color 180ms ease;
+    -webkit-tap-highlight-color:transparent;
   }
-  .cal-cell { font-family:'Onest',sans-serif; color:var(--ink); border-radius:12px; }
-  .cal-cell.dark { background-image:linear-gradient(145deg,rgba(255,255,255,.1),rgba(255,255,255,.02) 58%); }
-  .iphone-calendar-toggle { border-radius:16px; color:var(--accent); min-height:50px; }
-  .cal-cell.empty { border:0; background:none; box-shadow:none; }
-  .cal-cell:focus-visible,.iphone-calendar-toggle:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-  .cal-cell:active:not(:disabled),.iphone-calendar-toggle:active:not(:disabled) { background-color:rgba(255,255,252,.62); }
+  .cal-cell::before,.iphone-calendar-toggle::before {
+    content:'';position:absolute;inset:0;border-radius:inherit;padding:1px;pointer-events:none;
+    background:linear-gradient(135deg,rgba(255,255,255,.92),rgba(255,255,255,.08) 38%,rgba(52,49,87,.14) 62%,rgba(255,255,255,.78));
+    -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);
+    -webkit-mask-composite:xor;
+    mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);
+    mask-composite:exclude;
+  }
+  .cal-cell::after,.iphone-calendar-toggle::after {
+    content:'';position:absolute;inset:2px;border-radius:inherit;pointer-events:none;
+    box-shadow:inset 2px 2px 5px rgba(255,255,255,.52),inset -2px -3px 6px rgba(52,49,87,.1);
+  }
+  .iphone-calendar-toggle::after { inset:3px;box-shadow:inset 0 5px 10px rgba(255,255,255,.32),inset 0 -3px 8px rgba(52,49,87,.09); }
+  .cal-cell { font-family:'Onest',sans-serif;color:var(--ink);border-radius:16px; }
+  .cal-cell.dark { background-image:linear-gradient(145deg,rgba(255,255,255,.08),transparent 60%); }
+  .iphone-calendar-toggle {
+    border-radius:999px;color:var(--accent);min-height:52px;font-weight:500;
+    background-color:rgba(255,255,252,.07);
+    box-shadow:inset 0 1.5px 2px rgba(255,255,255,.75),inset 0 -1px 2px rgba(255,255,255,.4),inset 1px 0 4px rgba(255,255,255,.25),inset -1px 0 4px rgba(52,49,87,.1),0 8px 22px rgba(52,49,87,.12);
+  }
+  .cal-cell.empty { border:0;background:none;box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none; }
+  .cal-cell.empty::before,.cal-cell.empty::after { display:none; }
+  .cal-cell:focus-visible,.iphone-calendar-toggle:focus-visible { outline:2px solid var(--accent);outline-offset:3px; }
+  .cal-cell:active:not(:disabled),.iphone-calendar-toggle:active:not(:disabled) { transform:scale(.96);background-color:rgba(255,255,252,.28); }
+  @media (hover:hover) {
+    .cal-cell:hover:not(:disabled),.iphone-calendar-toggle:hover:not(:disabled) { background-color:rgba(255,255,252,.2); }
+  }
+  @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))) {
+    .cal-cell:not(.empty),.iphone-calendar-toggle { background-color:rgba(255,255,252,.55); }
+  }
   @media (prefers-reduced-transparency:reduce) {
-    .cal-cell:not(.empty),.iphone-calendar-toggle { background-color:var(--tile); background-image:none; }
+    .cal-cell:not(.empty),.iphone-calendar-toggle { background-color:var(--tile);background-image:none;-webkit-backdrop-filter:none;backdrop-filter:none; }
+    .cal-cell::before,.cal-cell::after,.iphone-calendar-toggle::before,.iphone-calendar-toggle::after { display:none; }
+  }
+  @media (prefers-reduced-motion:reduce) {
+    .cal-cell,.iphone-calendar-toggle { transition:none; }
+    .cal-cell:active:not(:disabled),.iphone-calendar-toggle:active:not(:disabled) { transform:none; }
   }
   .cal-time { font-size:9px; letter-spacing:0; }
   .cal-title { font-size:15px; }
