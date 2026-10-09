@@ -20,6 +20,7 @@ const ios=scenario('ios');
 await ios.context.iphoneCalendarRefresh();
 assert.equal(ios.opened.length,0,'preparing a URL does not open or install a calendar');
 assert.equal(ios.button.textContent,'Подключить iPhone ›');
+assert.equal(ios.document.getElementById('iphone-calendar-status').hidden,true,'ready link has no redundant caption');
 const firstClick=ios.button.onclick();
 assert.deepEqual(ios.opened,[data.subscribe_url],'handoff happens synchronously within the tap');
 await firstClick;
