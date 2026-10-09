@@ -7,13 +7,15 @@ with patch.dict(os.environ,{'SUPABASE_URL':'https://example.invalid','SUPABASE_K
     import handlers,ux_chat,research
 
 class Flows(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        seen=patch.object(handlers.db,"money_source_seen",new=AsyncMock(return_value=False));seen.start();self.addCleanup(seen.stop)
     def message(self,text):
         return NS(text=text,from_user=NS(id=5,first_name='Test'),forward_origin=None,answer=AsyncMock(),chat=NS(id=5),bot=NS(id=1),message_id=100)
     async def run_entry(self,text,analytics):
         message=self.message(text);entry={'id':10,'kind':'income','account':'cash','signed_amount':1500,'category':'Чаевые','note':None}
-        with patch.object(handlers.db,'get_or_create_user',new=AsyncMock(return_value={'id':5,'onboarded':True,'tutorial_step':'tip'})),patch.object(handlers.db,'get_recent_entries',new=AsyncMock(return_value=[])),patch.object(handlers.db,'add_entry',new=AsyncMock(return_value=entry)) as saved,patch.object(handlers,'today_block',new=AsyncMock(return_value='Итог')),patch.object(research,'record',new=analytics):
+        with patch.object(handlers.db,'get_or_create_user',new=AsyncMock(return_value={'id':5,'onboarded':True,'tutorial_step':'tip'})),patch.object(handlers.db,'get_recent_entries',new=AsyncMock(return_value=[])),patch.object(handlers.db,'add_entries',new=AsyncMock(return_value=[entry])) as saved,patch.object(handlers,'today_block',new=AsyncMock(return_value='Итог')),patch.object(research,'record',new=analytics):
             await handlers.handle_text(message,NS(clear=AsyncMock()))
-            saved.assert_awaited_once();self.assertEqual(saved.await_args.args[:4],(5,'income','cash',1500.0))
+            saved.assert_awaited_once();self.assertEqual(saved.await_args.args[0],5);self.assertEqual(saved.await_args.args[1][0]['signed_amount'],1500.0)
         return message
     async def test_start_real_tip_and_hint(self):
         message=self.message('/start');state=NS(clear=AsyncMock())
@@ -136,10 +138,10 @@ class Flows(unittest.IsolatedAsyncioTestCase):
         message.edit_text.assert_awaited_once_with('Расход не записан.')
 
     async def test_calendar_retry_button_uses_clicker(self):
-        import google_calendar
         message=self.message('');message.from_user.id=999
-        callback=NS(data='calendar:retry',from_user=NS(id=5),message=message,answer=AsyncMock())
-        with patch.object(google_calendar,'is_configured',return_value=True),patch.object(google_calendar,'connection_status',new=AsyncMock(return_value={'connected':True})),patch.object(google_calendar,'sync_pending',new=AsyncMock(return_value={'synced':1,'pending':0,'message':''})) as sync:
+        callback=NS(from_user=NS(id=5),message=message,answer=AsyncMock())
+        with patch.object(handlers,'cmd_calendar',new=AsyncMock()) as guide:
             await handlers.calendar_retry(callback)
-            sync.assert_awaited_once_with(5)
+            guide.assert_awaited_once_with(message,5)
+
 if __name__=='__main__':unittest.main()

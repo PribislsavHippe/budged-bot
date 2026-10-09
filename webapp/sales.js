@@ -40,7 +40,8 @@
       const response=await fetch('/api/service_charge/view',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({initData:tg?.initData||'',month:$('sales-month').value||undefined,
           ...window.privateMoney?.payload}),signal:AbortSignal.timeout(20000)});
-      const result=await response.json();
+      let result=await response.json();
+      if(response.ok)result=window.PrivateFinance.view('/api/service_charge/view',{},result);
       if(seq!==serviceSeq)return;
       if(!response.ok)throw new Error(result.error||'Не получилось загрузить личные начисления.');
       total.textContent=result.count?num(result.total)+' ₽':'Пока не записан';

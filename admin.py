@@ -27,6 +27,8 @@ import db
 from workday import op_day_start_utc_iso, op_today
 
 router = Router()
+router.message.filter(F.chat.type == "private")
+router.callback_query.filter(F.message.chat.type == "private")
 
 def _read_admin_id() -> int:
     """Кривой ADMIN_ID не должен ронять бота на старте — просто выключаем админку."""

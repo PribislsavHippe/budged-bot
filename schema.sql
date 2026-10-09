@@ -52,11 +52,12 @@ CREATE TABLE shifts (
 );
 CREATE INDEX idx_shifts_user ON shifts(user_id, shift_date);
 
--- Supabase в новых проектах включает Row Level Security по умолчанию,
--- и анонимный ключ не может писать в таблицы. Ключ хранится только на
--- сервере бота, наружу не отдаётся — поэтому RLS выключаем.
-ALTER TABLE users DISABLE ROW LEVEL SECURITY;
-ALTER TABLE entries DISABLE ROW LEVEL SECURITY;
-ALTER TABLE shifts DISABLE ROW LEVEL SECURITY;
+-- Личные данные доступны только серверу бота с ключом service_role.
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE entries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE shifts ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON users,entries,shifts FROM PUBLIC,anon,authenticated;
+GRANT ALL ON users,entries,shifts TO service_role;
+GRANT USAGE,SELECT ON SEQUENCE entries_id_seq,shifts_id_seq TO service_role;
 
--- После создания основной схемы также выполни migration_v7.sql (продажи) и migration_v8.sql (синхронизация Google).
+-- Затем выполни migration_v7.sql ... migration_v26.sql по порядку.

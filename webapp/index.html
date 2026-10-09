@@ -189,10 +189,10 @@
   .cal-time { font-size: 8px; line-height: 1.1; white-space: nowrap; margin-top: 2px; letter-spacing: -.3px; }
   .cal-cell.empty { background: transparent; }
   /* Кольца поверх тёмной заливки нужно осветлять, иначе их не видно */
-  .cal-cell.shift { box-shadow: inset 0 0 0 1.5px var(--card); }
-  .cal-cell.shift.dark { box-shadow: inset 0 0 0 1.5px #9ecbe8; }
-  .cal-cell.today { box-shadow: inset 0 0 0 2px var(--ink); color: var(--ink); font-weight: 400; }
-  .cal-cell.today.dark { box-shadow: inset 0 0 0 2px #fff; color: #fff; }
+  .cal-cell.shift { --cal-ring:inset 0 0 0 1.5px var(--card); }
+  .cal-cell.shift.dark { --cal-ring:inset 0 0 0 1.5px #9ecbe8; }
+  .cal-cell.today { --cal-ring:inset 0 0 0 2px var(--ink); color: var(--ink); font-weight: 400; }
+  .cal-cell.today.dark { --cal-ring:inset 0 0 0 2px #fff; color: #fff; }
   :root {
     --powder-blush:#ffadad;--apricot-cream:#ffd6a5;--cream:#fdffb6;
     --tea-green:#caffbf;--electric-aqua:#9bf6ff;--baby-blue-ice:#a0c4ff;
@@ -209,7 +209,22 @@
   :root[data-palette=mauve] { --page:var(--mauve); }
   :root[data-palette=porcelain] { --page:var(--porcelain); }
   #bg { background:var(--page); }
-  .cal-cell { background:var(--tile); font-family:'Onest',sans-serif; }
+  /* Static highlights keep the glass light on the phone's renderer. */
+  .cal-cell,.iphone-calendar-toggle {
+    background-color:rgba(255,255,252,.38);
+    background-image:linear-gradient(145deg,rgba(255,255,255,.48),rgba(255,255,255,.06) 58%);
+    border:1px solid rgba(255,255,255,.66);
+    box-shadow:var(--cal-ring,inset 0 0 0 0 transparent),inset 0 1px 0 rgba(255,255,255,.48),0 3px 10px rgba(52,49,87,.07);
+  }
+  .cal-cell { font-family:'Onest',sans-serif; color:var(--ink); border-radius:12px; }
+  .cal-cell.dark { background-image:linear-gradient(145deg,rgba(255,255,255,.1),rgba(255,255,255,.02) 58%); }
+  .iphone-calendar-toggle { border-radius:16px; color:var(--accent); min-height:50px; }
+  .cal-cell.empty { border:0; background:none; box-shadow:none; }
+  .cal-cell:focus-visible,.iphone-calendar-toggle:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .cal-cell:active:not(:disabled),.iphone-calendar-toggle:active:not(:disabled) { background-color:rgba(255,255,252,.62); }
+  @media (prefers-reduced-transparency:reduce) {
+    .cal-cell:not(.empty),.iphone-calendar-toggle { background-color:var(--tile); background-image:none; }
+  }
   .cal-time { font-size:9px; letter-spacing:0; }
   .cal-title { font-size:15px; }
   .calendar-disclosure { margin-top:28px; border:0; }
@@ -290,10 +305,10 @@
   <p class="cal-sum" id="cal-sum"></p>
   <p class="cal-hint" id="cal-hint">Нажми на день, чтобы добавить или исправить смену и чаевые.</p>
   <div class="iphone-calendar" id="iphone-calendar" hidden>
-    <button class="iphone-calendar-toggle" id="iphone-calendar-toggle" type="button">Подключить iPhone ›</button>
+    <button class="iphone-calendar-toggle" id="iphone-calendar-toggle" type="button">Подключить календарь ›</button>
     <p id="iphone-calendar-status" role="status" hidden></p>
-    <details class="iphone-calendar-help" id="iphone-calendar-help" hidden><summary>Не открылось?</summary>
-      <p>Скопируй ссылку и добавь её на iPhone как подписной календарь.</p>
+    <details class="iphone-calendar-help" id="iphone-calendar-help" hidden><summary>Как добавить подписку?</summary>
+      <p>На iPhone добавь ссылку как календарь подписки. На Android установи ICSx⁵ и вставь ссылку в новую подписку. Google-аккаунт не нужен.</p>
       <input id="iphone-calendar-link" aria-label="Личная ссылка на календарь" readonly>
       <div class="iphone-calendar-actions">
         <button id="iphone-calendar-copy" type="button">Скопировать ссылку ›</button>
@@ -399,6 +414,7 @@
   </div>
 
 <script src="/app/private.js"></script>
+<script src="/app/private-finance.js"></script>
 <script>
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 if (tg) { tg.ready(); tg.expand(); }
@@ -545,7 +561,7 @@ function paintCalendar(view) {
       // занят счётом (нал/карта), и синяя шкала спорила и с рамкой смены,
       // и с фоном. Нейтральный графит не конфликтует ни с чем.
       const alpha = 0.12 + 0.76 * (d.tips / vmax);
-      cell.style.background = "rgba(17,17,17," + alpha.toFixed(2) + ")";
+      cell.style.backgroundColor = "rgba(17,17,17," + alpha.toFixed(2) + ")";
       const dark = alpha > 0.55;
       cell.style.color = dark ? "#fff" : "var(--ink)";
       if (dark) cell.classList.add("dark");   // кольца поверх тёмной заливки
@@ -599,7 +615,7 @@ function workClock(iso) {
 function openDay(view, d) {
   const nextDay = view.year + "-" + String(view.month).padStart(2,"0") + "-" + String(d.day).padStart(2,"0");
   if (lastOpenedDayISO !== nextDay) {
-    dayTipOperation = null;
+    if (!dayTipPending) dayTipOperation = null;
     document.getElementById('day-tips-details').open=false;
     document.getElementById('day-shift-details').open=false;
   }
@@ -665,9 +681,13 @@ function openDay(view, d) {
 let selectedDayISO = null;
 let lastOpenedDayISO = null;
 let dayTipOperation = null;
+let dayTipPending = null;
+let dayTipBusy = false;
 let calendarNotice = null;
 function calendarEdit(payload) {
   if (!selectedDayISO) return;
+  if (payload.action==='tip_add' && dayTipBusy) return;
+  if (payload.action==='tip_add') dayTipBusy=true;
   const editDay=selectedDayISO;
   const status = document.getElementById("day-status");
   if (window.privateMoney.active && payload.action.startsWith('tip_')) {
@@ -676,18 +696,19 @@ function calendarEdit(payload) {
           const amount=Number(payload.amount);
           if (!Number.isFinite(amount) || amount<=0 || amount>10000000 || Math.abs(Math.round(amount*100)-amount*100)>1e-8)
             throw new Error('Проверь сумму чаевых.');
-          await privateMoney.add({id:'local:'+payload.operation_id,kind:'income',account:payload.account,
+          await privateMoney.add({id:'local:'+payload.operation_id,source_key:'calendar:'+payload.operation_id,kind:'income',account:payload.account,
             signed_amount:amount,category:'Чаевые',note:'из календаря',work_date:editDay,
-            created_at:new Date().toISOString()});
+            created_at:new Date().toISOString()},payload.mode==='server');
           if (dayTipOperation===payload.operation_id) {
-            dayTipOperation=null;
+            dayTipOperation=null;dayTipPending=null;
             if (lastOpenedDayISO===editDay) document.getElementById('day-tip-amount').value='';
           }
         })()
       : privateMoney.remove(payload.entry_id);
     status.textContent='Сохраняю на устройстве…';
     task.then(function () {calendarNotice={date:editDay,text:'Сохранено на устройстве.'};if(selectedDayISO===editDay)status.textContent=calendarNotice.text;loadMonth(calYear,calMonth);load();})
-      .catch(function (e) {if(selectedDayISO===editDay)status.textContent=e.message;});
+      .catch(function (e) {if(selectedDayISO===editDay)status.textContent=e.message;})
+      .finally(function () {dayTipBusy=false;});
     return;
   }
   status.textContent = "Сохраняю…";
@@ -698,12 +719,13 @@ function calendarEdit(payload) {
       calendarNotice={date:editDay,text:result.warning || "Сохранено."};
       if(selectedDayISO===editDay)status.textContent = calendarNotice.text;
       if (payload.action === "tip_add" && dayTipOperation===payload.operation_id) {
-        dayTipOperation=null;
+        dayTipOperation=null;dayTipPending=null;
         if (lastOpenedDayISO===editDay) document.getElementById("day-tip-amount").value = "";
       }
       loadMonth(calYear,calMonth);load();
     })
-    .catch(function (e) { if(selectedDayISO===editDay)status.textContent = e.message || "Не получилось сохранить. Проверь данные и попробуй ещё раз."; });
+    .catch(function (e) { if(selectedDayISO===editDay)status.textContent = e.message || "Не получилось сохранить. Проверь данные и попробуй ещё раз."; })
+    .finally(function () {dayTipBusy=false;});
 }
 document.getElementById("day-shift-save").onclick = function () {
   const start=document.getElementById("day-start").value;
@@ -721,14 +743,21 @@ document.getElementById("day-shift-delete").onclick = function () {
   if (confirm("Убрать смену из графика?")) calendarEdit({action:"shift_delete"});
 };
 document.getElementById("day-tip-add").onclick = function () {
-  if (!dayTipOperation) dayTipOperation = crypto.randomUUID();
-  calendarEdit({action:"tip_add",amount:document.getElementById("day-tip-amount").value,
-    account:document.querySelector('input[name="day-tip-account"]:checked').value,operation_id:dayTipOperation});
+  const amount=Number(document.getElementById("day-tip-amount").value.replace(',','.'));
+  const account=document.querySelector('input[name="day-tip-account"]:checked').value;
+  if (!Number.isFinite(amount)||amount<=0||amount>10000000||Math.abs(Math.round(amount*100)-amount*100)>1e-8) {
+    document.getElementById('day-status').textContent='Проверь сумму чаевых.';return;
+  }
+  if (dayTipPending && (dayTipPending.date!==selectedDayISO||dayTipPending.amount!==amount||dayTipPending.account!==account)) {
+    document.getElementById('day-status').textContent='Сначала проверь предыдущую попытку сохранения. Повтори её с той же суммой.';return;
+  }
+  if (!dayTipPending) {
+    dayTipOperation=crypto.randomUUID();
+    dayTipPending={action:'tip_add',amount,account,date:selectedDayISO,operation_id:dayTipOperation,
+                   mode:privateMoney.active?'device':'server'};
+  }
+  calendarEdit(dayTipPending);
 };
-document.getElementById('day-tip-amount').oninput=function () {dayTipOperation=null;};
-document.querySelectorAll('input[name="day-tip-account"]').forEach(function (radio) {
-  radio.onchange=function () {dayTipOperation=null;};
-});
 
 function closeDay() {
   selectedDayISO=null;
@@ -751,7 +780,7 @@ function loadMonth(year, month) {
       ...window.privateMoney.payload }),
   })
     .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-    .then(paintCalendar)
+    .then(data=>paintCalendar(window.PrivateFinance.view('/api/month',{year,month},data)))
     .catch(function (e) {
       const error=document.getElementById("cal-sum");
       error.textContent = "Не получилось загрузить месяц. Попробуй ещё раз.";
@@ -799,6 +828,7 @@ function load() {
     body: JSON.stringify({ initData: tg ? tg.initData : "", ...window.privateMoney.payload }),
   })
     .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(stats=>window.PrivateFinance.view('/api/stats',{},stats))
     .then(function (stats) {if(requestSeq>statsAppliedSeq){statsAppliedSeq=requestSeq;applyStats(stats);if(requestSeq>1)window.dispatchEvent(new Event('earnings-updated'));}})
     .catch(function (e) {
       if(requestSeq!==statsRequestSeq)return;
@@ -857,24 +887,27 @@ async function submitSpend() {
   if(spendBusy)return;
   if(!spendPending){
     const amount=Number(document.getElementById('spend-amount').value.replace(',','.'));
-    if(!spendCat||!Number.isFinite(amount)||amount<=0||amount>10000000){document.getElementById('spend-note').textContent='Выбери категорию и введи сумму.';return;}
+    if(!spendCat||!Number.isFinite(amount)||amount<=0||amount>10000000||Math.abs(Math.round(amount*100)-amount*100)>1e-8){document.getElementById('spend-note').textContent='Выбери категорию и введи сумму.';return;}
     const category=spendCat==='Своя'?(document.getElementById('spend-name').value.trim()||'Прочее'):spendCat;
-    spendPending={operation_id:crypto.randomUUID(),category,amount,date:spendDay};
+    const operation_id=crypto.randomUUID();
+    const historical=spendDay!==(lastStats?.operational_today||spendDay);
+    spendPending={operation_id,category,amount,date:spendDay,mode:privateMoney.active?'device':'server',
+                  source_key:(historical?'calendar-expense:':'miniapp-expense:')+operation_id,historical};
   }
   spendBusy=true;lockSpend();document.getElementById('spend-note').textContent='Записываю…';
   try{
     if (window.privateMoney.active) {
-      await privateMoney.add({id:'local:'+spendPending.operation_id,kind:'expense',account:'cash',
+      const source=spendPending.source_key;
+      const added=await privateMoney.add({id:'local:'+spendPending.operation_id,source_key:source,kind:'expense',account:'cash',
         signed_amount:-spendPending.amount,category:spendPending.category,note:'трата из миниаппа',
-        work_date:spendPending.date,created_at:new Date().toISOString()});
-      document.getElementById('spend-note').textContent='Расход '+
-        spendPending.amount.toLocaleString('ru-RU',{maximumFractionDigits:2})+' ₽ сохранён на этом устройстве.';
+        work_date:spendPending.date,created_at:new Date().toISOString()},spendPending.mode==='server');
+      document.getElementById('spend-note').textContent=added?'Расход '+
+        spendPending.amount.toLocaleString('ru-RU',{maximumFractionDigits:2})+' ₽ сохранён на этом устройстве.':'Это действие уже обработано. Новую запись не добавлял.';
       spendPending=null;document.getElementById('spend-amount').value='';document.getElementById('spend-name').value='';
       document.getElementById('spend-submit').textContent='Внести';load();if(calYear)loadMonth(calYear,calMonth);
       return;
     }
-    const currentDay=lastStats?.operational_today||new Date().toISOString().slice(0,10);
-    const historical=spendPending.date!==currentDay;
+    const historical=spendPending.historical;
     const r=await fetch(historical?'/api/calendar_edit':'/api/shift_spend',{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',signal:AbortSignal.timeout(20000),body:JSON.stringify({...spendPending,...(historical?{action:'expense_add',operation_id:spendPending.operation_id}:{}),initData:tg?.initData||''})});
     const data=await r.json();
     if(!r.ok){if(r.status===400)spendPending=null;throw new Error(data.error||'Не получил подтверждение. Повтори — дубля не будет.');}
@@ -897,6 +930,10 @@ document.getElementById("spend").addEventListener("click", function (e) {
 });
 
 let iphoneCalendarData=null,iphoneCalendarBusy=false;
+function usesAppleCalendar(){
+  return tg?.platform==='ios'||/iPhone|iPad|iPod/.test(navigator.userAgent||'')
+    ||(/Macintosh/.test(navigator.userAgent||'')&&navigator.maxTouchPoints>1);
+}
 async function iphoneCalendarRequest(action){
   const r=await fetch('/api/iphone_calendar',{method:'POST',headers:{'Content-Type':'application/json'},
     cache:'no-store',signal:AbortSignal.timeout(20000),
@@ -910,11 +947,13 @@ function paintIphoneCalendar(data){
   const box=document.getElementById('iphone-calendar');
   box.hidden=!data?.available;
   if(!data?.available)return;
-  document.getElementById('iphone-calendar-toggle').textContent=data.enabled
-    ? 'Открыть настройку iPhone ›' : 'Подключить iPhone ›';
+  document.getElementById('iphone-calendar-toggle').textContent=usesAppleCalendar()
+    ? 'Подключить iPhone ›'
+    : (data.enabled?'Настроить календарь ›':'Подключить календарь ›');
+  document.getElementById('iphone-calendar-help').hidden=!data.enabled;
   document.getElementById('iphone-calendar-link').value=data.feed_url||'';
   iphoneCalendarStatus(data.enabled
-    ? 'Ссылка готова. Проверь подписку в «Календаре» iPhone.' : '');
+    ? 'Ссылка готова. Добавь подписку в календарь телефона.' : '');
   if(!data.enabled){document.getElementById('iphone-calendar-help').hidden=true;document.getElementById('iphone-calendar-help').open=false;}
 }
 function iphoneCalendarStatus(message){
@@ -922,23 +961,37 @@ function iphoneCalendarStatus(message){
   status.textContent=message;status.hidden=!message;
 }
 function openIphoneCalendar(){
-  const url=iphoneCalendarData?.setup_url;
+  const url=usesAppleCalendar()?iphoneCalendarData?.subscribe_url:iphoneCalendarData?.setup_url;
   document.getElementById('iphone-calendar-help').hidden=false;
-  if(url&&tg?.openLink)tg.openLink(url);
-  else if(url)window.open(url,'_blank','noopener');
+  if(!url)throw new Error('Не получилось открыть календарь. Открой инструкцию ниже.');
+  if(tg?.openLink)tg.openLink(url,{try_instant_view:false});
+  else window.location.assign(url);
 }
 async function iphoneCalendarRefresh(){
   if(iphoneCalendarBusy)return;
-  try{const result=await iphoneCalendarRequest('status');if(!iphoneCalendarBusy)paintIphoneCalendar(result);}
-  catch(e){if(!iphoneCalendarBusy)document.getElementById('iphone-calendar').hidden=true;}
+  iphoneCalendarBusy=true;
+  const button=document.getElementById('iphone-calendar-toggle');button.disabled=true;
+  try{
+    // Prepare only our read-only URL. Apple still requires the user's consent.
+    // openLink must run within one second of the tap, without an API round trip.
+    paintIphoneCalendar(await iphoneCalendarRequest(usesAppleCalendar()?'create':'status'));
+  }
+  catch(e){document.getElementById('iphone-calendar').hidden=true;}
+  finally{iphoneCalendarBusy=false;button.disabled=false;}
 }
 document.getElementById('iphone-calendar-toggle').onclick=async function(){
   if(iphoneCalendarBusy)return;
-  if(iphoneCalendarData?.enabled){openIphoneCalendar();return;}
+  if(iphoneCalendarData?.enabled){
+    try{openIphoneCalendar();}catch(e){iphoneCalendarStatus(e.message);}
+    return;
+  }
   iphoneCalendarBusy=true;
   this.disabled=true;iphoneCalendarStatus('Подготавливаю календарь…');
   try{paintIphoneCalendar(await iphoneCalendarRequest('create'));
-    iphoneCalendarStatus('Ссылка готова. Нажми ещё раз, чтобы открыть инструкцию по подписке.');}
+    // After explicit revocation (or on Android), a fresh tap is needed to keep
+    // Telegram's browser handoff within the allowed user-interaction window.
+    iphoneCalendarStatus('Ссылка готова. Нажми «Подключить iPhone», чтобы добавить подписку.');
+    if(!usesAppleCalendar())iphoneCalendarStatus('Ссылка готова. Нажми «Настроить календарь», чтобы добавить подписку.');}
   catch(e){iphoneCalendarStatus(e.message);}
   finally{iphoneCalendarBusy=false;this.disabled=false;}
 };
@@ -956,15 +1009,15 @@ document.getElementById('iphone-calendar-guide').onclick=function(){
   else if(url)window.open(url,'_blank','noopener');
 };
 document.getElementById('iphone-calendar-rotate').onclick=async function(){
-  if(iphoneCalendarBusy||!confirm('Старая ссылка перестанет работать. После замены подключи новый календарь на iPhone. Заменить?'))return;
+  if(iphoneCalendarBusy||!confirm('Старая ссылка перестанет работать. После замены добавь новую подписку в календарь. Заменить?'))return;
   iphoneCalendarBusy=true;
   try{paintIphoneCalendar(await iphoneCalendarRequest('rotate'));
-    iphoneCalendarStatus('Новая ссылка готова. Старую подписку на iPhone удали.');}
+    iphoneCalendarStatus('Новая ссылка готова. Старую подписку удали в календаре.');}
   catch(e){iphoneCalendarStatus(e.message);}
   finally{iphoneCalendarBusy=false;}
 };
 document.getElementById('iphone-calendar-revoke').onclick=async function(){
-  if(iphoneCalendarBusy||!confirm('Отключить ссылку? Удали подписку и в «Календаре» iPhone: сохранённые там события могут исчезнуть не сразу.'))return;
+  if(iphoneCalendarBusy||!confirm('Отключить ссылку? Удали подписку и в календаре телефона: сохранённые там события могут исчезнуть не сразу.'))return;
   iphoneCalendarBusy=true;
   try{paintIphoneCalendar(await iphoneCalendarRequest('revoke'));
     iphoneCalendarStatus('Ссылка отключена.');}

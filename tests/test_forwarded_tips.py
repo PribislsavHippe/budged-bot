@@ -16,6 +16,7 @@ with patch.dict(os.environ, {'SUPABASE_URL': 'https://example.invalid', 'SUPABAS
 
 class ForwardedTips(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        seen=patch.object(handlers.db,"money_source_seen",new=AsyncMock(return_value=False));seen.start();self.addCleanup(seen.stop)
         self.delay=handlers._forward_quiet_seconds
         handlers._forward_quiet_seconds=0.02
         self.bot=NS(delete_message=AsyncMock())
@@ -149,7 +150,7 @@ class ForwardedTips(unittest.IsolatedAsyncioTestCase):
             await handlers.handle_text(message,NS())
             await asyncio.sleep(0.08)
         message.answer.assert_awaited_once()
-        self.assertIn('Не удалось подтвердить',message.answer.await_args.args[0])
+        self.assertIn('Не получил подтверждение',message.answer.await_args.args[0])
         self.assertNotIn('250 ₽',message.answer.await_args.args[0])
 
 

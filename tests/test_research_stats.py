@@ -8,6 +8,18 @@ def event(sid,kind,day,hour=10,**kw):
 
 class ResearchMetricsTests(unittest.TestCase):
     def subjects(self):return [dict(id=str(i),label=i,cohort='new',onboarding_version=1) for i in range(1,5)]
+    def test_repeated_start_does_not_make_old_user_new(self):
+        subjects=[dict(id='1',label=1,cohort='new',onboarding_version=1,
+                       first_started_at='2026-08-01T12:00:00+03:00')]
+        data=summarize(subjects,[event('1','user_started',25),event('1','tip_added',26)],now=NOW,days=7)
+        self.assertEqual(data['new_users'],0)
+        self.assertEqual(data['active_users'],1)
+        self.assertEqual(data['retention']['d1']['eligible'],0)
+
+    def test_unknown_first_start_is_not_guessed_from_window(self):
+        subjects=[dict(id='1',label=1,cohort='new',onboarding_version=1,first_started_at=None)]
+        data=summarize(subjects,[event('1','user_started',25)],now=NOW,days=7)
+        self.assertEqual(data['new_users'],0)
     def test_retention_maturity_and_calendar_days(self):
         events=[event('1','user_started',19),event('1','activity',20),event('1','activity',26),
                 event('2','user_started',27),event('2','activity',28), # today unfinished D1

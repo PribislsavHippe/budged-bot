@@ -51,7 +51,7 @@ async def main():
                 day=(webapp_api.op_today()-timedelta(days=1)).isoformat()
                 entries=AsyncMock(side_effect=[{'id':41},{'id':41},{'id':42}])
                 save_shift=AsyncMock()
-                with patch.object(db,'get_or_create_user',new=AsyncMock(return_value={'id':2,'private_money_mode':False})),patch.object(db,'add_entry',new=entries),patch.object(db,'save_shift',new=save_shift),patch.object(webapp_api.gcal,'is_connected',new=AsyncMock(return_value=False)):
+                with patch.object(db,'get_or_create_user',new=AsyncMock(return_value={'id':2,'private_money_mode':False})),patch.object(db,'add_entry',new=entries),patch.object(db,'save_shift',new=save_shift):
                     before=len(events)
                     tip_operation=str(uuid4())
                     await post('/api/calendar_edit',uid=2,date=day,action='tip_add',amount=250,

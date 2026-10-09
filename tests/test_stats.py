@@ -300,6 +300,12 @@ def test_spent_lands_on_the_day():
     assert s["days"][11] == {"day": 12, "tips": 4000, "cash": 0, "card": 4000, "spent": 650}
 
 
+def load_tests(loader, suite, pattern):
+    import unittest
+    return unittest.TestSuite(unittest.FunctionTestCase(fn) for name,fn in sorted(globals().items())
+                              if name.startswith('test_') and callable(fn))
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

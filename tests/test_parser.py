@@ -256,6 +256,21 @@ def test_decimal_comma_in_transactions():
     assert parse_transactions("чай 1,5к")[0]["amount"] == 1500
 
 
+def test_ambiguous_money_is_rejected_instead_of_changed():
+    from parser import AmountFormatError
+    for text in ['чай -500','чай 12.345','чай 123,456','чай 1.2.3']:
+        try:parse_transactions(text)
+        except AmountFormatError:pass
+        else:raise AssertionError(text)
+    assert parse_transactions('чай 4350,16')[0]['amount']==4350.16
+
+
+def load_tests(loader, suite, pattern):
+    import unittest
+    return unittest.TestSuite(unittest.FunctionTestCase(fn) for name,fn in sorted(globals().items())
+                              if name.startswith('test_') and callable(fn))
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

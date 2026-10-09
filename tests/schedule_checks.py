@@ -9,6 +9,26 @@ store=Store()
 with patch.dict(os.environ,{'SUPABASE_URL':'https://example.invalid','SUPABASE_KEY':'test'}),patch('supabase.create_client',return_value=store):
     import db,schedule,schedule_chat as chat,report_photo as photo,jobs
 
+def notice_rpc(name,args):
+    def execute():
+        row=next((r for r in store.rows.get('shifts',[]) if r['id']==args['shift']),None)
+        if row is None:return NS(data=False)
+        kind=args['notice'];field='start_reminder_sent' if kind=='start' else 'time_prompt_sent'
+        claims=row.setdefault('claims',{})
+        if name=='claim_shift_notice':
+            accepted=not row.get(field,False) and kind not in claims
+            if accepted:claims[kind]=args['token']
+            return NS(data=accepted)
+        if name=='finish_shift_notice':
+            accepted=claims.get(kind)==args['token']
+            if accepted:
+                claims.pop(kind,None)
+                if args['delivered']:row[field]=True
+            return NS(data=accepted)
+        raise AssertionError(name)
+    return NS(execute=execute)
+store.rpc=notice_rpc
+
 class Times(unittest.TestCase):
     def test_google_sheet_rows_and_links(self):
         import schedule_sheet as sheets
@@ -112,7 +132,7 @@ class Flow(unittest.IsolatedAsyncioTestCase):
         self.message.text='октябрь 2026'
         rows=[{'name':'Лёша','row':8,'cells':[{'day':5,'text':'14-23'}],'invalid':[]},
               {'name':'Коллега','row':9,'cells':[{'day':6,'text':'9-16'}],'invalid':[]}]
-        with patch('schedule_sheet.read',new=AsyncMock(return_value=rows)) as read,patch.object(schedule,'save',new=AsyncMock()) as save,patch('google_calendar.is_connected',new=AsyncMock(return_value=False)),patch.object(chat.research,'track') as tracked:
+        with patch('schedule_sheet.read',new=AsyncMock(return_value=rows)) as read,patch.object(schedule,'save',new=AsyncMock()) as save,patch.object(chat.research,'track') as tracked:
             await chat.sheet_month(self.message)
             read.assert_awaited_once_with(sheet_id,'2026-10',None)
             self.assertEqual(draft.phase,'schedule_sheet_name')
@@ -128,7 +148,7 @@ class Flow(unittest.IsolatedAsyncioTestCase):
         draft=photo.Draft('nonce','id','file',phase='schedule_month',image=b'photo',report={'name':'Алексей','index':7})
         photo.drafts[7]=draft
         raw={'name':'Алексей','cells':[{'day':2,'text':'10'},{'day':7,'text':'9-17'}]}
-        with patch('schedule_layout.row_image',return_value=b'crop'),patch.object(chat.vision,'request_json',new=AsyncMock(return_value=raw)),patch.object(schedule,'save',new=AsyncMock()) as save,patch('google_calendar.is_connected',new=AsyncMock(return_value=False)),patch.object(chat.research,'track'):
+        with patch('schedule_layout.row_image',return_value=b'crop'),patch.object(chat.vision,'request_json',new=AsyncMock(return_value=raw)),patch.object(schedule,'save',new=AsyncMock()) as save,patch.object(chat.research,'track'):
             await chat.photo_month(self.message)
             self.assertEqual(draft.phase,'schedule_review');save.assert_not_awaited()
             self.assertEqual(draft.report['cells'][0],{'date':'2026-10-02','start':'10:00','end':'22:00'})
@@ -158,7 +178,57 @@ class Flow(unittest.IsolatedAsyncioTestCase):
         with patch.object(schedule,'save_work',new=AsyncMock(return_value={'hours':12,'income':None})),patch.object(chat.research,'track'):
             await chat.save_actual(self.cb('work:save:n'),state)
         self.assertIn('Записал 12 ч.',self.message.answer.await_args.args[0])
-        self.assertEqual(self.message.answer.await_args.kwargs['reply_markup'].inline_keyboard[0][0].text,'Указать ставку')
+        self.assertEqual([r[0].text for r in self.message.answer.await_args.kwargs['reply_markup'].inline_keyboard],['Изменить время','Указать ставку'])
+
+    async def test_plain_time_routes_to_shift_and_accepts_known_future_end(self):
+        self.message.text='23:30';self.message.chat=NS(type='private');self.message.reply_to_message=None
+        data={}
+        def set_data(value):data.clear();data.update(value)
+        def update_data(**values):data.update(values)
+        state=NS(get_state=AsyncMock(return_value=None),set_state=AsyncMock(),set_data=AsyncMock(side_effect=set_data),
+                 get_data=AsyncMock(side_effect=lambda:data),update_data=AsyncMock(side_effect=update_data))
+        with patch.object(schedule,'enabled',return_value=True),patch.object(chat,'op_today',return_value=date(2026,10,8)),\
+             patch.object(schedule,'load_shift',new=AsyncMock(return_value={'starts_at':'11:00:00'})),\
+             patch.object(chat.db,'get_worked_shift_details',new=AsyncMock(return_value=[])),\
+             patch.object(schedule,'save_work',new=AsyncMock()) as save,patch.object(chat,'datetime',wraps=datetime) as clock:
+            clock.now.return_value=datetime(2026,10,8,23,10,tzinfo=schedule.TZ)
+            await chat.router.propagate_event('message',self.message,state=state,raw_state=None,bot=NS(id=99))
+            self.assertEqual(data['actual_start'],'2026-10-08T11:00:00+03:00')
+            self.assertEqual(data['actual_end'],'2026-10-08T23:30:00+03:00')
+            self.assertIn('Записать?',self.message.answer.await_args.args[0])
+            self.assertIn('Изменить время',[r[0].text for r in self.message.answer.await_args.kwargs['reply_markup'].inline_keyboard])
+            save.assert_not_awaited()
+
+    async def test_time_reply_uses_reminder_day_and_no_schedule_never_saves_money(self):
+        self.message.text='23:30';self.message.bot=NS(id=99)
+        self.message.reply_to_message=NS(from_user=NS(id=99),reply_markup=chat.buttons([('Открыть смену','work:close:2026-10-07')]))
+        state=NS(get_state=AsyncMock(return_value=None),set_state=AsyncMock(),set_data=AsyncMock(),clear=AsyncMock())
+        with patch.object(chat,'op_today',return_value=date(2026,10,8)),patch.object(chat,'ask_end',new=AsyncMock()) as ask:
+            await chat.time_message(self.message,state)
+            self.assertEqual(ask.await_args.args[2],'2026-10-07')
+        with patch.object(schedule,'load_shift',new=AsyncMock(return_value=None)):
+            await chat.ask_end(self.message,7,'2026-10-08',state,value=self.message.text)
+            self.assertIn('Добавь смену',self.message.answer.await_args.args[0])
+            state.set_state.assert_not_awaited()
+
+    async def test_chat_rejects_start_change_and_edit_keeps_confirmation_data(self):
+        self.message.text='10–23:30'
+        data={'work_day':'2026-10-08','work_start':'11:00:00','work_nonce':'n','work_created':time.time()}
+        state=NS(get_data=AsyncMock(return_value=data),update_data=AsyncMock(),set_state=AsyncMock(),get_state=AsyncMock(return_value=chat.Work.confirm.state))
+        await chat.end_text(self.message,state)
+        self.assertIn('только время окончания',self.message.answer.await_args.args[0])
+        state.update_data.assert_not_awaited()
+        await chat.edit_end(self.cb('work:edit:n'),state)
+        state.set_state.assert_awaited_once_with(chat.Work.end)
+
+    async def test_time_never_reaches_financial_parser_when_work_tracking_is_disabled(self):
+        import handlers
+        self.message.text='23:30';self.message.forward_origin=None
+        with patch.object(schedule,'enabled',return_value=False),patch.object(handlers.p,'parse_transactions') as money,\
+             patch.object(handlers.db,'get_or_create_user',new=AsyncMock()) as user:
+            await handlers.handle_text(self.message,NS())
+            money.assert_not_called();user.assert_not_awaited()
+            self.assertIn('не записал в чаевые',self.message.answer.await_args.args[0])
     async def test_entering_and_cancelling_hours_never_saves_them(self):
         self.message.text='21:00'
         data={'work_day':'2026-10-02','work_start':'09:00:00','work_nonce':'n','work_created':time.time()}

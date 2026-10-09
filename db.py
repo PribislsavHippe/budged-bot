@@ -9,12 +9,14 @@ from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from supabase import Client, create_client
+from supabase.lib.client_options import ClientOptions
 
 load_dotenv()
 
 supabase: Client = create_client(
     os.environ["SUPABASE_URL"],
     os.environ["SUPABASE_KEY"],
+    options=ClientOptions(auto_refresh_token=False,persist_session=False),
 )
 
 CASH = "cash"
@@ -25,13 +27,20 @@ ACCOUNTS = (CASH, CARD, PENDING)
 ACCOUNT_LABELS = {CASH: "Наличные", CARD: "Карта", PENDING: "Начислено"}
 
 
-# The sync Supabase client is shared. Serialize calls off the event loop.
-_db_lock = asyncio.Lock()
+# HTTPX's client supports threads. Queries have separate builders; service-role
+# auth is immutable. Bound concurrency without putting all users in one queue.
+_db_slots = asyncio.BoundedSemaphore(8)
 
 
 async def _execute(query):
-    async with _db_lock:
-        return await asyncio.to_thread(query.execute)
+    async with _db_slots:
+        task=asyncio.create_task(asyncio.to_thread(query.execute))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # A cancelled waiter must not free a slot while its thread still runs.
+            try:await task
+            finally:raise
 
 
 async def _pages(query_factory):
@@ -64,6 +73,16 @@ async def set_onboarded(user_id: int) -> None:
 async def clear_entries(user_id: int) -> None:
     """Очистить журнал, оставив профиль (/reset)."""
     await _execute(supabase.table("entries").delete().eq("user_id", user_id))
+
+
+async def clear_entries_once(user_id: int,update_id: int) -> None:
+    await _execute(supabase.rpc('apply_telegram_user_action',{
+        'actor':user_id,'update_no':update_id,'action':'clear'}))
+
+
+async def delete_user_once(user_id: int,update_id: int) -> None:
+    await _execute(supabase.rpc('apply_telegram_user_action',{
+        'actor':user_id,'update_no':update_id,'action':'delete'}))
 
 
 async def delete_user(user_id: int) -> None:
@@ -105,6 +124,21 @@ async def prune_private_backups() -> None:
 
 # ─── entries ─────────────────────────────────────────────────────────────────
 
+async def add_entries(user_id: int,items: list[dict]) -> list[dict]:
+    """An entire Telegram message commits or rolls back together."""
+    if not 1<=len(items)<=32:raise ValueError('money_batch_invalid')
+    return (await _execute(supabase.rpc('add_money_entries',{'actor':user_id,'items':items}))).data
+
+
+async def undo_entry_batch(user_id: int,chat_id: int,message_id: int) -> int:
+    return (await _execute(supabase.rpc('undo_money_batch',{
+        'actor':user_id,'batch_prefix':f'telegram:{chat_id}:{message_id}:'}))).data
+
+async def money_source_seen(user_id: int,source_key: str) -> bool:
+    return bool((await _execute(supabase.table('money_source_receipts').select('source_key')
+                .eq('user_id',user_id).eq('source_key',source_key).limit(1))).data)
+
+
 async def add_entry(
     user_id: int,
     kind: str,
@@ -116,7 +150,7 @@ async def add_entry(
     tip_percent: float | None = None,
     work_date: str | None = None,
     source_key: str | None = None,
-) -> dict:
+) -> dict | None:
     assert kind in ("income", "expense", "adjustment", "accrual"), kind
     assert account in ACCOUNTS, account
     assert (kind == "accrual") == (account == PENDING)
@@ -139,12 +173,14 @@ async def add_entry(
         previous = (await _execute(supabase.table("entries").select("*")
                     .eq("user_id", user_id).eq("source_key", source_key).limit(1))).data
         if previous:
-            if (previous[0]["kind"] != kind or previous[0]["account"] != account
-                    or float(previous[0]["signed_amount"]) != round(signed_amount, 2)
-                    or previous[0]["category"] != category
-                    or (work_date is not None and previous[0].get("work_date") != work_date)):
+            original=previous[0].get("source_payload") or previous[0]
+            if (original["kind"] != kind or original["account"] != account
+                    or float(original["signed_amount"]) != round(signed_amount, 2)
+                    or original["category"] != category
+                    or (work_date is not None and original.get("work_date") != work_date)):
                 raise ValueError("source_conflict")
             return previous[0]
+    if source_key is not None and await money_source_seen(user_id,source_key):return None
     try:
         res = await _execute(supabase.table("entries").insert(data))
     except Exception:
@@ -153,12 +189,14 @@ async def add_entry(
         previous = (await _execute(supabase.table("entries").select("*")
                     .eq("user_id", user_id).eq("source_key", source_key).limit(1))).data
         if previous:
-            if (previous[0]["kind"] != kind or previous[0]["account"] != account
-                    or float(previous[0]["signed_amount"]) != round(signed_amount, 2)
-                    or previous[0]["category"] != category
-                    or (work_date is not None and previous[0].get("work_date") != work_date)):
+            original=previous[0].get("source_payload") or previous[0]
+            if (original["kind"] != kind or original["account"] != account
+                    or float(original["signed_amount"]) != round(signed_amount, 2)
+                    or original["category"] != category
+                    or (work_date is not None and original.get("work_date") != work_date)):
                 raise ValueError("source_conflict")
             return previous[0]
+        if await money_source_seen(user_id,source_key):return None
         raise
     return res.data[0]
 
@@ -364,7 +402,6 @@ async def save_shift(user_id: int, day: str, start: str | None, end: str | None)
     await _execute(supabase.table("shifts").upsert({
         "user_id": user_id, "shift_date": day,
         "starts_at": start, "ends_at": end,
-        "google_synced": False,
     }, on_conflict="user_id,shift_date"))
 
 
@@ -384,44 +421,3 @@ async def get_user_ids_with_shift_on(date_iso: str) -> list[int]:
     rows = await _pages(lambda: supabase.table("shifts").select("id,user_id")
                         .eq("shift_date", date_iso).order("id"))
     return [row["user_id"] for row in rows]
-
-
-# ─── Google Календарь (OAuth-токены) ─────────────────────────────────────────
-
-async def save_google_token(user_id: int, access_token: str,
-                            refresh_token: str | None, expiry_iso: str | None) -> None:
-    data = {"google_access_token": access_token, "google_token_expiry": expiry_iso, "google_reconnect_required": False}
-    if refresh_token:  # при refresh Google не возвращает refresh_token заново
-        data["google_refresh_token"] = refresh_token
-    await _execute(supabase.table("users").update(data).eq("id", user_id))
-
-
-async def get_google_token(user_id: int) -> dict | None:
-    res = await _execute(supabase.table("users").select(
-        "google_access_token, google_refresh_token, google_token_expiry, google_reconnect_required"
-    ).eq("id", user_id))
-    return res.data[0] if res.data else None
-
-
-async def clear_google_token(user_id: int) -> None:
-    await _execute(supabase.table("users").update({
-        "google_access_token": None, "google_refresh_token": None, "google_token_expiry": None,
-    }).eq("id", user_id))
-
-
-async def mark_google_reconnect(user_id: int, required: bool) -> None:
-    await _execute(supabase.table('users').update({'google_reconnect_required':required}).eq('id',user_id))
-
-
-async def mark_google_shift(user_id: int, day: str, synced: bool, error: str | None = None) -> None:
-    await _execute(supabase.table('shifts').update({'google_synced':synced,'google_sync_error':error})
-                   .eq('user_id',user_id).eq('shift_date',day))
-
-
-async def pending_google_shifts(user_id: int | None = None) -> list[dict]:
-    from workday import op_today
-    def query():
-        q=supabase.table('shifts').select('user_id,shift_date').eq('google_synced',False).gte('shift_date',op_today().isoformat())
-        if user_id is not None:q=q.eq('user_id',user_id)
-        return q.order('shift_date').order('user_id')
-    return await _pages(query)

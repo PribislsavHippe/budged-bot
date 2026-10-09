@@ -188,16 +188,6 @@ async def photo_action(callback):
             await schedule_saved(callback.from_user.id)
             await callback.message.edit_text(f'Сохранил смены: {len(cells)}. В конце каждой спрошу, во сколько ты ушёл. '
                                              'Когда запишешь время работы, сможешь добавить часовую ставку.')
-            import google_calendar as gcal
-            try:
-                if await gcal.is_connected(callback.from_user.id):
-                    result=await gcal.sync_shifts(callback.from_user.id,[c['date'] for c in cells])
-                    await callback.message.answer(f"В Google Календарь отправлено: {result['synced']} из {len(cells)}."+
-                                                   (' Остальное попробую позже.' if result['pending'] else ''))
-            except Exception as error:
-                from diagnostics import failure
-                failure(error,area='schedule',stage='calendar')
-                await callback.message.answer('График сохранён. В Google пока отправить не получилось; повторю позже.')
 
 
 def waiting_photo(message):
@@ -241,9 +231,13 @@ async def photo_month(message):
             await message.answer(html.escape(text),reply_markup=photo_buttons(draft,[('Отмена','cancel')]))
 
 
-async def ask_end(message,uid,day,state):
+async def ask_end(message,uid,day,state,value=None):
     row=await schedule.load_shift(uid,day)
     start=row.get('starts_at') if row else None
+    if not start:
+        await state.clear()
+        await message.answer('На этот день нет времени начала в графике. Добавь смену в календаре миниаппа, а затем пришли время окончания.')
+        return
     recorded=await db.get_worked_shift_details(uid,day,day)
     previous=''
     if recorded:
@@ -253,8 +247,10 @@ async def ask_end(message,uid,day,state):
         previous=f"Уже записано: {old_start:%d.%m %H:%M} → {old_end:%d.%m %H:%M}. Новое время заменит эту запись. "
     await state.set_state(Work.end)
     await state.set_data({'work_day':day,'work_start':start,'work_nonce':uuid4().hex[:12],'work_created':time.time()})
-    await message.answer(f'Смена {human_date(day)}. {previous}Во сколько ты ушёл?'+(f' Начало по графику — {start[:5]}.' if start else '')+
-                         '\nМожно указать и фактическое начало: 10–23:30.',
+    if value is not None:
+        await end_text(message,state)
+        return
+    await message.answer(f'Смена {human_date(day)}. {previous}Во сколько заканчиваешь? Начало — {start[:5]}.\nНапиши время окончания, например 23:30.',
                          reply_markup=buttons([('Отмена','work:cancel')]))
 
 
@@ -268,6 +264,30 @@ async def hours_command(message,state):
     except ValueError:
         await message.answer('Укажи прошедший день: /hours вчера или /hours 28 сентября.');return
     await ask_end(message,message.from_user.id,day.isoformat(),state)
+
+
+TIME_MESSAGE=r'(?i)^(?:в\s+)?\d{1,2}:\d{2}(?::00)?$|^\d{1,2}(?::\d{2})?\s*[-–—]\s*\d{1,2}(?::\d{2})?$'
+
+
+@router.message(F.text.regexp(TIME_MESSAGE))
+async def time_message(message,state):
+    day=None
+    reply=getattr(message,'reply_to_message',None)
+    if reply and reply.from_user and reply.from_user.id==message.bot.id:
+        for row in getattr(getattr(reply,'reply_markup',None),'inline_keyboard',[]) or []:
+            for button in row:
+                if (button.callback_data or '').startswith('work:close:'):
+                    from datetime import date
+                    try:day=date.fromisoformat(button.callback_data.rsplit(':',1)[-1])
+                    except ValueError:pass
+    if day is None and await state.get_state() in {Work.end.state,Work.confirm.state}:
+        await end_text(message,state)
+        return
+    day=day or op_today()
+    if day>op_today():
+        await message.answer('Эта смена ещё не началась. Время её окончания можно записать в день смены.')
+        return
+    await ask_end(message,message.from_user.id,day.isoformat(),state,value=message.text)
 
 
 @router.message(Command('work'))
@@ -310,17 +330,24 @@ async def end_text(message,state):
     if time.time()-data.get('work_created',0)>4*3600:
         await state.clear();await message.answer('Время ожидания вышло. Открой смену ещё раз.');return
     try:
-        if not data.get('work_start') and not re.search('[-–—]',message.text):raise ValueError('Напиши начало и конец смены: 10–23:30.')
+        if re.search('[-–—]',message.text):raise ValueError('Напиши только время окончания, например 23:30. Начало берём из графика; изменить его можно в миниаппе.')
         start,end=schedule.actual(data['work_day'],message.text,data.get('work_start'))
-        from datetime import timedelta
-        if end>datetime.now(schedule.TZ)+timedelta(minutes=5):raise ValueError('Это время ещё не наступило. Запишем уход, когда смена закончится.')
     except (ValueError,TypeError) as error:
         await message.answer(str(error));return
     await state.update_data(actual_start=start.isoformat(),actual_end=end.isoformat())
     await state.set_state(Work.confirm)
     hours=schedule.earned(start,end,None)['hours']
-    await message.answer(f"{start.strftime('%d.%m %H:%M')} → {end.strftime('%d.%m %H:%M')}\nОтработано: {schedule.hours_text(hours)}. Верно?",
-                         reply_markup=buttons([('Да, записать',f"work:save:{data['work_nonce']}"),('Отмена','work:cancel')]))
+    await message.answer(f"Смена {human_date(data['work_day'])}: {start:%H:%M} → {end:%d.%m %H:%M}.\nРабочее время: {schedule.hours_text(hours)}. Записать?",
+                         reply_markup=buttons([('Да, записать',f"work:save:{data['work_nonce']}"),('Изменить время',f"work:edit:{data['work_nonce']}"),('Отмена','work:cancel')]))
+
+
+@router.callback_query(F.data.startswith('work:edit:'))
+async def edit_end(callback,state):
+    data=await state.get_data()
+    if await state.get_state()!=Work.confirm.state or callback.data.rsplit(':',1)[-1]!=data.get('work_nonce'):
+        await callback.answer('Этот вопрос уже закрыт.');return
+    await callback.answer();await state.set_state(Work.end)
+    await callback.message.answer('Во сколько заканчиваешь? Пришли новое время, например 23:30.',reply_markup=buttons([('Отмена','work:cancel')]))
 
 
 @router.callback_query(F.data.startswith('work:save:'))
@@ -338,8 +365,12 @@ async def save_actual(callback,state):
         return
     await state.clear();research.track(callback.from_user.id,'hours_recorded',screen='calendar')
     text=f"Записал {schedule.hours_text(result['hours'])}."
+    end=datetime.fromisoformat(data['actual_end']).astimezone(schedule.TZ)
+    text+=f" Окончание смены {human_date(data['work_day'])} — {end:%H:%M}."
     if result['income'] is not None:text+=f" Заработок по ставке: {result['income']:g} ₽. Чаевые считаются отдельно."
-    markup=buttons([('Указать ставку',f"work:rate:{data['work_day']}")]) if result['income'] is None else None
+    actions=[('Изменить время',f"work:close:{data['work_day']}")]
+    if result['income'] is None:actions.append(('Указать ставку',f"work:rate:{data['work_day']}"))
+    markup=buttons(actions)
     try:
         await callback.message.edit_text(text,reply_markup=markup)
     except Exception:
@@ -439,15 +470,13 @@ async def prompt_work_end(bot):
                 await db._execute(db.supabase.table('shifts').update({'time_prompt_sent':True})
                                   .eq('id',row['id']).eq('time_prompt_sent',False))
                 continue
-            claimed=(await db._execute(db.supabase.table('shifts').update({'time_prompt_sent':True,'time_prompt_at':now.isoformat()})
-                                       .eq('id',row['id']).eq('time_prompt_sent',False))).data
-            if not claimed:continue
             try:
-                await bot.send_message(uid,'Смена по графику подошла к концу. Хорошего отдыха! '
-                                       'Если хочешь записать фактическое время, открой смену.',
-                                       reply_markup=buttons([('Открыть смену',f'work:close:{day}')]))
+                from notices import send_shift_notice
+                await send_shift_notice(row['id'],'end',lambda:bot.send_message(
+                    uid,f'Во сколько заканчиваешь смену {human_date(day)}? '
+                        'Ответь на это сообщение временем, например 23:30.',
+                    reply_markup=buttons([('Записать окончание',f'work:close:{day}')])) )
             except Exception as error:
-                await db._execute(db.supabase.table('shifts').update({'time_prompt_sent':False}).eq('id',row['id']))
                 from diagnostics import failure
                 failure(error,area='work_time',stage='notify')
     except Exception as error:

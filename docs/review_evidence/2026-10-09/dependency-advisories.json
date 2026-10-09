@@ -1,0 +1,148 @@
+[
+  {
+    "package": "aiogram",
+    "version": "3.7.0",
+    "advisories": []
+  },
+  {
+    "package": "supabase",
+    "version": "2.4.0",
+    "advisories": []
+  },
+  {
+    "package": "postgrest",
+    "version": "0.16.11",
+    "advisories": []
+  },
+  {
+    "package": "gotrue",
+    "version": "2.4.2",
+    "advisories": []
+  },
+  {
+    "package": "storage3",
+    "version": "0.7.7",
+    "advisories": []
+  },
+  {
+    "package": "supafunc",
+    "version": "0.3.3",
+    "advisories": []
+  },
+  {
+    "package": "realtime",
+    "version": "1.0.6",
+    "advisories": []
+  },
+  {
+    "package": "httpx",
+    "version": "0.25.2",
+    "advisories": []
+  },
+  {
+    "package": "aiohttp",
+    "version": "3.9.3",
+    "advisories": [
+      "GHSA-2fqr-mr3j-6wp8",
+      "GHSA-2vrm-gr82-f7m5",
+      "GHSA-3wq7-rqq7-wx6j",
+      "GHSA-4fvr-rgm6-gqmc",
+      "GHSA-4m7w-qmgq-4wj5",
+      "GHSA-54jq-c3m8-4m76",
+      "GHSA-5m98-qgg9-wh84",
+      "GHSA-63hf-3vf5-4wqf",
+      "GHSA-63hw-fmq6-xxg2",
+      "GHSA-69f9-5gxw-wvc2",
+      "GHSA-6jhg-hg63-jvvf",
+      "GHSA-6mq8-rvhq-8wgg",
+      "GHSA-7gpw-8wmc-pm8g",
+      "GHSA-8495-4g3g-x7pr",
+      "GHSA-9548-qrrj-x5pj",
+      "GHSA-966j-vmvw-g2g9",
+      "GHSA-9x8q-7h8h-wcw9",
+      "GHSA-c427-h43c-vf67",
+      "GHSA-cq5v-8q36-5273",
+      "GHSA-fh55-r93g-j68g",
+      "GHSA-g3cq-j2xw-wf74",
+      "GHSA-g84x-mcqj-x9qq",
+      "GHSA-hcc4-c3v8-rx92",
+      "GHSA-hg6j-4rv6-33pg",
+      "GHSA-hpj7-wq8m-9hgp",
+      "GHSA-jg22-mg44-37j8",
+      "GHSA-jj3x-wxrx-4x23",
+      "GHSA-m5qp-6w8w-w647",
+      "GHSA-m6qw-4cw2-hm4m",
+      "GHSA-mfx4-hv73-q22v",
+      "GHSA-mq44-7p77-q5h7",
+      "GHSA-mqqc-3gqh-h2x8",
+      "GHSA-mwh4-6h8g-pg8w",
+      "GHSA-p998-jp59-783m",
+      "GHSA-w2fm-2cpv-w7v5",
+      "GHSA-xcgm-r5h9-7989",
+      "PYSEC-2026-1097",
+      "PYSEC-2026-1098",
+      "PYSEC-2026-1099",
+      "PYSEC-2026-1100",
+      "PYSEC-2026-1101",
+      "PYSEC-2026-1102",
+      "PYSEC-2026-1103",
+      "PYSEC-2026-1104",
+      "PYSEC-2026-1105",
+      "PYSEC-2026-1106",
+      "PYSEC-2026-1107",
+      "PYSEC-2026-1109",
+      "PYSEC-2026-2094",
+      "PYSEC-2026-2095",
+      "PYSEC-2026-2096",
+      "PYSEC-2026-2097",
+      "PYSEC-2026-2098",
+      "PYSEC-2026-2099",
+      "PYSEC-2026-2100",
+      "PYSEC-2026-2101",
+      "PYSEC-2026-2102",
+      "PYSEC-2026-2103",
+      "PYSEC-2026-2104",
+      "PYSEC-2026-2105",
+      "PYSEC-2026-2106",
+      "PYSEC-2026-2107",
+      "PYSEC-2026-2108",
+      "PYSEC-2026-2109",
+      "PYSEC-2026-2110",
+      "PYSEC-2026-2111",
+      "PYSEC-2026-2112",
+      "PYSEC-2026-2113",
+      "PYSEC-2026-237",
+      "PYSEC-2026-3545",
+      "PYSEC-2026-3546",
+      "PYSEC-2026-3547"
+    ]
+  },
+  {
+    "package": "python-dotenv",
+    "version": "1.0.1",
+    "advisories": [
+      "GHSA-mf9w-mj56-hr94",
+      "PYSEC-2026-2270"
+    ]
+  },
+  {
+    "package": "pydantic",
+    "version": "2.6.4",
+    "advisories": []
+  },
+  {
+    "package": "APScheduler",
+    "version": "3.10.4",
+    "advisories": []
+  },
+  {
+    "package": "cryptography",
+    "version": "50.0.2",
+    "advisories": []
+  },
+  {
+    "package": "Pillow",
+    "version": "12.3.0",
+    "advisories": []
+  }
+]

@@ -72,6 +72,12 @@ def test_night_expense_lands_on_the_shift():
     assert s["shift_spend_month"] == 400
 
 
+def load_tests(loader, suite, pattern):
+    import unittest
+    return unittest.TestSuite(unittest.FunctionTestCase(fn) for name,fn in sorted(globals().items())
+                              if name.startswith('test_') and callable(fn))
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

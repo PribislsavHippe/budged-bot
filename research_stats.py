@@ -76,8 +76,10 @@ def summarize(subjects,events,days=30,now=None,ux_version=None):
     cohort={}
     for sid,rows in by.items():
         starts=[dt(e['occurred_at']) for e in rows if e['event']=='user_started']
-        if selected[sid]['cohort']=='new' and starts:
-            first=min(starts)
+        subject=selected[sid]
+        first=(dt(subject['first_started_at']) if subject.get('first_started_at') else
+               min(starts) if starts and 'first_started_at' not in subject else None)
+        if subject['cohort']=='new' and first is not None:
             if start<=first.astimezone(TZ).date()<=today:cohort[sid]=first
     window=[e for rows in by.values() for e in rows if start<=dt(e['occurred_at']).astimezone(TZ).date()<=today]
     reached={sid:{e['event'] for e in by[sid] if dt(e['occurred_at'])>=first} for sid,first in cohort.items()}

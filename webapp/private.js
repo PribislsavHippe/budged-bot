@@ -13,8 +13,17 @@
   let syncing=null;
   let deactivating=false;
   let cachedAesKey=null;
+  let ledgerQueue=Promise.resolve();
   const storageTimeoutMs=15000;
   const requestTimeoutMs=30000;
+
+  function serial(operation) {
+    return (...args)=>{
+      const next=ledgerQueue.then(()=>operation(...args));
+      ledgerQueue=next.catch(()=>{});
+      return next;
+    };
+  }
 
   function within(promise,ms,message) {
     let timer;
@@ -127,12 +136,21 @@
     return saved;
   }
   async function saveLocal() {
+    for (const e of state.entries) {
+      const amount=Number(e.signed_amount);
+      if (!Number.isFinite(amount)||Math.abs(amount)>10000000||
+          Math.abs(amount*100-Math.round(amount*100))>1e-7)
+        throw new Error('Проверь сумму: можно записать рубли и копейки. Журнал не изменил.');
+    }
     const key=await aesKey(true),iv=crypto.getRandomValues(new Uint8Array(12));
     const plain=new TextEncoder().encode(JSON.stringify({entries:state.entries,receipts:state.receipts}));
     const encrypted=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},key,plain));
     const packed=new Uint8Array(iv.length+encrypted.length);
     packed.set(iv);packed.set(encrypted,iv.length);
-    await item(tg.DeviceStorage,'setItem',ledgerName,encode(packed));
+    const value=encode(packed);
+    if (value.length>5*1024*1024)
+      throw new Error('На этом устройстве журнал занял 5 МБ. Новую запись не сохранил; прежний журнал остаётся на месте.');
+    await item(tg.DeviceStorage,'setItem',ledgerName,value);
   }
   async function rsaKeys(create) {
     const stored=await item(tg.SecureStorage,'getItem',rsaName);
@@ -219,9 +237,9 @@
     progress('Готовлю ключи на телефоне…');
     const keys=await rsaKeys(true);
     await aesKey(true);
-    const byId=new Map(state.entries.map(e=>[String(e.id),e]));
-    result.entries.forEach(e=>byId.set(String(e.id),e));
-    state.entries=[...byId.values()];
+    // In normal mode the server is authoritative. A failed earlier attempt
+    // must not resurrect an entry since deleted there; archives are separate.
+    state.entries=result.entries;
     state.receipts=[...new Set([...state.receipts,...state.entries.map(e=>String(e.id))])];
     const saved=JSON.stringify({entries:state.entries,receipts:state.receipts});
     progress('Сохраняю и проверяю записи на телефоне…');
@@ -231,10 +249,12 @@
       throw new Error('Перенос не подтвердился. Серверные записи сохранены.');
     progress('Подтверждаю перенос в базе…');
     try {
-      await request('/api/private/activate',{entry_ids:result.entries.map(e=>e.id),public_key:keys.publicJwk});
+      await request('/api/private/activate',{entry_ids:result.entries.map(e=>e.id),
+        entry_versions:result.entries.map(e=>({id:e.id,revision:e.revision})),public_key:keys.publicJwk});
     } catch (error) {
       const check=await request('/api/private/prepare',{state_only:true});
-      if (!check.active) throw error;
+      if (!check.active || check.public_key?.n!==keys.publicJwk.n || check.public_key?.e!==keys.publicJwk.e)
+        throw error;
     }
     state.active=true;state.lost=false;
     return state.entries.length;
@@ -265,12 +285,15 @@
     await request('/api/private/rotate',{public_key:publicJwk});
     state.lost=false;state.lostReason=null;
   }
-  async function add(record) {
+  function sourceId(record) {return record.source_key || String(record.id);}
+  async function add(record,checkSource=false) {
     if (deactivating) throw new Error('Дождись завершения переноса личного журнала.');
     if (!state.active || state.lost) throw new Error('Личный журнал на этом устройстве недоступен.');
-    if (state.entries.some(e=>String(e.id)===String(record.id))) return false;
+    if (state.entries.some(e=>String(e.id)===String(record.id)||sourceId(e)===sourceId(record))) return false;
+    if (state.receipts.includes(String(record.id))||state.receipts.includes(sourceId(record))) return false;
+    if (checkSource && (await request('/api/money_source',{source_key:sourceId(record)})).seen) return false;
     const previous=state.entries,receipts=state.receipts;
-    state.entries=[...previous,record];state.receipts=[...new Set([...receipts,String(record.id)])];
+    state.entries=[...previous,record];state.receipts=[...new Set([...receipts,String(record.id),sourceId(record)])];
     try {await saveLocal();} catch (e) {state.entries=previous;state.receipts=receipts;throw e;}
     if (record.kind==='income' && record.category==='Чаевые') window.uxEvent?.('tip_added','earnings');
     else if (record.kind==='expense') window.uxEvent?.('expense_added','earnings');
@@ -332,7 +355,7 @@
   }
   async function backupRecords(seen=new Set()) {
     const result=await request('/api/private/backups',{});
-    if (!Array.isArray(result.backups) || result.backups.length>5000)
+    if (!Array.isArray(result.backups) || result.backups.length>100000)
       throw new Error('Не удалось прочитать временные копии.');
     const records=[];
     for (const row of result.backups) {
@@ -475,7 +498,11 @@
     history.replaceState(null,'',url.pathname+url.search+url.hash);
     return added ? 'Запись сохранена на этом устройстве.' : 'Эта запись уже есть на устройстве.';
   }
-  window.privateMoney={state,init,activate,deactivate,finishExitArchive,rotate,add,remove,clear,edit,sync,restoreRecent,importUrl,request,available,
+  window.privateMoney={state,init:serial(init),activate:serial(activate),deactivate:serial(deactivate),
+    finishExitArchive:serial(finishExitArchive),rotate:serial(rotate),add:serial(add),remove:serial(remove),
+    clear:serial(clear),edit:serial(edit),sync:serial(sync),restoreRecent:serial(restoreRecent),
+    importUrl:serial(importUrl),request,available,
     get active(){return state.active && !state.lost;},get entries(){return state.entries;},
-    get payload(){return state.active && !state.lost?{private_entries:state.entries}:{}}};
+    // Financial views are computed on this device, never posted for server calculations.
+    get payload(){return {}}};
 })();

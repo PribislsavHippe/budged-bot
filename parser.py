@@ -6,6 +6,7 @@
 3. Пересланное уведомление банка о чаевых: «Вам оставили чаевые: 350 ₽»
 """
 import re
+from decimal import Decimal, InvalidOperation
 
 CASH = "cash"
 CARD = "card"
@@ -14,29 +15,45 @@ CARD = "card"
 
 _K_SUFFIX = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:тыс\.?|тысяч[аи]?|к)\b", re.IGNORECASE)
 _CURRENCY = re.compile(r"(?<=\d)\s*(?:₽|руб(?:лей|ля|\.)?|р\.?)(?=\s|$|,)", re.IGNORECASE)
-_NUMBER = re.compile(r"\d[\d ]*(?:[.,]\d{1,2})?")
+_NUMBER = re.compile(r"[-−+]?\d[\d ]*(?:[.,]\d+)?")
+
+
+class AmountFormatError(ValueError):
+    """An ambiguous amount must not silently become a different operation."""
+
+
+def _checked_number(match: re.Match, text: str) -> Decimal:
+    raw = match.group().strip().replace(" ", "").replace(",", ".")
+    if match.start()>0 and text[match.start()-1] in '.,':
+        raise AmountFormatError("amount_format")
+    if raw.startswith(("-", "−")) or ("." in raw and len(raw.rsplit(".", 1)[1]) > 2):
+        raise AmountFormatError("amount_format")
+    if re.match(r"[.,]\d", text[match.end():]):
+        raise AmountFormatError("amount_format")
+    try:
+        return Decimal(raw)
+    except InvalidOperation:
+        raise AmountFormatError("amount_format") from None
 
 
 def _normalize(text: str) -> str:
     """«30к» → «30000», «300 р» → «300», убирает валютные хвосты."""
-    text = _K_SUFFIX.sub(lambda m: str(int(float(m.group(1).replace(",", ".")) * 1000)), text)
+    text = text.replace('\u00a0',' ').replace('\u202f',' ')
+    text = _K_SUFFIX.sub(lambda m: format(Decimal(m.group(1).replace(",", ".")) * 1000, 'f'), text)
     text = _CURRENCY.sub("", text)
     return text
 
 
 def extract_amount(text: str) -> float | None:
     """Первое число в тексте. «30 000», «1.5к», «250,50» — всё понимает."""
-    m = _NUMBER.search(_normalize(text))
+    normalized = _normalize(text)
+    m = _NUMBER.search(normalized)
     if not m:
         return None
-    raw = m.group(0).replace(" ", "").replace(",", ".")
-    try:
-        value = float(raw)
-    except ValueError:
+    value = _checked_number(m, normalized)
+    if value <= 0 or value > 10_000_000:
         return None
-    if value <= 0 or value > 100_000_000:
-        return None
-    return round(value, 2)
+    return float(value)
 
 
 # ─── счёт ────────────────────────────────────────────────────────────────────
@@ -137,6 +154,10 @@ def parse_transactions(text: str) -> list[dict]:
     Возвращает [] если ни в одном фрагменте нет суммы.
     Каждая операция: {kind, account, amount, category, note}.
     """
+    # Validate before splitting: 123,456 is ambiguous, not two operations.
+    normalized = _normalize(text)
+    for match in _NUMBER.finditer(normalized):
+        _checked_number(match, normalized)
     items = []
     # Запятая между цифрами с одной/двумя цифрами после неё — копейки.
     # Остальные запятые, точка с запятой и перенос строки разделяют записи.
@@ -164,12 +185,12 @@ def parse_transactions(text: str) -> list[dict]:
 # Точная форма: сумма стоит сразу после «Чаевые:» — только она защищает от
 # соседних сумм в том же сообщении («Сумма заказа: 7690.00 р.»).
 _BANK_TIPS_TIGHT = re.compile(
-    r"чаевы[ех]?\s*[:\-—]?\s*(\d[\d ]*(?:[.,]\d{1,2})?)",
+    r"чаевы[ех]?\s*[:—]?\s*([-−+]?\d[\d ]*(?:[.,]\d+)?)",
     re.IGNORECASE,
 )
 # Свободная форма: сумма до слова «чаевые» («Перевод 500 ₽ — чаевые от гостя»)
 _BANK_TIPS_LOOSE = re.compile(
-    r"(\d[\d ]*(?:[.,]\d{1,2})?)\s*(?:₽|руб\.?|р\.?)?\D{0,20}?чаевы",
+    r"([-−+]?\d[\d ]*(?:[.,]\d+)?)\s*(?:₽|руб\.?|р\.?)?\D{0,20}?чаевы",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -253,7 +274,7 @@ def parse_shift_days(text: str, today) -> list | None:
 
 
 _BANK_ORDER = re.compile(
-    r"сумма\s+заказа\s*[:\-—]?\s*(\d[\d ]*(?:[.,]\d{1,2})?)",
+    r"сумма\s+заказа\s*[:\-—]?\s*([-−+]?\d[\d ]*(?:[.,]\d+)?)",
     re.IGNORECASE,
 )
 _BANK_PERCENT = re.compile(r"\(\s*(\d{1,2}(?:[.,]\d)?)\s*%\s*\)")
@@ -275,10 +296,8 @@ def parse_bank_notification(text: str) -> dict | None:
     m = _BANK_ORDER.search(normalized)
     if m:
         try:
-            val = float(m.group(1).replace(" ", "").replace(",", "."))
-            if 0 < val <= 10_000_000:
-                order_amount = round(val, 2)
-        except ValueError:
+            order_amount = extract_amount(m.group(1))
+        except AmountFormatError:
             pass
 
     tip_percent = None
@@ -308,9 +327,9 @@ def parse_bank_tips(text: str) -> float | None:
     if raw is None:
         return None
     try:
-        value = float(raw.replace(" ", "").replace(",", "."))
-    except ValueError:
+        value = extract_amount(raw)
+    except AmountFormatError:
         return None
-    if value <= 0 or value > 1_000_000:
+    if value is None or value <= 0 or value > 1_000_000:
         return None
     return round(value, 2)

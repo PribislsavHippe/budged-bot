@@ -31,6 +31,8 @@ from chat_dates import human_date, human_month
 from workday import MSK, entry_op_date, op_today
 
 router = Router()
+router.message.filter(F.chat.type == "private")
+router.callback_query.filter(F.message.chat.type == "private")
 
 SHIFT_SPEND_CATEGORIES = ["Мойка", "Бар", "Еда", "Такси"]
 
@@ -59,6 +61,11 @@ def today_line(income: float, spent: float) -> str:
     return f"<b>Чистыми за сегодня: {fmt(income)} ₽</b>\nЧаевые до расходов {fmt(income)} − расходы 0"
 
 
+def message_work_date(message) -> str:
+    stamp=getattr(message,'date',None)
+    return entry_op_date(stamp.isoformat()).isoformat() if stamp is not None else op_today().isoformat()
+
+
 async def today_totals(user_id: int):
     """Итоги текущей смены. Сутки операционные: ночь принадлежит вчерашнему дню."""
     entries = await db.get_entries_for_work_date(user_id, op_today().isoformat())
@@ -76,27 +83,33 @@ def hide_old_menu() -> ReplyKeyboardRemove:
     return ReplyKeyboardRemove()
 
 
-def entry_line(e: dict) -> str:
+def entry_line(e: dict,include_note: bool=True) -> str:
     amount = float(e["signed_amount"])
     emoji = KIND_EMOJI.get(e["kind"], "•")
     if e["kind"] == "accrual":
         return f"{emoji} {fmt(amount)} ₽ · Сервисный сбор · начисление к зарплате"
     acc = db.ACCOUNT_LABELS[e["account"]]
     sign = "+" if amount > 0 else "−"
-    note = f" ({html.escape(str(e['note']))})" if e.get("note") else ""
+    raw_note=str(e.get('note') or '')
+    if len(raw_note)>80:raw_note=raw_note[:77]+'…'
+    note = f" ({html.escape(raw_note)})" if raw_note and include_note else ""
     return f"{emoji} {sign}{fmt(abs(amount))} ₽ · {html.escape(str(e['category']))} · {acc}{note}"
 
 
-def undo_kb(entry_ids: list[int], toggle_entry: dict | None = None) -> InlineKeyboardMarkup:
+def undo_kb(entry_ids: list[int], toggle_entry: dict | None = None,
+            batch: tuple[int,int] | None = None) -> InlineKeyboardMarkup:
     rows = []
     if toggle_entry is not None and toggle_entry["kind"] != "accrual":
         other = db.CASH if toggle_entry["account"] == db.CARD else db.CARD
         rows.append([InlineKeyboardButton(
             text=f"Изменить на {'наличные' if other==db.CASH else 'безналичные'}",
-            callback_data=f"acc:{toggle_entry['id']}",
+            callback_data=f"acc:{toggle_entry['id']}:{other}",
         )])
-    ids = ",".join(str(i) for i in entry_ids)
-    rows.append([InlineKeyboardButton(text="↩️ Отменить", callback_data=f"undo:{ids}")])
+    if batch is not None:
+        callback_data=f'undo_batch:{batch[0]}:{batch[1]}'
+    else:
+        callback_data='undo:'+','.join(str(i) for i in entry_ids)
+    rows.append([InlineKeyboardButton(text="↩️ Отменить", callback_data=callback_data)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -147,25 +160,8 @@ async def cmd_start(message: Message, state: FSMContext):
 
 @router.message(Command("calendar"))
 async def cmd_calendar(message: Message,user_id: int | None=None):
-    import google_calendar as gcal
-    user_id=user_id or message.from_user.id
-    if not gcal.is_configured():
-        await message.answer(gcal.ERROR_MESSAGES["not_configured"])
-        return
-    try:
-        status = await gcal.connection_status(user_id)
-        if not status["connected"]:
-            await message.answer(status["message"] or "Подключи Google Календарь в Статистике.")
-            return
-        result = await gcal.sync_pending(user_id)
-        await message.answer(f"📆 Добавил в Google Календарь {result['synced']} смен. Ещё не добавлены: {result['pending']}. " + result["message"])
-    except Exception:
-        logging.exception("Manual calendar sync failed")
-        await message.answer("Смены сохранил, но пока не смог добавить их в Google Календарь. Попробуй ещё раз позже.",reply_markup=calendar_retry_kb())
-
-
-def calendar_retry_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Повторить отправку в Google",callback_data="calendar:retry")]])
+    await message.answer('Открой «Статистику» и нажми «Подключить календарь». '
+                         'На iPhone добавь подписку, на Android — открой ссылку в ICSx⁵.')
 
 
 @router.callback_query(F.data=="calendar:retry")
@@ -257,11 +253,12 @@ async def cmd_reset(message: Message):
 
 
 @router.callback_query(F.data == "reset:yes")
-async def reset_yes(callback: CallbackQuery, state: FSMContext):
+async def reset_yes(callback: CallbackQuery, state: FSMContext,inbox_update_id: int | None=None):
     if (await db.get_or_create_user(callback.from_user.id)).get('private_money_mode'):
         await callback.answer('Личный журнал удаляется в приложении на устройстве.',show_alert=True)
         return
-    await db.clear_entries(callback.from_user.id)
+    if inbox_update_id is None:await db.clear_entries(callback.from_user.id)
+    else:await db.clear_entries_once(callback.from_user.id,inbox_update_id)
     await state.clear()
     await callback.message.edit_text("Журнал очищен.")
     await callback.message.answer("Начинаем заново. Запиши: <i>чай 500</i>", reply_markup=hide_old_menu())
@@ -288,9 +285,12 @@ async def cmd_privacy(message: Message):
             'Бот сразу сохраняет новые записи в зашифрованных копиях на сервере на 14 дней. '
             'При открытии приложения копии автоматически переносятся на телефон. '
             'Без ключа этого телефона прочитать суммы из копий нельзя. '
-            'Пересланное банковское сообщение видят Telegram и бот при обработке.\n\n'
+            'Сообщения видят Telegram и бот при обработке. Пока бот обрабатывает сообщение, '
+            'его зашифрованная копия хранится в очереди и доступна серверу. '
+            'После обработки содержимое из очереди удаляется. Незавершённый диалог '
+            'хранится зашифрованным, чтобы его можно было продолжить после сбоя.\n\n'
             'На сервере остаются твой Telegram ID, график и часы работы для напоминаний, '
-            'открытый ключ устройства, зашифрованные временные копии, отдельно созданные продажи, разрешения Google и события использования: время и тип действий, включая факт добавления чаевых или расхода, без суммы и содержимого записи. '
+            'открытый ключ устройства, зашифрованные временные копии, отдельно созданные продажи, календарную подписку и события использования: время и тип действий, включая факт добавления чаевых или расхода, без суммы и содержимого записи. '
             'При потере телефона или ключа личный журнал не восстановится. В «Статистике» можно удалить журнал вместе с временными копиями.')
         return
     shifts = await db.get_shift_dates(message.from_user.id)
@@ -305,7 +305,8 @@ async def cmd_privacy(message: Message):
         "• план смены, если задавал",
         "• фактическое время работы и часовая ставка, если записывал; они не видны администратору ресторана",
         "• личные планы продаж, записи продаж и версии официальных отчётов",
-        "• разрешение на добавление смен в Google Календарь, если ты его подключил",
+        "• календарная подписка, если ты её подключил",
+        "• отметки обработанных сообщений без сумм — они защищают от повторных записей",
         "• фото отчёта или графика отправляется в Groq только после выбора типа распознавания; "
         "фото не сохраняется в базе, черновик распознавания хранится в памяти до 15 минут",
         "",
@@ -313,7 +314,10 @@ async def cmd_privacy(message: Message):
         "из отчёта и статус подтверждения. Администратор видит твоё имя, Telegram ID, "
         "планы и продажи, записанные после присоединения к ресторану. "
         "Личные чаевые и расходы в его кабинете не показываются.",
-        "Имя профиля Telegram, @username, телефон и номер карты не сохраняются.",
+        "Отдельную постоянную копию профиля Telegram не ведём. Входящие сообщения "
+        "временно хранятся в зашифрованной очереди, доступной серверу для обработки. "
+        "После обработки содержимое удаляется; отметки доставки без текста остаются на 30 дней. "
+        "Незавершённые диалоги сохраняются зашифрованными до завершения или отмены.",
         "Для улучшения бота отдельно сохраняем действия: открытие раздела, успешную запись, "
         "шаг знакомства и код ошибки. Без сумм, сообщений и фотографий. "
         "Владелец бота видит эти пути под внутренними номерами, например U-0184. "
@@ -432,7 +436,7 @@ async def cmd_export(message: Message):
 async def cmd_delete(message: Message):
     private=(await db.get_or_create_user(message.from_user.id)).get('private_money_mode')
     await message.answer(
-        "Стереть <b>всё</b>: записи, смены, планы продаж, отчёты, профиль, привязку сотрудника, Google Календаря, события использования и обращения?\n"
+        "Стереть <b>всё</b>: записи, смены, планы продаж, отчёты, профиль, привязку сотрудника, календарную подписку, события использования и обращения?\n"
         "Если ты администратор ресторана, ресторан останется без администратора.\n\n"
         "<i>Это навсегда. Восстановить не смогу — у меня не остаётся копии.\n"
         "Хочешь сначала забрать данные — /export</i>"+
@@ -445,8 +449,9 @@ async def cmd_delete(message: Message):
 
 
 @router.callback_query(F.data == "del:yes")
-async def delete_yes(callback: CallbackQuery, state: FSMContext):
-    await db.delete_user(callback.from_user.id)
+async def delete_yes(callback: CallbackQuery, state: FSMContext,inbox_update_id: int | None=None):
+    if inbox_update_id is None:await db.delete_user(callback.from_user.id)
+    else:await db.delete_user_once(callback.from_user.id,inbox_update_id)
     await state.clear()
     await callback.message.edit_text(
         "Стёр. В базе тебя больше нет.\n\n"
@@ -462,6 +467,22 @@ async def delete_no(callback: CallbackQuery):
 
 
 # ─── кнопки под записями ─────────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith('undo_batch:'))
+async def cb_undo_batch(callback: CallbackQuery):
+    try:
+        _,chat_id,message_id=callback.data.split(':')
+        chat_id=int(chat_id);message_id=int(message_id)
+        if chat_id!=callback.message.chat.id or message_id<=0:raise ValueError()
+    except (ValueError,TypeError):
+        await callback.answer('Не получилось найти записи.',show_alert=True)
+        return
+    deleted=await db.undo_entry_batch(callback.from_user.id,chat_id,message_id)
+    if not deleted:
+        await callback.answer('Уже отменено',show_alert=True)
+        return
+    await callback.message.edit_text('Отменил записи из этого сообщения.\n\n'+await today_block(callback.from_user.id))
+    await callback.answer()
 
 @router.callback_query(F.data.startswith("undo:"))
 async def cb_undo(callback: CallbackQuery):
@@ -479,13 +500,28 @@ async def cb_undo(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("acc:"))
 async def cb_toggle_account(callback: CallbackQuery):
-    entry_id = int(callback.data.split(":", 1)[1])
+    parts=callback.data.split(':')
+    try:
+        entry_id=int(parts[1])
+        other=parts[2] if len(parts)==3 else None
+        if other is None:
+            # Older buttons did not encode a target. Their original label is
+            # stored in the incoming update, so a retry uses the same target.
+            for row in getattr(callback.message.reply_markup,'inline_keyboard',[]) or []:
+                for button in row:
+                    if button.callback_data==callback.data:
+                        if 'безналичные' in button.text:other=db.CARD
+                        elif 'наличные' in button.text:other=db.CASH
+        if other not in {db.CASH,db.CARD}:raise ValueError()
+    except (ValueError,IndexError,AttributeError):
+        await callback.answer('Открой запись в «Статистике» и выбери наличные или карту.',show_alert=True)
+        return
     entry = await db.get_entry(entry_id, callback.from_user.id)
     if entry is None:
         await callback.answer("Запись уже удалена", show_alert=True)
         return
-    other = db.CASH if entry["account"] == db.CARD else db.CARD
-    entry = await db.update_entry_account(entry_id, callback.from_user.id, other)
+    if entry['account']!=other:
+        entry = await db.update_entry_account(entry_id, callback.from_user.id, other)
     await callback.message.edit_text(
         entry_line(entry) + "\n\n" + await today_block(callback.from_user.id),
         reply_markup=undo_kb([entry_id], toggle_entry=entry),
@@ -591,7 +627,14 @@ async def shift_spend_chip(callback: CallbackQuery, state: FSMContext):
 
 @router.message(ShiftSpend.waiting_amount)
 async def shift_spend_amount(message: Message, state: FSMContext):
-    amount = p.extract_amount(message.text or "")
+    # A clock value always belongs to work time, even inside an old spend form.
+    import schedule_chat
+    if re.fullmatch(schedule_chat.TIME_MESSAGE,(message.text or '').strip()):
+        await state.clear()
+        await handle_text(message,state)
+        return
+    try:amount = p.extract_amount(message.text or "")
+    except p.AmountFormatError:amount=None
     if amount is None:
         await message.answer("Напиши сумму числом, например <i>350</i>, или нажми «Отмена».",reply_markup=shift_spend_cancel_kb())
         return
@@ -605,7 +648,12 @@ async def shift_spend_amount(message: Message, state: FSMContext):
     entry = await db.add_entry(
         message.from_user.id, "expense", db.CASH, -amount,
         category=category, note="трата смены",
+        work_date=message_work_date(message),source_key=f'telegram:{message.chat.id}:{message.message_id}:0',
     )
+    if entry is None:
+        await state.clear()
+        await message.answer('Это сообщение уже обработал. Новую запись не добавляю.')
+        return
     await state.clear()
     await message.answer(
         f"➖ {category} {fmt(amount)} ₽\n\nЕщё что-то?",
@@ -674,9 +722,13 @@ async def _send_private_record(message: Message, record: dict, index: int,
     if not user.get('private_money_public_key'):
         await message.answer('Открой «Статистику» на своём устройстве и настрой приватный журнал.')
         return False
+    source_key=f'telegram:{message.chat.id}:{message.message_id}:{index}'
+    if await db.money_source_seen(message.from_user.id,source_key):
+        await message.answer('Это сообщение уже обработал. Новую запись не добавляю; изменения смотри в «Статистике».')
+        return True
     payload={**record,'id':f'telegram:{message.chat.id}:{message.message_id}:{index}',
-             'work_date':op_today().isoformat(),
-             'created_at':datetime.now(timezone.utc).isoformat()}
+             'work_date':message_work_date(message),
+             'created_at':(getattr(message,'date',None) or datetime.now(timezone.utc)).isoformat()}
     try:
         sealed,_=private_payload.seal(message.from_user.id,
             user['private_money_public_key'],payload,os.environ['BOT_TOKEN'])
@@ -686,7 +738,7 @@ async def _send_private_record(message: Message, record: dict, index: int,
         from diagnostics import failure
         failure(error,area='private_money',stage='backup_save')
         await message.answer('Не получил подтверждение сохранения. Открой личный журнал и проверь запись перед повтором.')
-        return False
+        raise
     amount=f"<b>{fmt(abs(float(record['signed_amount'])))} ₽</b>"
     label='наличные' if record['account']==db.CASH else 'безналичные'
     if record['kind']=='accrual':
@@ -819,8 +871,12 @@ async def _save_bank_tips(message: Message, notif: dict, source_messages=None):
         category="Чаевые", note="из банка",
         order_amount=notif.get("order_amount"),
         tip_percent=notif.get("tip_percent"),
+        work_date=message_work_date(message),
         source_key=f"telegram:{message.chat.id}:{message.message_id}:0",
     )
+    if entry is None:
+        await message.answer('Это сообщение уже обработал. Новую запись не добавляю.')
+        return
     details = []
     if notif.get("order_amount"):
         details.append(f"чек {fmt(notif['order_amount'])}")
@@ -865,6 +921,14 @@ async def _flush_forwarded_tips(key):
     batch=_forward_batches.pop(key,None)
     if not batch:return
     items=[batch['messages'][mid] for mid in sorted(batch['messages'])]
+    try:await save_forwarded_tips(items)
+    except Exception:
+        # Production batching is owned by TelegramInbox. A legacy timer must
+        # not let asyncio log a provider exception with financial row details.
+        pass
+
+
+async def save_forwarded_tips(items):
     first=items[0][0]
     missing=sum(notif is None for _,notif in items)
     if missing:
@@ -875,13 +939,18 @@ async def _flush_forwarded_tips(key):
         await first.answer(warning)
         return
     total=sum((Decimal(str(notif['amount'])) for _,notif in items),Decimal('0'))
+    if total>10000000:
+        await first.answer('Общая сумма слишком большая. Ничего не записал; перешли уведомления несколькими частями.')
+        return
     notif=items[0][1].copy() if len(items)==1 else {
         'amount':float(total),'order_amount':None,'tip_percent':None}
     try:
         await _save_bank_tips(first,notif,source_messages=[message for message,_ in items])
-    except Exception:
-        logging.exception('Forwarded tips batch save failed')
-        await first.answer('Не удалось подтвердить запись чаевых. Проверь историю перед повторной пересылкой.')
+    except Exception as error:
+        from diagnostics import failure
+        failure(error,area='forwarded_tips',stage='save')
+        await first.answer('Не получил подтверждение записи. Попробую ещё раз автоматически.')
+        raise
 
 
 @router.shutdown()
@@ -895,8 +964,15 @@ async def flush_forwarded_tips_on_shutdown():
 
 @router.message(F.text)
 async def handle_text(message: Message, state: FSMContext):
-    user = await db.get_or_create_user(message.from_user.id)
     text = message.text or ""
+    # A clock value must never become a financial amount, even if time tracking
+    # is disabled or the earlier schedule router did not handle the message.
+    import schedule_chat
+    if re.fullmatch(schedule_chat.TIME_MESSAGE,text.strip()) and message.forward_origin is None:
+        if schedule_chat.schedule.enabled():await schedule_chat.time_message(message,state)
+        else:await message.answer('Запись времени пока не подключена. Это сообщение не записал в чаевые.')
+        return
+    user = await db.get_or_create_user(message.from_user.id)
 
     # Новый пользователь (или без /start): знакомство
     if not user.get("onboarded"):
@@ -913,7 +989,9 @@ async def handle_text(message: Message, state: FSMContext):
         notif = p.parse_bank_notification(text)
         if notif is not None:
             await _save_bank_tips(message, notif)
-            return
+        else:
+            await message.answer('Не нашёл понятную сумму чаевых в уведомлении. Ничего не записал. Можно написать «чай 500».')
+        return
 
     # Sales use their own journal; malformed sales must never become expenses.
     from sales_chat import parse_sales_message
@@ -930,11 +1008,12 @@ async def handle_text(message: Message, state: FSMContext):
         oid = str(uuid5(NAMESPACE_URL, f"budget-sale:{message.bot.id}:{message.chat.id}:{message.message_id}"))
         try:
             saved = await chat_write(message.from_user.id, oid, sale)
-        except Exception:
-            logging.error('Chat sales write failed')
+        except Exception as error:
+            from diagnostics import failure
+            failure(error,area='chat_sales',stage='save')
             if sale['action']=='report':research.track(message.from_user.id,'sales_report_error',error_code='save')
             await message.answer("Ответ о сохранении не пришёл. Загляни в историю в разделе «План», прежде чем отправлять сумму снова.")
-            return
+            raise
         if sale['action']=='report':research.track(message.from_user.id,'sales_report_completed',operation=oid)
         if sale["action"] == "save":
             names = {"glass":"Бокалы","bottle":"Бутылки","cocktails":"Коктейли","desserts":"Десерты","turnover":"Товарооборот","postcards":"Открытки","dvd":"ДВД"}
@@ -962,11 +1041,15 @@ async def handle_text(message: Message, state: FSMContext):
             return
         try:
             entry = await db.add_entry(message.from_user.id, **record,
-                work_date=op_today().isoformat(),
+                work_date=message_work_date(message),
                 source_key=f"telegram:{message.chat.id}:{message.message_id}:0")
-        except Exception:
-            logging.exception("Service charge write failed")
-            await message.answer("Не удалось подтвердить запись. Проверь личные начисления в «Плане» или историю, прежде чем отправлять сумму снова.")
+        except Exception as error:
+            from diagnostics import failure
+            failure(error,area='service_charge',stage='save')
+            await message.answer('Не получил подтверждение записи. Попробую ещё раз автоматически.')
+            raise
+        if entry is None:
+            await message.answer('Это сообщение уже обработал. Новую запись не добавляю.')
             return
         await message.answer("✓ " + entry_line(entry), reply_markup=undo_kb([entry["id"]]))
         return
@@ -982,26 +1065,18 @@ async def handle_text(message: Message, state: FSMContext):
         await schedule_saved(message.from_user.id)
         human = ", ".join(d.strftime("%d.%m") for d in shift_dates)
         word = "смену" if len(shift_dates) == 1 else "смены"
-        extra = ""
-        try:
-            import google_calendar as gcal
-            token = await db.get_google_token(message.from_user.id)
-            if token and (token.get("google_refresh_token") or token.get("google_access_token")):
-                result = await gcal.sync_shifts(message.from_user.id, iso)
-                extra = f"\n📆 В Google Календаре: {result['synced']} из {len(iso)}."
-                if result["message"]: extra += "\n" + result["message"]
-        except Exception:
-            logging.exception("Calendar sync failed after shift save")
-            extra = "\nВ Google Календарь смены пока не добавлены. Попробуй ещё раз позже."
         await message.answer(
-            f"📅 Поставил {word}: <b>{human}</b>.{extra}\n"
-            "Напомню накануне и в конце смены. Чаевые записывай, когда удобно.",
-            reply_markup=calendar_retry_kb() if extra.startswith("\nВ Google Календарь смены пока") else None,
-        )
+            f"📅 Записал {word}: {human}. "
+            "Они появятся и в календаре, если ты добавил подписку.")
         return
 
     # 4. Обычные записи: «500» или «чай 500», «кофе 200, такси 350»
-    items = p.parse_transactions(text)
+    try:
+        items = p.parse_transactions(text)
+    except p.AmountFormatError:
+        await message.answer('Не стал записывать: сумма неоднозначна. '
+                             'Напиши положительную сумму с копейками, например «чай 500,50».')
+        return
     if not items:
         await message.answer(
             "Не нашёл сумму. Примеры:\n"
@@ -1009,6 +1084,10 @@ async def handle_text(message: Message, state: FSMContext):
             "Нажми кнопку ниже, если нужна подсказка.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Как пользоваться ботом",callback_data="ux:help")]]),
         )
+        return
+
+    if len(items)>32:
+        await message.answer('В сообщении много сумм. Пришли их несколькими сообщениями — пока ничего не записал.')
         return
 
     if user.get('private_money_mode'):
@@ -1021,27 +1100,36 @@ async def handle_text(message: Message, state: FSMContext):
             all_sent=all_sent and sent
         return
     is_first_tx = not await db.get_recent_entries(message.from_user.id, limit=1)
-    saved = []
-    for index, item in enumerate(items):
-        signed = item["amount"] * KIND_SIGN[item["kind"]]
-        entry = await db.add_entry(
-            message.from_user.id, item["kind"], item["account"], signed,
-            category=item["category"], note=item["note"],
-            source_key=f"telegram:{message.chat.id}:{message.message_id}:{index}",
-        )
-        saved.append(entry)
+    rows=[{'kind':item['kind'],'account':item['account'],
+           'signed_amount':item['amount']*KIND_SIGN[item['kind']],
+           'category':item['category'],'note':item['note'],'work_date':message_work_date(message),
+           'source_key':f'telegram:{message.chat.id}:{message.message_id}:{index}'}
+          for index,item in enumerate(items)]
+    try:
+        saved=await db.add_entries(message.from_user.id,rows)
+    except Exception as error:
+        from diagnostics import failure
+        failure(error,area='money_batch',stage='save')
+        # A lost database response has an unknown result. The durable inbox
+        # retries the same source keys; don't imply a rollback to the person.
+        raise
 
-    body = "\n".join(entry_line(e) for e in saved)
+    if not saved:
+        await message.answer('Это сообщение уже обработал. Новые записи не добавляю; изменения смотри в «Статистике».')
+        return
+    body = "\n".join(entry_line(e,include_note=len(saved)==1) for e in saved)
     if is_first_tx:
         body += (
             "\n\n👌 Записал. Не тот способ получения — кнопка под записью, "
             "нужно убрать — «Отменить»."
         )
     toggle = saved[0] if len(saved) == 1 else None
-    await message.answer(
-        body + "\n\n" + await today_block(message.from_user.id),
-        reply_markup=undo_kb([e["id"] for e in saved], toggle_entry=toggle),
-    )
+    try:body+='\n\n'+await today_block(message.from_user.id)
+    except Exception as error:
+        from diagnostics import failure
+        failure(error,area='money_batch',stage='totals')
+    await message.answer(body,reply_markup=undo_kb([e['id'] for e in saved],toggle_entry=toggle,
+                         batch=(message.chat.id,message.message_id) if len(saved)>1 else None))
 
     from ux_chat import value_saved
     for entry in saved:

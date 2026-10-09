@@ -1,0 +1,76 @@
+{
+  "checked_at": "2026-10-09T11:47:31.092393+00:00",
+  "scope": "14 direct pinned requirements only; no credentials, source or environment inventory sent",
+  "packages": [
+    {
+      "name": "aiogram",
+      "version": "3.31.0",
+      "advisories": []
+    },
+    {
+      "name": "supabase",
+      "version": "2.4.0",
+      "advisories": []
+    },
+    {
+      "name": "postgrest",
+      "version": "0.16.11",
+      "advisories": []
+    },
+    {
+      "name": "gotrue",
+      "version": "2.4.2",
+      "advisories": []
+    },
+    {
+      "name": "storage3",
+      "version": "0.7.7",
+      "advisories": []
+    },
+    {
+      "name": "supafunc",
+      "version": "0.3.3",
+      "advisories": []
+    },
+    {
+      "name": "realtime",
+      "version": "1.0.6",
+      "advisories": []
+    },
+    {
+      "name": "httpx",
+      "version": "0.25.2",
+      "advisories": []
+    },
+    {
+      "name": "aiohttp",
+      "version": "3.14.4",
+      "advisories": []
+    },
+    {
+      "name": "python-dotenv",
+      "version": "1.2.4",
+      "advisories": []
+    },
+    {
+      "name": "pydantic",
+      "version": "2.6.4",
+      "advisories": []
+    },
+    {
+      "name": "APScheduler",
+      "version": "3.10.4",
+      "advisories": []
+    },
+    {
+      "name": "cryptography",
+      "version": "50.0.2",
+      "advisories": []
+    },
+    {
+      "name": "Pillow",
+      "version": "12.3.0",
+      "advisories": []
+    }
+  ]
+}

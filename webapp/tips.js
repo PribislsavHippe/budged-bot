@@ -51,7 +51,7 @@
     const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',signal:AbortSignal.timeout(20000),body:JSON.stringify({initData:tg?.initData||'',...body})});
     const data=await r.json();
     if(!r.ok)throw new Error(r.status===401?'Открой бота и зайди в приложение ещё раз.':data.error||'Не получилось сохранить.');
-    return data;
+    return window.PrivateFinance.view(path,body,data);
   }
   function changed(){closeDetail();document.dispatchEvent(new Event('tips-money-changed'));}
   function showDetail(kind){
@@ -116,12 +116,12 @@
     e.preventDefault();if(busy)return;
     const amount=validAmount($('tips-new-amount').value),account=$('tips-new-account').value,day=current.period.start;
     if(amount===null){$('tips-detail-status').textContent='Проверь сумму чаевых.';return;}
-    if(!pendingTip)pendingTip={operation_id:crypto.randomUUID(),amount,account,day};
+    if(!pendingTip)pendingTip={operation_id:crypto.randomUUID(),amount,account,day,mode:privateMoney.active?'device':'server'};
     if(pendingTip.amount!==amount||pendingTip.account!==account||pendingTip.day!==day){$('tips-detail-status').textContent='Сначала проверь предыдущую попытку сохранения.';return;}
     busy=true;$('tips-detail-status').textContent='Сохраняю…';
     try{
-      if(window.privateMoney.active)await privateMoney.add({id:'local:'+pendingTip.operation_id,kind:'income',account,
-        signed_amount:amount,category:'Чаевые',note:'из миниаппа',work_date:day,created_at:new Date().toISOString()});
+      if(window.privateMoney.active)await privateMoney.add({id:'local:'+pendingTip.operation_id,source_key:'calendar:'+pendingTip.operation_id,kind:'income',account,
+        signed_amount:amount,category:'Чаевые',note:'из миниаппа',work_date:day,created_at:new Date().toISOString()},pendingTip.mode==='server');
       else await post('/api/calendar_edit',{date:day,action:'tip_add',amount,account,operation_id:pendingTip.operation_id});
       pendingTip=null;changed();
     }catch(error){$('tips-detail-status').textContent=error.message;}

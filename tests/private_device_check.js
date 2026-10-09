@@ -132,7 +132,7 @@ function client(storage,url='https://example.com/app',fastTimeouts=false) {
   assert.equal(reopened.pm.entries.length,3);
 
   const python=`import json,sys,private_payload\nrequest=json.load(sys.stdin)\np,s=private_payload.seal(7,request['key'],{'id':'telegram:7:99:0','kind':'income','account':'card','signed_amount':650,'category':'Чаевые','work_date':'2026-10-04','created_at':'2026-10-04T20:03:00+03:00'},'test-bot-token')\nprint(json.dumps({'payload':p,'signature':s}))`;
-  const sealed=JSON.parse(execFileSync('.venv/bin/python',['-c',python],{input:JSON.stringify({key:server.publicKey})}));
+  const sealed=JSON.parse(execFileSync(process.env.BUDGET_TEST_PYTHON||'.venv/bin/python',['-c',python],{input:JSON.stringify({key:server.publicKey})}));
   reopened.location.href='https://example.com/app?private_entry='+sealed.payload+'&private_sig='+sealed.signature;
   assert.equal(await reopened.pm.importUrl(),'Запись сохранена на этом устройстве.');
   assert.equal(reopened.pm.entries.length,4);
@@ -159,17 +159,17 @@ function client(storage,url='https://example.com/app',fastTimeouts=false) {
 
   const pendingRecord={id:'telegram:7:100:0',kind:'income',account:'card',signed_amount:700,
     category:'Чаевые',work_date:'2026-10-04',created_at:'2026-10-04T20:05:00+03:00'};
-  const pending=JSON.parse(execFileSync('.venv/bin/python',['-c',
+  const pending=JSON.parse(execFileSync(process.env.BUDGET_TEST_PYTHON||'.venv/bin/python',['-c',
     `import json,sys,private_payload\nr=json.load(sys.stdin)\np,_=private_payload.seal(7,r['key'],r['record'],'test-bot-token')\nprint(json.dumps({'payload':p}))`],
     {input:JSON.stringify({key:server.publicKey,record:pendingRecord})}));
   const preCancelled={id:'telegram:7:101:0',kind:'income',account:'cash',signed_amount:350,
     category:'Чаевые',work_date:'2026-10-04',created_at:'2026-10-04T20:06:00+03:00'};
   const preCancel={id:preCancelled.id+':cancel',kind:'delete_change',
     target_id:preCancelled.id,signed_amount:0};
-  const sealedBeforeImport=JSON.parse(execFileSync('.venv/bin/python',['-c',
+  const sealedBeforeImport=JSON.parse(execFileSync(process.env.BUDGET_TEST_PYTHON||'.venv/bin/python',['-c',
     `import json,sys,private_payload\nr=json.load(sys.stdin)\np,_=private_payload.seal(7,r['key'],r['record'],'test-bot-token')\nprint(json.dumps({'payload':p}))`],
     {input:JSON.stringify({key:server.publicKey,record:preCancelled})}));
-  const sealedPreCancel=JSON.parse(execFileSync('.venv/bin/python',['-c',
+  const sealedPreCancel=JSON.parse(execFileSync(process.env.BUDGET_TEST_PYTHON||'.venv/bin/python',['-c',
     `import json,sys,private_payload\nr=json.load(sys.stdin)\np,_=private_payload.seal(7,r['key'],r['record'],'test-bot-token')\nprint(json.dumps({'payload':p}))`],
     {input:JSON.stringify({key:server.publicKey,record:preCancel})}));
   server.backups=[{record_id:pendingRecord.id,payload:pending.payload},
@@ -190,7 +190,7 @@ function client(storage,url='https://example.com/app',fastTimeouts=false) {
   assert.equal(reopened.pm.entries.find(e=>e.id===pendingRecord.id).signed_amount,800);
   const amendment={id:pendingRecord.id+':account:callback-1',kind:'account_change',
     target_id:pendingRecord.id,account:'cash',signed_amount:0};
-  const sealedAmendment=JSON.parse(execFileSync('.venv/bin/python',['-c',
+  const sealedAmendment=JSON.parse(execFileSync(process.env.BUDGET_TEST_PYTHON||'.venv/bin/python',['-c',
     `import json,sys,private_payload\nr=json.load(sys.stdin)\np,_=private_payload.seal(7,r['key'],r['record'],'test-bot-token')\nprint(json.dumps({'payload':p}))`],
     {input:JSON.stringify({key:server.publicKey,record:amendment})}));
   server.backups.push({record_id:amendment.id,payload:sealedAmendment.payload});
@@ -200,7 +200,7 @@ function client(storage,url='https://example.com/app',fastTimeouts=false) {
   assert.equal(await reopened.pm.sync(),0);
   const cancellation={id:pendingRecord.id+':cancel',kind:'delete_change',
     target_id:pendingRecord.id,signed_amount:0};
-  const sealedCancellation=JSON.parse(execFileSync('.venv/bin/python',['-c',
+  const sealedCancellation=JSON.parse(execFileSync(process.env.BUDGET_TEST_PYTHON||'.venv/bin/python',['-c',
     `import json,sys,private_payload\nr=json.load(sys.stdin)\np,_=private_payload.seal(7,r['key'],r['record'],'test-bot-token')\nprint(json.dumps({'payload':p}))`],
     {input:JSON.stringify({key:server.publicKey,record:cancellation})}));
   server.backups.push({record_id:cancellation.id,payload:sealedCancellation.payload});

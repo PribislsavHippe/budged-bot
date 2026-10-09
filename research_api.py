@@ -58,7 +58,7 @@ async def handle(request):
             if version is not None and (type(version) is not int or not 0<=version<=100):raise ValueError()
             owner_sid=await research.owner_subject_id(uid)
             # Fetch subjects without the private Telegram mapping.
-            subjects=await research.pages('research_subjects','id,label,cohort,onboarding_version',lambda q:q.order('label'))
+            subjects=await research.pages('research_subjects','id,label,cohort,onboarding_version,first_started_at',lambda q:q.order('label'))
             since=(datetime.now(timezone.utc)-timedelta(days=days+1)).isoformat()
             def event_query(q):
                 q=q.gte('occurred_at',since)

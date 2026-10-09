@@ -20,7 +20,6 @@ from aiohttp import web
 
 import db
 import calendar_feed
-import google_calendar as gcal
 import private_payload
 from stats import _entry_date, compute_month, compute_stats, month_bounds
 from workday import op_today
@@ -60,7 +59,7 @@ async def serve_app(request: web.Request) -> web.Response:
 
 def _private_entries(body: dict) -> list[dict]:
     entries=body.get('private_entries',[])
-    if not isinstance(entries,list) or len(entries)>5000:raise ValueError('private_entries_invalid')
+    if not isinstance(entries,list) or len(entries)>100000:raise ValueError('private_entries_invalid')
     for e in entries:
         if not isinstance(e,dict) or e.get('kind') not in {'income','expense','adjustment','accrual'} \
                 or e.get('account') not in {'cash','card','pending'} \
@@ -80,7 +79,7 @@ def _private_exit_payload(body: dict) -> tuple[str, list[dict], list[str]]:
     operation=str(UUID(str(body['operation_id'])))
     entries=_private_entries(body)
     receipts=body['receipts']
-    if not isinstance(receipts,list) or len(receipts)>10000 or any(
+    if not isinstance(receipts,list) or len(receipts)>1000000 or any(
         not isinstance(r,str) or not 1<=len(r)<=128 for r in receipts):
         raise ValueError('private_exit_receipts_invalid')
     ids=[str(e['id']) for e in entries]
@@ -113,7 +112,9 @@ def _private_exit_payload(body: dict) -> tuple[str, list[dict], list[str]]:
 async def _entries_for_view(user_id: int, body: dict) -> tuple[list[dict],bool]:
     user=await db.get_or_create_user(user_id)
     private=bool(user.get('private_money_mode'))
-    return (_private_entries(body) if private else await db.get_all_entries(user_id)),private
+    if 'private_entries' in body:
+        raise ValueError('private_views_are_local')
+    return ([] if private else await db.get_all_entries(user_id)),private
 
 
 async def _stats_payload(app: web.Application, user_id: int, body: dict | None = None) -> dict:
@@ -132,6 +133,7 @@ async def _stats_payload(app: web.Application, user_id: int, body: dict | None =
     shifts = await db.get_shift_dates(user_id)
     prefix = today.strftime("%Y-%m")
     payload["scheduled_shifts"] = [s for s in shifts if s.startswith(prefix)]
+    payload["calendar_shift_dates"] = shifts
     payload.update(month_bounds(entries, shifts, today.year, today.month, today))
     first=today.replace(day=1).isoformat()
     last=today.replace(day=monthrange(today.year,today.month)[1]).isoformat()
@@ -155,7 +157,7 @@ async def api_private_prepare(request: web.Request) -> web.Response:
         return web.json_response({'active':False,'entries':[],
                                   'last_exit_operation':str(user['private_money_exit_operation'])
                                       if user.get('private_money_exit_operation') else None},headers=NO_CACHE)
-    entries=await db.get_all_entries(user_id)
+    entries=[{k:v for k,v in e.items() if k!='source_payload'} for e in await db.get_all_entries(user_id)]
     return web.json_response({'active':False,'entries':entries,
                               'last_exit_operation':str(user['private_money_exit_operation'])
                                   if user.get('private_money_exit_operation') else None},headers=NO_CACHE)
@@ -171,21 +173,30 @@ async def api_private_activate(request: web.Request) -> web.Response:
         if not isinstance(ids,list) or len(ids)>100000 or any(type(i) is not int or i<=0 for i in ids):raise ValueError()
         ids=sorted(ids)
         if len(ids)!=len(set(ids)):raise ValueError()
+        versions=body['entry_versions']
+        if not isinstance(versions,list) or len(versions)!=len(ids):raise ValueError()
+        if any(not isinstance(e,dict) or type(e.get('id')) is not int or
+               type(e.get('revision')) is not int or e['revision']<=0 for e in versions):raise ValueError()
+        expected={e['id']:e['revision'] for e in versions}
+        if sorted(expected)!=ids:raise ValueError()
     except (KeyError,ValueError,TypeError):
         return web.json_response({'error':'Не получилось подготовить приватный режим.'},status=400,headers=NO_CACHE)
     try:
         entries=await db.get_all_entries(user_id)
-        if sorted(e['id'] for e in entries)!=ids:
+        if sorted(e['id'] for e in entries)!=ids or any(expected[e['id']]!=e.get('revision') for e in entries):
             return web.json_response({'error':'Записи изменились во время переноса. Повтори перенос.'},status=409,headers=NO_CACHE)
         backups=[{'record_id':str(e['id']),
-                  'payload':private_payload.seal(user_id,public_key,e,request.app['bot_token'])[0]}
+                  'payload':private_payload.seal(user_id,public_key,{k:v for k,v in e.items() if k!='source_payload'},request.app['bot_token'])[0]}
                  for e in entries]
         await db._execute(db.supabase.rpc('activate_private_money_with_backups',
-            {'actor':user_id,'expected_ids':ids,'public_key':public_key,'backups':backups}))
+            {'actor':user_id,'expected_ids':ids,'expected_versions':versions,
+             'public_key':public_key,'backups':backups}))
     except Exception as error:
         from diagnostics import failure
         failure(error,area='private_money',stage='activate')
-        if (await db.get_or_create_user(user_id)).get('private_money_mode'):
+        user=await db.get_or_create_user(user_id)
+        current_key=user.get('private_money_public_key') or {}
+        if user.get('private_money_mode') and current_key.get('n')==public_key['n'] and current_key.get('e')==public_key['e']:
             return web.json_response({'active':True},headers=NO_CACHE)
         return web.json_response({'error':'Не получил подтверждение переноса. Проверь режим и повтори попытку.'},status=409,headers=NO_CACHE)
     return web.json_response({'active':True},headers=NO_CACHE)
@@ -302,7 +313,10 @@ async def api_shift_spend(request: web.Request) -> web.Response:
     if (await db.get_or_create_user(user_id)).get('private_money_mode'):
         return web.json_response({'error':'В приватном режиме сохраняй расход на устройстве.'},status=409,headers=NO_CACHE)
     try:
+        from datetime import date
         operation=str(UUID(str(body.get('operation_id',''))))
+        work_day=date.fromisoformat(body['date']) if body.get('date') else op_today()
+        if work_day>op_today():raise ValueError()
         raw=body.get('amount')
         if isinstance(raw,bool):raise ValueError()
         amount=Decimal(str(raw).replace(' ','').replace(',','.'))
@@ -315,15 +329,29 @@ async def api_shift_spend(request: web.Request) -> web.Response:
         return web.json_response({'error':'Проверь сумму и название расхода.'},status=400,headers=NO_CACHE)
     try:
         result=(await db._execute(db.supabase.rpc('add_miniapp_expense',
-            {'actor':user_id,'operation':operation,'amount':float(amount),'category_name':category}))).data
+            {'actor':user_id,'operation':operation,'amount':float(amount),'category_name':category,
+             'work_day':work_day.isoformat()}))).data
     except Exception as error:
         from diagnostics import failure
         code,reference=failure(error,area='expense',stage='save')
         return web.json_response({'error':'Не получил подтверждение. Повтори — второй расход не появится.',
                                   'code':code,'reference':reference},status=503,headers=NO_CACHE)
+    if result.get('already_processed'):
+        return web.json_response({'saved':True,'already_processed':True},headers=NO_CACHE)
     _track_saved_money_entry(user_id,result['id'],'expense_added')
     # Confirm the write immediately. The miniapp refreshes totals separately.
     return web.json_response({'saved':True},headers=NO_CACHE)
+
+
+async def api_money_source(request: web.Request) -> web.Response:
+    """A mode change can retry a pending operation without sending its amount."""
+    user_id,body=await _auth(request)
+    if user_id is None:return body
+    import re
+    source=body.get('source_key')
+    if not isinstance(source,str) or not re.fullmatch(r'(?:calendar|calendar-expense|miniapp-expense):[0-9a-f-]{36}',source):
+        return web.json_response({'error':'Не получилось проверить предыдущую запись.'},status=400,headers=NO_CACHE)
+    return web.json_response({'seen':await db.money_source_seen(user_id,source)},headers=NO_CACHE)
 
 
 async def api_tips_compare(request: web.Request) -> web.Response:
@@ -402,6 +430,8 @@ async def api_month(request: web.Request) -> web.Response:
     shifts = await db.get_shift_dates(user_id)
     result=compute_month(entries, shifts, year, month)
     result['private_money_mode']=private
+    result['operational_today']=op_today().isoformat()
+    result['calendar_shift_dates']=shifts
     first=f'{year:04d}-{month:02d}-01'
     last=f'{year:04d}-{month:02d}-{monthrange(year,month)[1]:02d}'
     result['planned_times']=await db.get_shift_details(user_id,first,last)
@@ -441,23 +471,10 @@ async def api_calendar_edit(request: web.Request) -> web.Response:
         await db.save_shift(user_id,day_iso,start,end)
         import research
         research.track(user_id,'shift_planned',source='miniapp',screen='calendar')
-        warning=None
-        try:
-            if await gcal.is_connected(user_id):
-                synced=await gcal.sync_shifts(user_id,[day_iso])
-                if not synced.get('synced'):warning='Смена сохранена, но Google Календарь не обновился.'
-        except Exception:
-            warning='Смена сохранена, но Google Календарь не обновился.'
-        return web.json_response({'saved':True,'warning':warning},headers=NO_CACHE)
+        return web.json_response({'saved':True},headers=NO_CACHE)
     if action=='shift_delete':
-        removed=await db.delete_shift(user_id,day_iso)
-        warning=None
-        if removed:
-            try:
-                if await gcal.is_connected(user_id):await gcal.delete_shift_event(user_id,day_iso)
-            except Exception:
-                warning='Смена удалена здесь. Проверь её в Google Календаре.'
-        return web.json_response({'saved':True,'warning':warning},headers=NO_CACHE)
+        await db.delete_shift(user_id,day_iso)
+        return web.json_response({'saved':True},headers=NO_CACHE)
     if action=='tip_add':
         try:
             raw=body.get('amount')
@@ -474,6 +491,7 @@ async def api_calendar_edit(request: web.Request) -> web.Response:
                                      note='из календаря',work_date=day_iso,source_key='calendar:'+operation)
         except ValueError:
             return web.json_response({'error':'Эта попытка уже сохранила другую сумму. Обнови календарь.'},status=409,headers=NO_CACHE)
+        if entry is None:return web.json_response({'saved':True,'already_processed':True},headers=NO_CACHE)
         _track_saved_money_entry(user_id,entry['id'],'tip_added')
         return web.json_response({'saved':True,'id':entry['id']},headers=NO_CACHE)
     if action=='expense_add':
@@ -495,6 +513,7 @@ async def api_calendar_edit(request: web.Request) -> web.Response:
                                      note='из миниаппа',work_date=day_iso,source_key='calendar-expense:'+operation)
         except ValueError:
             return web.json_response({'error':'Эта попытка уже сохранила другой расход. Обнови календарь.'},status=409,headers=NO_CACHE)
+        if entry is None:return web.json_response({'saved':True,'already_processed':True},headers=NO_CACHE)
         _track_saved_money_entry(user_id,entry['id'],'expense_added')
         return web.json_response({'saved':True,'id':entry['id']},headers=NO_CACHE)
     try:
@@ -585,25 +604,11 @@ async def api_entry_edit(request: web.Request) -> web.Response:
 
 
 async def api_gcal(request: web.Request) -> web.Response:
-    """Статус Google Календаря + ссылка для подключения (внешний браузер)."""
+    # Old miniapp versions get an explanation, never an OAuth URL.
     user_id, body = await _auth(request)
-    if user_id is None:
-        return body
-    if not gcal.is_configured():
-        return web.json_response({"configured": False, "connected": False}, headers=NO_CACHE)
-    status = await gcal.connection_status(user_id)
-    connected = status["connected"]
-    return web.json_response({
-        "configured": True,
-        "message": status["message"],
-        "error": status.get("error"),
-        "connected": connected,
-        "auth_url": None if connected or status.get("error") == "temporary" else gcal.auth_url(user_id),
-        # Приложение не прошло проверку Google, доступ выдаётся вручную —
-        # мини-ап предупреждает об этом до нажатия кнопки.
-        "invite_only": gcal.INVITE_ONLY,
-        "support": os.getenv("SUPPORT_CONTACT") or None,
-    }, headers=NO_CACHE)
+    if user_id is None:return body
+    return web.json_response({'error':'Теперь календарь подключается по ссылке в «Статистике».',
+                              'configured':False,'connected':False},status=410,headers=NO_CACHE)
 
 
 def _calendar_base_url(request: web.Request) -> str | None:
@@ -652,7 +657,8 @@ async def api_iphone_calendar(request: web.Request) -> web.Response:
         return web.json_response({'available': True, 'enabled': False}, headers=NO_CACHE)
     feed_url, setup_url = _calendar_urls(base, row, request.app['bot_token'])
     return web.json_response({'available': True, 'enabled': True,
-                              'feed_url': feed_url, 'setup_url': setup_url}, headers=NO_CACHE)
+                              'feed_url': feed_url, 'setup_url': setup_url,
+                              'subscribe_url': setup_url + '/subscribe'}, headers=NO_CACHE)
 
 
 async def _verified_calendar_feed(request: web.Request) -> dict | None:
@@ -685,6 +691,19 @@ async def iphone_calendar_feed(request: web.Request) -> web.Response:
                         headers=CALENDAR_HEADERS)
 
 
+async def iphone_calendar_subscribe(request: web.Request) -> web.Response:
+    """Bridge Telegram's HTTPS-only openLink to Apple's subscription handler."""
+    row = await _verified_calendar_feed(request)
+    if not row:
+        return web.Response(status=404, headers=CALENDAR_HEADERS)
+    base = _calendar_base_url(request)
+    if not base:
+        return web.Response(status=503, headers=CALENDAR_HEADERS)
+    feed_url, _ = _calendar_urls(base, row, request.app['bot_token'])
+    return web.Response(status=302, headers={**CALENDAR_HEADERS,
+                        'Location': 'webcal://' + feed_url.removeprefix('https://')})
+
+
 async def iphone_calendar_setup(request: web.Request) -> web.Response:
     row = await _verified_calendar_feed(request)
     if not row:
@@ -694,6 +713,7 @@ async def iphone_calendar_setup(request: web.Request) -> web.Response:
         return web.Response(status=503, headers=CALENDAR_HEADERS)
     feed_url, _ = _calendar_urls(base, row, request.app['bot_token'])
     safe = html.escape(feed_url, quote=True)
+    subscription = html.escape('webcal://' + feed_url.removeprefix('https://'), quote=True)
     page = ("<!doctype html><html lang='ru'><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>Календарь смен</title><style>body{max-width:36rem;margin:3rem auto;"
@@ -701,11 +721,16 @@ async def iphone_calendar_setup(request: web.Request) -> web.Response:
             "BlinkMacSystemFont,sans-serif}h1{font-weight:400}input{box-sizing:border-box;"
             "width:100%;padding:.8rem;border:1px solid #aaa;border-radius:.5rem;font:inherit}"
             "li{margin:.8rem 0}</style><h1>Календарь смен</h1>"
-            "<p>Скопируй личную ссылку. В приложении «Календарь» открой «Календари» → "
+            "<h2>iPhone</h2><p>Скопируй личную ссылку. В приложении «Календарь» открой «Календари» → "
             "«Добавить календарь» → «Добавить календарь подписки» и вставь её.</p>"
             f"<input aria-label='Личная ссылка на календарь' readonly value='{safe}'>"
-            f"<p><a href='{safe}'>Открыть ссылку на iPhone</a>. Если откроется импорт файла, "
-            "используй подписку по шагам выше.</p>"
+            f"<p><a href='{subscription}'>Добавить подписку на iPhone</a></p>"
+            "<h2>Android</h2><p>Установи <a href='https://icsx5.bitfire.at/'>ICSx⁵</a>, "
+            "добавь подписку и вставь эту ссылку. Google-аккаунт не нужен. "
+            "Разреши приложению доступ к календарю телефона: там появятся смены.</p>"
+            "<p>Если пользуешься Google Календарём, открой его веб-версию на компьютере: "
+            "«Другие календари» → «Добавить» → «По URL». Вставь ссылку. "
+            "Войти в свой Google придётся, но доступ к аккаунту боту не передаётся.</p>"
             "<p>Подписка обновляет смены автоматически. Открытие файла .ics как обычного "
             "файла создаст разовый импорт. Ссылка даёт доступ только к датам и времени смен; "
             "не передавай её другим людям.</p></html>")
@@ -716,33 +741,10 @@ async def iphone_calendar_setup(request: web.Request) -> web.Response:
 
 
 async def google_callback(request: web.Request) -> web.Response:
-    """Редирект от Google после согласия. Меняем код на токен, сохраняем."""
-    code = request.query.get("code")
-    state = request.query.get("state", "")
-    user_id = gcal.verify_state(state)
-    page = ("<!doctype html><meta charset=utf-8><meta name=viewport "
-            "content='width=device-width,initial-scale=1'>"
-            "<body style='font-family:-apple-system,sans-serif;text-align:center;padding:60px 24px'>")
-    if not code or user_id is None:
-        return web.Response(text=page + "<h2>Не получилось</h2><p>Ссылка недействительна.</p>",
-                            content_type="text/html", status=400)
-    try:
-        await gcal.exchange_code(user_id, code)
-    except Exception as e:
-        from diagnostics import failure
-        failure(e,area='calendar',stage='callback')
-        return web.Response(text=page + "<h2>Ошибка</h2><p>Не удалось подключить календарь.</p>",
-                            content_type="text/html", status=500)
-    try:
-        sync = await gcal.sync_pending(user_id)
-    except Exception as error:
-        from diagnostics import failure
-        failure(error,area='calendar',stage='backfill')
-        sync = {"synced": 0, "pending": "неизвестно", "message": "Подключение сохранено. В чате бота отправь /calendar, чтобы повторить добавление смен."}
-    return web.Response(
-        text=page + f"<h2>Календарь подключён ✓</h2><p>Добавлено смен: {sync['synced']}. Пока не добавлены: {sync['pending']}.</p><p>{sync['message']}</p><p>Возвращайся в Telegram.</p>",
-        content_type="text/html",
-    )
+    # Previously issued authorization links must not exchange or retain tokens.
+    return web.Response(text='Подключение через Google больше не используется. '
+                        'Открой «Статистику» и подключи календарь по ссылке.',
+                        status=410,content_type='text/plain',headers=NO_CACHE)
 
 
 @web.middleware
@@ -782,7 +784,7 @@ async def service_charge_view(request: web.Request) -> web.Response:
         entries, private = await _entries_for_view(user_id, body)
     except ValueError:
         return web.json_response({"error": "Не получилось открыть личные начисления. Обнови страницу."}, status=400, headers=NO_CACHE)
-    return web.json_response({**summarize(entries, month), "private": private}, headers=NO_CACHE)
+    return web.json_response({**summarize(entries, month), "private": private, "month": month}, headers=NO_CACHE)
 
 
 def register_webapp_routes(app: web.Application, bot_token: str, bot_username: str | None = None):
@@ -797,6 +799,7 @@ def register_webapp_routes(app: web.Application, bot_token: str, bot_username: s
     from restaurant_api import register
     register(app)
     app.router.add_get("/app", serve_app)
+    app.router.add_get("/app/private-finance.js", lambda _: web.FileResponse(os.path.join(WEBAPP_DIR, "private-finance.js"), headers=NO_CACHE))
     app.router.add_get("/app/sales.js", lambda _: web.FileResponse(os.path.join(WEBAPP_DIR, "sales.js"), headers=NO_CACHE))
     app.router.add_get("/app/sales.css", lambda _: web.FileResponse(os.path.join(WEBAPP_DIR, "sales.css"), headers=NO_CACHE))
     app.router.add_post("/api/stats", api_stats)
@@ -807,6 +810,7 @@ def register_webapp_routes(app: web.Application, bot_token: str, bot_username: s
             return web.FileResponse(os.path.join(WEBAPP_DIR, asset), headers=NO_CACHE)
         app.router.add_get("/app/" + asset, serve_asset)
     app.router.add_post("/api/shift_spend", api_shift_spend)
+    app.router.add_post("/api/money_source", api_money_source)
     app.router.add_post("/api/month", api_month)
     app.router.add_post("/api/calendar_edit", api_calendar_edit)
     app.router.add_post("/api/private/prepare", api_private_prepare)
@@ -821,5 +825,6 @@ def register_webapp_routes(app: web.Application, bot_token: str, bot_username: s
     app.router.add_post("/api/gcal", api_gcal)
     app.router.add_post("/api/iphone_calendar", api_iphone_calendar)
     app.router.add_get("/calendar/iphone/{feed_id}/{token}.ics", iphone_calendar_feed)
+    app.router.add_get("/calendar/iphone/{feed_id}/{token}/subscribe", iphone_calendar_subscribe)
     app.router.add_get("/calendar/iphone/{feed_id}/{token}", iphone_calendar_setup)
     app.router.add_get("/google/callback", google_callback)
