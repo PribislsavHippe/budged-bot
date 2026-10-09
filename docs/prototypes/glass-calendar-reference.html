@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Календарь смен — макет по Glass Calendar</title>
+<style>
+*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:#d3f8e2;color:#181617;font-family:Arial,sans-serif}.page{max-width:480px;margin:auto;padding:24px 16px}.intro{font-size:14px;line-height:1.5;margin:0 0 20px}h1{font-size:24px;font-weight:400;margin:0 0 20px}.stage{padding:28px 12px;border-radius:30px;background:#506577 url('https://cdn.21st.dev/assets/mirror/6b/6b26d74b493809987a1077fff2770ce4fe1914e3032b286d07e410d034884e13.jpg') center/cover}.glass{padding:22px 18px 20px;border-radius:24px;border:1px solid #ffffff30;background:rgba(0,0,0,.24);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);box-shadow:0 18px 36px #00000018;color:white}button{font:inherit;cursor:pointer;color:inherit}.top{display:flex;align-items:center;justify-content:space-between;gap:8px}.tabs{display:flex;gap:4px;background:#0003;border-radius:12px;padding:4px}.tabs button{border:0;background:none;font-size:14px;font-weight:700;padding:8px 12px;border-radius:9px;min-height:36px;color:#ffffffa6}.tabs button[aria-pressed=true]{background:white;color:black;box-shadow:0 3px 6px #0002}.icon svg{width:20px;height:20px;vertical-align:middle}.connect svg{width:17px;height:17px;vertical-align:middle;margin-right:5px}.icon{background:none;border:0;border-radius:10px;width:44px;height:44px;font-size:24px;color:#ffffffb3}.head{display:flex;align-items:center;justify-content:space-between;gap:4px;margin:28px 0 24px}.month{font-size:36px;letter-spacing:-1.3px;font-weight:700;line-height:1.15}.year{font-size:13px;color:#ffffffa6;margin-top:5px}.arrows{display:flex;gap:0}.arrows button{width:32px}.weekdays,.grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px}.weekdays{margin-bottom:8px;font-size:11px;font-weight:700;color:#ffffffa6;text-align:center}.date{min-height:52px;border:0;border-radius:12px;background:transparent;color:white;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:14px;font-weight:700;position:relative;min-width:0;padding:2px}.date.shift{background:#ffffff17}.date.recorded{background:#ffffff30}.date.selected{background:white;color:#181617;box-shadow:0 4px 12px #0002}.date.today:after{content:'';position:absolute;top:5px;right:6px;width:4px;height:4px;border-radius:50%;background:currentColor}.hours{font-size:10px;font-weight:400;line-height:1.15;white-space:normal}.strip{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;gap:4px}.strip::-webkit-scrollbar{display:none}.strip .date{flex:0 0 calc((100% - 24px)/7);scroll-snap-align:start;min-height:76px}.dayname{font-size:11px;color:#ffffffa6;margin-bottom:6px}.selected .dayname{color:#181617a6}.footer{border-top:1px solid #ffffff30;margin-top:24px;padding-top:16px;display:flex;align-items:center;justify-content:space-between;gap:8px}.connect{border:0;background:none;color:#ffffffb3;font-size:13px;padding:8px 0;min-height:44px}.add{border:0;border-radius:12px;padding:12px 14px;min-height:44px;background:#0003;box-shadow:0 4px 10px #0002;font-weight:700;font-size:13px}.legend{color:#ffffffb3;font-size:11px;margin:16px 0 0;line-height:1.5}.note{margin-top:18px;font-size:12px;line-height:1.5;color:#4f474d}.date:hover:not(.selected){background:#ffffff30}button:focus-visible{outline:2px solid currentColor;outline-offset:2px}.modal{border:0;border-radius:24px;padding:24px;max-width:calc(100vw - 24px);width:390px;color:#181617}.modal::backdrop{background:#0006}.modal h2{font-size:20px;font-weight:400;margin:0 0 22px}.row{display:flex;justify-content:space-between;gap:16px;border-bottom:1px solid #ddd;padding:16px 0;font-size:15px}.modal button{border:0;border-radius:12px;background:#181617;color:white;padding:14px;width:100%;margin-top:22px;min-height:44px}.muted{color:#6f6970;font-size:13px;line-height:1.5}@media(max-width:350px){.page{padding:20px 10px}.stage{padding:24px 8px}.glass{padding-inline:12px}.month{font-size:31px}.tabs button{font-size:12px;padding-inline:10px}.hours{font-size:9px}}@media(prefers-reduced-transparency:reduce){.glass{background:#4d536b;backdrop-filter:none;-webkit-backdrop-filter:none}}
+</style>
+<main class="page">
+<p class="intro">Макет на примерных данных. Рабочие записи бота здесь не используются.</p>
+<h1>Календарь смен</h1>
+<section class="stage" aria-label="Макет календаря">
+<div class="glass">
+<div class="top"><div class="tabs" aria-label="Вид календаря"><button id="week" aria-pressed="false">Неделя</button><button id="month" aria-pressed="true">Месяц</button></div><button class="icon" id="info" aria-label="О макете"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m9 3-.7 2.2-2 .8L4.2 5.5 2.5 8.4l1.5 1.7-.3 2.1L2 13.7l1.7 2.9 2.2-.5 1.6 1.4.6 2.5h3.4l.8-2.2 2-.8 2.1.5 1.7-2.9-1.5-1.7.3-2.1 1.7-1.5-1.7-2.9-2.2.5-1.6-1.4-.6-2.5z"/><circle cx="10.5" cy="11.5" r="3"/></svg></button></div>
+<div class="head"><div><div class="month" id="title"></div><div class="year" id="year"></div></div><div class="arrows"><button class="icon" id="prev" aria-label="Предыдущий месяц">‹</button><button class="icon" id="next" aria-label="Следующий месяц">›</button></div></div>
+<div class="weekdays" id="weekdays"></div><div class="grid" id="dates"></div>
+<div class="footer"><button class="connect" id="connect"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M10 5h4m-3 14h2"/></svg>Подключить iPhone</button><button class="add" id="add">＋ Смена</button></div>
+<p class="legend">Подложка — смена. Более светлая — записаны чаевые.</p>
+</div></section>
+<p class="note">Вид по открытому демо Glass Calendar, Ravi Katiyar. Фон из присланного примера остаётся внутри календарного блока. Переключи вид, пролистай месяц и нажми на дату.</p>
+<dialog class="modal" id="dialog"><h2 id="dialog-title"></h2><div id="dialog-content"></div><button id="close">Готово</button></dialog>
+</main>
+<script>
+const months=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+const monthsGen=['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+const weekdays=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+const shifts=new Map([[2,'9–21'],[5,'10–22'],[7,'10–22'],[8,'11–23'],[9,'12–23'],[12,'9–21'],[13,'14–23'],[15,'12–23']]);
+let year=2026,month=9,selected='2026-10-09',weekly=false;
+const $=id=>document.getElementById(id);
+function iso(day){return year+'-'+String(month+1).padStart(2,'0')+'-'+String(day).padStart(2,'0')}
+function modal(title,rows){$('dialog-title').textContent=title;$('dialog-content').replaceChildren();for(const [label,value] of rows){const row=document.createElement('div');row.className='row';const key=document.createElement('span');key.textContent=label;const val=document.createElement('span');val.textContent=value;row.append(key,val);$('dialog-content').append(row)}$('dialog').showModal()}
+function openDay(day){selected=iso(day);render();const example=year===2026&&month===9;modal(day+' '+monthsGen[month],[['По графику',example&&shifts.has(day)?shifts.get(day):'Смена не добавлена'],['Чаевые',example&&day===2?'7 850 ₽':'Ещё не записаны'],['Данные','Пример для макета']])}
+function render(){
+ $('title').textContent=months[month];$('year').textContent=year;
+ $('week').setAttribute('aria-pressed',String(weekly));$('month').setAttribute('aria-pressed',String(!weekly));
+ $('prev').disabled=year===2000&&month===0;$('next').disabled=year===2100&&month===11;
+ $('weekdays').hidden=weekly;$('weekdays').replaceChildren();for(const name of weekdays){const label=document.createElement('span');label.textContent=name;$('weekdays').append(label)}
+ const dates=$('dates');const scroll=dates.scrollLeft;dates.className=weekly?'strip':'grid';dates.replaceChildren();
+ const first=(new Date(Date.UTC(year,month,1)).getUTCDay()+6)%7;
+ if(!weekly)for(let i=0;i<first;i++)dates.append(document.createElement('span'));
+ for(let day=1;day<=new Date(Date.UTC(year,month+1,0)).getUTCDate();day++){
+  const button=document.createElement('button');button.className='date';button.type='button';
+  button.setAttribute('aria-label',day+' '+months[month]+'. Открыть день');button.setAttribute('aria-pressed',String(selected===iso(day)));
+  if(weekly){const name=document.createElement('span');name.className='dayname';name.textContent=weekdays[(first+day-1)%7];button.append(name)}
+  const number=document.createElement('span');number.textContent=day;button.append(number);
+  if(year===2026&&month===9&&shifts.has(day)){button.classList.add('shift');const hours=document.createElement('span');hours.className='hours';hours.textContent=shifts.get(day);button.append(hours)}
+  if(year===2026&&month===9&&day===2)button.classList.add('recorded');
+  if(iso(day)==='2026-10-09'){button.classList.add('today');button.setAttribute('aria-current','date')}
+  if(selected===iso(day))button.classList.add('selected');button.onclick=()=>openDay(day);dates.append(button);
+ }
+ if(weekly)dates.scrollLeft=scroll;
+}
+$('week').onclick=()=>{weekly=true;render();const target=$('dates').querySelector('.selected');if(target)$('dates').scrollLeft=Math.max(0,target.offsetLeft-$('dates').offsetLeft-12)};
+$('month').onclick=()=>{weekly=false;render()};
+function navigate(delta){month+=delta;if(month<0){month=11;year--}if(month>11){month=0;year++}render();$('dates').scrollLeft=0}
+$('prev').onclick=()=>navigate(-1);$('next').onclick=()=>navigate(1);
+$('add').onclick=()=>openDay(Number(selected.slice(0,4))===year&&Number(selected.slice(5,7))===month+1?Number(selected.slice(8)):1);
+$('connect').onclick=()=>modal('Подключить iPhone',[['В рабочем боте','Откроется подписка в календаре'],['В макете','Подключение не выполняется']]);
+$('info').onclick=()=>modal('О макете',[['Смены и суммы','Примерные'],['Действия','Не меняют данные бота']]);
+$('close').onclick=()=>$('dialog').close();$('dialog').onclick=e=>{if(e.target===$('dialog')){const r=$('dialog').getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)$('dialog').close()}};
+render();
+</script>
+</html>
