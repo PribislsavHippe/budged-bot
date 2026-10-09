@@ -1149,3 +1149,10 @@ Apple разделяет спокойный материал содержимо�
 - https://developer.apple.com/design/human-interface-guidelines/materials
 - https://developer.apple.com/design/human-interface-guidelines/buttons
 - https://developer.apple.com/design/tips/
+
+### 9 октября — новая палитра фонов
+
+По просьбе владельца фон при открытии случайно выбирается из пяти цветов
+со скриншота: #D3F8E2, #E4C1F9, #F694C1, #EDE7B1, #A9DEF9. Заменены прежние
+девять фоновых вариантов и запасной цвет до загрузки CSS. Цвета текста,
+смысловые отметки и поверхность календаря не менялись. Пуш запрошен сразу.

@@ -16,7 +16,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=Prata&display=swap">
 <script>
   // One pastel theme per opening; never change it while the user is working.
-  const PALETTES=['powder-blush','apricot-cream','cream','tea-green','electric-aqua','baby-blue-ice','periwinkle','mauve','porcelain'];
+  const PALETTES=['mint','lavender','pink','sand','sky'];
   document.documentElement.dataset.palette=PALETTES[Math.floor(Math.random()*PALETTES.length)];
 </script>
 <style>
@@ -39,10 +39,10 @@
      числа. word-spacing поджимает только пробелы, цифры не трогает. */
   .hero, .r .val, .r .tag, .hist-amt, .num { word-spacing: -0.3em; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html { background: var(--page, #ffadad); }
+  html { background: var(--page, #d3f8e2); }
   #bg {
     position: fixed; inset: 0; z-index: -1;
-    background-color: var(--page, #ffadad);
+    background-color: var(--page, #d3f8e2);
     background-blend-mode: overlay, normal, normal, normal;
     background-size: 120px 120px, auto, auto, auto;
   }
@@ -189,20 +189,15 @@
   .cal-time { font-size: 8px; line-height: 1.1; white-space: nowrap; margin-top: 2px; letter-spacing: -.3px; }
   .cal-cell.empty { background: transparent; }
   :root {
-    --powder-blush:#ffadad;--apricot-cream:#ffd6a5;--cream:#fdffb6;
-    --tea-green:#caffbf;--electric-aqua:#9bf6ff;--baby-blue-ice:#a0c4ff;
-    --periwinkle:#bdb2ff;--mauve:#ffc6ff;--porcelain:#fffffc;
-    --page:var(--powder-blush);--tile:var(--porcelain);--accent:#343157;
+    --mint:#d3f8e2;--lavender:#e4c1f9;--pink:#f694c1;
+    --sand:#ede7b1;--sky:#a9def9;--porcelain:#fffffc;
+    --page:var(--mint);--tile:var(--porcelain);--accent:#343157;
     --ink:#181617;--ink-soft:#4f474d;
   }
-  :root[data-palette=apricot-cream] { --page:var(--apricot-cream); }
-  :root[data-palette=cream] { --page:var(--cream); }
-  :root[data-palette=tea-green] { --page:var(--tea-green); }
-  :root[data-palette=electric-aqua] { --page:var(--electric-aqua); }
-  :root[data-palette=baby-blue-ice] { --page:var(--baby-blue-ice); }
-  :root[data-palette=periwinkle] { --page:var(--periwinkle); }
-  :root[data-palette=mauve] { --page:var(--mauve); }
-  :root[data-palette=porcelain] { --page:var(--porcelain); }
+  :root[data-palette=lavender] { --page:var(--lavender); }
+  :root[data-palette=pink] { --page:var(--pink); }
+  :root[data-palette=sand] { --page:var(--sand); }
+  :root[data-palette=sky] { --page:var(--sky); }
   #bg { background:var(--page); }
   /* One glass surface; dates remain flat controls inside it. */
   .cal-surface,.iphone-calendar-toggle {
