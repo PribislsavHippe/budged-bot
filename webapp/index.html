@@ -199,50 +199,70 @@
   :root[data-palette=sand] { --page:var(--sand); }
   :root[data-palette=sky] { --page:var(--sky); }
   #bg { background:var(--page); }
-  /* One glass surface; dates remain flat controls inside it. */
-  .cal-surface,.iphone-calendar-toggle {
-    background:linear-gradient(145deg,rgba(255,255,255,.08),rgba(255,255,255,.02)),rgba(255,255,252,.14);
-    border:1px solid rgba(255,255,255,.32);
-    -webkit-backdrop-filter:blur(16px) saturate(120%);
-    backdrop-filter:blur(16px) saturate(120%);
-    box-shadow:inset 0 1px 0 rgba(255,255,255,.38),0 6px 20px rgba(52,49,87,.05);
-  }
-  .cal-surface { border-radius:24px;padding:10px 12px 14px; }
-  .cal-surface .cal-head { margin:0 0 8px; }
-  .cal-surface .cal-nav { min-height:44px;min-width:44px;padding:4px 10px;font-size:22px; }
+  /* Independently adapted from the public Glass Calendar demo by Ravi Katiyar.
+     One blurred panel over its own backdrop; no React/runtime dependencies. */
+  .cal-stage { padding:24px 10px;border-radius:30px;background:#506577;
+    background-image:url('https://cdn.21st.dev/assets/mirror/6b/6b26d74b493809987a1077fff2770ce4fe1914e3032b286d07e410d034884e13.jpg');
+    background-position:center;background-size:cover; }
+  .cal-surface { border-radius:24px;padding:22px 16px 20px;border:1px solid rgba(255,255,255,.19);
+    background:rgba(0,0,0,.24);color:#fff;-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);
+    box-shadow:0 18px 36px rgba(0,0,0,.09); }
+  .cal-toolbar { display:flex;align-items:center;justify-content:space-between;gap:8px; }
+  .cal-modes { display:flex;gap:4px;padding:4px;border-radius:12px;background:rgba(0,0,0,.2); }
+  .cal-modes button { border:0;border-radius:9px;padding:8px 12px;min-height:44px;background:none;
+    color:rgba(255,255,255,.7);font:700 14px 'Onest',sans-serif;cursor:pointer; }
+  .cal-modes button[aria-pressed=true] { background:#fff;color:#181617;box-shadow:0 3px 6px rgba(0,0,0,.12); }
+  .cal-help { width:44px;min-height:44px;background:none;border:0;color:rgba(255,255,255,.7);cursor:pointer;border-radius:10px; }
+  .cal-help svg { width:22px;height:22px;vertical-align:middle; }
+  .cal-surface .cal-head { margin:28px 0 24px;gap:4px; }
+  .cal-title { font-size:clamp(28px,8vw,36px);letter-spacing:-1.3px;font-weight:700;line-height:1.15; }
+  .cal-year { font-size:13px;color:rgba(255,255,255,.7);margin-top:5px; }
+  .cal-arrows { display:flex;flex-shrink:0; }
+  .cal-surface .cal-nav { min-height:44px;width:36px;padding:0;font-size:28px;color:rgba(255,255,255,.7); }
+  .cal-nav:disabled { opacity:.35; }
   .cal-surface .cal-wd,.cal-surface .cal-grid { gap:2px; }
   .cal-surface .cal-grid { grid-template-columns:repeat(7,minmax(0,1fr)); }
-  .cal-surface .cal-wd { margin-bottom:6px; }
-  .cal-surface .cal-wd span { font-size:11px; }
-  .cal-cell {
-    position:relative;aspect-ratio:auto;min-height:52px;min-width:0;border:0;border-radius:10px;
-    background:transparent;box-shadow:none;color:var(--ink);font-family:'Onest',sans-serif;font-size:14px;line-height:1.2;
-    -webkit-tap-highlight-color:transparent;
-  }
-  .cal-cell.shift { background-color:rgba(160,196,255,.38); }
-  .cal-cell.today { color:var(--ink); }
-  .cal-cell.today.dark { color:#fff; }
+  .cal-surface .cal-wd { margin-bottom:8px; }
+  .cal-surface .cal-wd span { font-size:11px;font-weight:700;color:rgba(255,255,255,.7); }
+  .cal-cell { position:relative;aspect-ratio:auto;min-height:56px;min-width:0;border:0;border-radius:12px;padding:2px;
+    background:transparent;box-shadow:none;color:#fff;font:700 14px/1.2 'Onest',sans-serif;gap:4px;
+    -webkit-tap-highlight-color:transparent; }
+  .cal-cell.shift { background:rgba(255,255,255,.09); }
+  .cal-cell.recorded { background:rgba(255,255,255,.2); }
+  .cal-cell.selected { background:#fff;color:#181617;box-shadow:0 4px 12px rgba(0,0,0,.12); }
   .cal-cell.today::after { content:'';position:absolute;top:5px;right:5px;width:4px;height:4px;border-radius:50%;background:currentColor;pointer-events:none; }
   .cal-cell.empty { background:none; }
-  .cal-cell:active:not(:disabled) { box-shadow:inset 0 0 0 1px rgba(52,49,87,.2); }
-  .cal-cell:focus-visible,.iphone-calendar-toggle:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
-  .iphone-calendar-toggle { border-radius:999px;color:var(--accent);min-height:50px;font-weight:400; }
-  .iphone-calendar-toggle:active:not(:disabled) { background-color:rgba(255,255,252,.4); }
+  .cal-cell:active:not(:disabled),.cal-nav:active:not(:disabled) { background:rgba(255,255,255,.3); }
+  .cal-cell:focus-visible,.cal-surface button:focus-visible { outline:2px solid currentColor;outline-offset:2px; }
+  .cal-time { font-size:11px;font-weight:400;line-height:1.2;letter-spacing:0;white-space:normal;max-width:100%; }
+  .cal-dayname { font-size:11px;color:rgba(255,255,255,.7);margin-bottom:6px; }
+  .cal-cell.selected .cal-dayname { color:rgba(24,22,23,.65); }
+  .cal-surface .cal-grid.weekly { display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;gap:4px; }
+  .cal-grid.weekly::-webkit-scrollbar { display:none; }
+  .cal-grid.weekly .cal-cell { flex:0 0 calc((100% - 24px)/7);scroll-snap-align:start;min-height:88px; }
+  .cal-footer { border-top:1px solid rgba(255,255,255,.19);margin-top:24px;padding-top:16px;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center; }
+  .cal-footer .iphone-calendar { display:contents; }
+  .cal-footer .iphone-calendar-toggle { grid-column:1;grid-row:1;width:100%;min-height:44px;text-align:left;padding:8px 0;
+    font-size:12px;color:rgba(255,255,255,.85);border:0;border-radius:8px;background:none;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none; }
+  .cal-add { grid-column:2;grid-row:1;border:0;border-radius:12px;padding:12px;min-height:44px;background:rgba(0,0,0,.2);
+    box-shadow:0 4px 10px rgba(0,0,0,.12);color:#fff;font:700 13px 'Onest',sans-serif;cursor:pointer; }
+  .cal-add:disabled { opacity:.5;cursor:default; }
+  .cal-footer #iphone-calendar-status,.cal-footer .iphone-calendar-help { grid-column:1/-1;font-size:13px;line-height:1.5;color:#fff; }
+  .cal-footer .iphone-calendar-help>summary { color:rgba(255,255,255,.85); }
+  .cal-footer .iphone-calendar-actions button { color:#fff; }
+  .cal-footer .iphone-calendar-note { color:rgba(255,255,255,.85); }
   @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))) {
-    .cal-surface,.iphone-calendar-toggle { background-color:rgba(255,255,252,.65); }
+    .cal-surface { background:rgba(52,59,78,.92); }
   }
   @media (prefers-reduced-transparency:reduce) {
-    .cal-surface,.iphone-calendar-toggle { background:var(--tile);-webkit-backdrop-filter:none;backdrop-filter:none; }
+    .cal-surface { background:#4d536b;-webkit-backdrop-filter:none;backdrop-filter:none; }
   }
   @media (max-width:389px) {
-    .cal-surface { margin-inline:-8px;padding-inline:8px; }
+    .cal-stage { margin-inline:-12px;padding-inline:8px; }
+    .cal-surface { padding-inline:12px; }
     .cal-surface .cal-wd,.cal-surface .cal-grid { gap:0; }
+    .cal-modes button { font-size:12px;padding-inline:10px; }
   }
-  @media (max-width:349px) {
-    .cal-surface { margin-inline:-18px;padding-inline:2px; }
-  }
-  .cal-time { font-size:11px;line-height:1.2;letter-spacing:0;white-space:normal;max-width:100%; }
-  .cal-title { font-size:15px; }
   .calendar-disclosure { margin-top:28px; border:0; }
   .calendar-disclosure>summary { font-size:24px; color:var(--ink); font-weight:400; padding:0 0 18px; }
   .app-footer { display:flex; flex-direction:row; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:8px; border:0; margin:48px 0 10px; padding:0; }
@@ -311,17 +331,26 @@
   <p id="err"></p>
 
   <details class="tips-disclosure calendar-disclosure" open><summary>Календарь смен</summary>
-  <div class="cal-surface">
+  <div class="cal-stage"><div class="cal-surface">
+  <div class="cal-toolbar">
+    <div class="cal-modes" aria-label="Вид календаря">
+      <button id="cal-week" type="button" aria-pressed="false" disabled>Неделя</button>
+      <button id="cal-month" type="button" aria-pressed="true" disabled>Месяц</button>
+    </div>
+    <button class="cal-help" id="cal-help" type="button" aria-label="Помощь">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 2-2.5 2-2.5 4m0 3h.01"/></svg>
+    </button>
+  </div>
   <div class="cal-head">
-    <button class="cal-nav" id="cal-prev" aria-label="Предыдущий месяц">‹</button>
-    <span class="cal-title" id="cal-title">Календарь</span>
-    <button class="cal-nav" id="cal-next" aria-label="Следующий месяц">›</button>
+    <div><div class="cal-title" id="cal-title">Календарь</div><div class="cal-year" id="cal-year"></div></div>
+    <div class="cal-arrows">
+      <button class="cal-nav" id="cal-prev" type="button" aria-label="Предыдущий месяц">‹</button>
+      <button class="cal-nav" id="cal-next" type="button" aria-label="Следующий месяц">›</button>
+    </div>
   </div>
   <div class="cal-wd" id="cal-wd"></div>
   <div class="cal-grid" id="cal-grid"></div>
-  </div>
-  <p class="cal-sum" id="cal-sum"></p>
-  <p class="cal-hint" id="cal-hint">Нажми на день, чтобы добавить или исправить смену и чаевые.</p>
+  <div class="cal-footer">
   <div class="iphone-calendar" id="iphone-calendar" hidden>
     <button class="iphone-calendar-toggle" id="iphone-calendar-toggle" type="button">Подключить календарь ›</button>
     <p id="iphone-calendar-status" role="status" hidden></p>
@@ -341,6 +370,11 @@
       <p class="iphone-calendar-note">Ссылка личная: тот, у кого она есть, увидит твой график.</p>
     </details>
   </div>
+    <button class="cal-add" id="cal-add" type="button" disabled>＋ Смена</button>
+  </div>
+  </div></div>
+  <p class="cal-sum" id="cal-sum" role="status"></p>
+  <p class="cal-hint" id="cal-hint">Нажми на день, чтобы добавить или исправить смену и чаевые.</p>
   </details>
   <button class="btn btn-ghost" id="private-open" hidden>🔒 Суперконфиденциальность</button>
   <p id="private-sync-status" role="status"></p>
@@ -442,6 +476,28 @@ let lastStats = null;
 const MONTHS_UP = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
 const MONTHS_GEN = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"];
 const WD = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
+let calendarView=null,calendarWeekly=false,calendarSelectedISO=null;
+function calendarDate(view,day) {
+  return view.year+'-'+String(view.month).padStart(2,'0')+'-'+String(day).padStart(2,'0');
+}
+function markCalendarSelection() {
+  document.querySelectorAll('#cal-grid button').forEach(function(cell) {
+    const selected=cell.dataset.date===calendarSelectedISO;
+    cell.classList.toggle('selected',selected);
+    cell.setAttribute('aria-pressed',String(selected));
+  });
+}
+function setCalendarMode(weekly) {
+  if(!calendarView)return;
+  calendarWeekly=weekly;
+  paintCalendar(calendarView);
+  if(weekly) {
+    const grid=document.getElementById('cal-grid');
+    const target=grid.querySelector('.selected')||grid.querySelector('.today');
+    if(target)grid.scrollLeft+=target.getBoundingClientRect().left-grid.getBoundingClientRect().left;
+  }
+}
+
 
 // The dates are available before the first API response; shift and tip data is not.
 function showCalendarShell() {
@@ -449,7 +505,8 @@ function showCalendarShell() {
   const year=day.getUTCFullYear(),month=day.getUTCMonth()+1;
   const firstDow=(new Date(Date.UTC(year,month-1,1)).getUTCDay()+6)%7;
   const days=new Date(Date.UTC(year,month,0)).getUTCDate();
-  document.getElementById('cal-title').textContent=MONTHS_UP[month-1]+' '+year;
+  document.getElementById('cal-title').textContent=MONTHS_UP[month-1];
+  document.getElementById('cal-year').textContent=year;
   document.getElementById('cal-wd').innerHTML=WD.map(x=>'<span>'+x+'</span>').join('');
   const grid=document.getElementById('cal-grid');
   for(let n=0;n<firstDow;n++){
@@ -537,26 +594,35 @@ function calViewFromStats(s) {
 
 function paintCalendar(view) {
   document.getElementById('cal-sum').classList.remove('error');
+  const sameMonth=calendarView?.year===view.year&&calendarView?.month===view.month;
+  calendarView=view;
+  if(!calendarSelectedISO&&view.today_day)calendarSelectedISO=calendarDate(view,view.today_day);
   calYear = view.year;
   calMonth = view.month;
-
-  document.getElementById("cal-title").textContent =
-    MONTHS_UP[view.month - 1] + " " + view.year;
+  document.getElementById('cal-week').disabled=false;
+  document.getElementById('cal-month').disabled=false;
+  document.getElementById('cal-add').disabled=false;
+  document.getElementById('cal-week').setAttribute('aria-pressed',String(calendarWeekly));
+  document.getElementById('cal-month').setAttribute('aria-pressed',String(!calendarWeekly));
+  document.getElementById('cal-wd').hidden=calendarWeekly;
+  document.getElementById('cal-year').textContent=view.year;
+  document.getElementById("cal-title").textContent = MONTHS_UP[view.month - 1];
   document.getElementById("cal-prev").disabled = view.year === 2000 && view.month === 1;
   document.getElementById("cal-next").disabled = view.year === 2100 && view.month === 12;
 
-  const firstDow = (new Date(view.year, view.month - 1, 1).getDay() + 6) % 7; // Пн=0
+  const firstDow = (new Date(Date.UTC(view.year, view.month - 1, 1)).getUTCDay() + 6) % 7; // Пн=0
   const shiftDays = new Set((view.scheduled_shifts || []).map(function (d) {
     return parseInt(d.slice(8, 10), 10);
   }));
   const plannedByDay = new Map((view.planned_times || []).map(function (s) { return [Number(s.shift_date.slice(8)),s]; }));
-  const vmax = Math.max.apply(null, view.days.map(function (d) { return d.tips; }).concat([1]));
 
   document.getElementById("cal-wd").innerHTML =
     WD.map(function (x) { return "<span>" + x + "</span>"; }).join("");
   const grid = document.getElementById("cal-grid");
+  const scroll=grid.scrollLeft;
+  grid.classList.toggle('weekly',calendarWeekly);
   grid.innerHTML = "";
-  for (let i = 0; i < firstDow; i++) {
+  for (let i = 0; !calendarWeekly && i < firstDow; i++) {
     const b = document.createElement("div");
     b.className = "cal-cell empty";
     grid.appendChild(b);
@@ -565,25 +631,22 @@ function paintCalendar(view) {
     const cell = document.createElement("button");
     cell.type = "button";
     cell.className = "cal-cell";
-    cell.textContent = d.day;
+    cell.dataset.date=calendarDate(view,d.day);
+    if(calendarWeekly) {
+      const weekday=document.createElement('span');weekday.className='cal-dayname';
+      weekday.textContent=WD[(firstDow+d.day-1)%7];cell.appendChild(weekday);
+    }
+    const number=document.createElement('span');number.textContent=d.day;cell.appendChild(number);
     const plannedTime=plannedByDay.get(d.day);
     if (plannedTime?.starts_at && plannedTime?.ends_at) {
       const shortTime=function(v) {return v.slice(3,5)==='00'?String(Number(v.slice(0,2))):v.slice(0,5);};
       const label=document.createElement('span');label.className='cal-time';
       label.textContent=shortTime(plannedTime.starts_at)+'–'+
-        (plannedTime.ends_at.slice(0,5)==='23:30'?'23':shortTime(plannedTime.ends_at));
+        shortTime(plannedTime.ends_at);
       cell.appendChild(label);
     }
     if (d.tips > 0) {
-      // Количество кодируем темнотой, а не цветом: цвет в этом приложении
-      // занят счётом (нал/карта), и синяя шкала спорила с подложкой смены,
-      // и с фоном. Нейтральный графит не конфликтует ни с чем.
-      const alpha = 0.12 + 0.76 * (d.tips / vmax);
-      cell.style.backgroundColor = "rgba(17,17,17," + alpha.toFixed(2) + ")";
-      const dark = alpha > 0.55;
-      cell.style.color = dark ? "#fff" : "var(--ink)";
-      if (dark) cell.classList.add("dark");   // светлая отметка сегодняшнего дня
-      cell.style.fontWeight = "400";
+      cell.classList.add('recorded');
       cell.title = d.day + ": " + rub(d.tips) + " ₽";
     }
     if (shiftDays.has(d.day)) cell.classList.add("shift");
@@ -596,6 +659,9 @@ function paintCalendar(view) {
     cell.onclick = function () { openDay(view, d); };
     grid.appendChild(cell);
   });
+
+  markCalendarSelection();
+  if(calendarWeekly)grid.scrollLeft=sameMonth?scroll:0;
 
   const sum = document.getElementById("cal-sum");
   const planned = (view.scheduled_shifts || []).length;
@@ -642,6 +708,8 @@ function openDay(view, d) {
   }
   lastOpenedDayISO = nextDay;
   selectedDayISO = nextDay;
+  calendarSelectedISO=nextDay;
+  markCalendarSelection();
   const dt = new Date(view.year, view.month - 1, d.day);
   const wd = WD_FULL[(dt.getDay() + 6) % 7];
   document.getElementById("day-title").textContent =
@@ -820,6 +888,18 @@ function calStep(delta) {
 
 document.getElementById("cal-prev").onclick = function () { calStep(-1); };
 document.getElementById("cal-next").onclick = function () { calStep(1); };
+document.getElementById('cal-week').onclick=function(){setCalendarMode(true);};
+document.getElementById('cal-month').onclick=function(){setCalendarMode(false);};
+document.getElementById('cal-help').onclick=function(){window.uxHelp?.();};
+document.getElementById('cal-add').onclick=function(){
+  if(!calendarView)return;
+  const target=calendarView.days.find(d=>calendarDate(calendarView,d.day)===calendarSelectedISO)
+    ||calendarView.days.find(d=>d.day===calendarView.today_day)||calendarView.days[0];
+  if(!target)return;
+  openDay(calendarView,target);
+  document.getElementById('day-shift-details').open=true;
+  document.getElementById('day-start').focus();
+};
 
 // ── загрузка статистики ──
 function applyStats(s) {
