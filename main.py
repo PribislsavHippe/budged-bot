@@ -22,6 +22,7 @@ import identity_chat
 from jobs import setup_scheduler
 from webapp_api import register_webapp_routes
 from telegram_inbox import TelegramInbox,replay_safe_responses
+from chat_keyboard import RemoveLegacyKeyboard
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -136,6 +137,7 @@ async def run_webhook(bot: Bot, dp: Dispatcher):
 async def main():
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     bot.session.middleware(replay_safe_responses)
+    bot.session.middleware(RemoveLegacyKeyboard())
     dp = build_dispatcher()
 
     scheduler = setup_scheduler(bot)
