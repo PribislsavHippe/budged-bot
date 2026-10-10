@@ -1,0 +1,582 @@
+<!doctype html><html lang="ru"><title>Миниапп · pastel gradient</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+  :root {
+    --ink: #111111;
+    --ink-soft: #6b6b6b;
+    --faint: #cfcfcf;
+    --track: #ececec;
+    /* Синий занят одним смыслом — счёт. Количество кодируется темнотой. */
+    --cash: #a7c6dc;   /* наличка — светлее */
+    --card: #4f89ab;   /* карта — насыщеннее */
+    --paper: #ffffff;
+    /* В небольших числах Onest сохраняет ровные табличные цифры. */
+    --font-mono: 'Onest', -apple-system, sans-serif;
+  }
+  /* Утилита для цифр внутри обычного текста («Июль · 12 смен») */
+  .num { font-family: var(--font-mono); font-weight: 500; }
+  /* Разделитель тысяч у toLocaleString — неразрывный пробел. В моноширинном
+     он шириной с цифру и разрывает число надвое: «12  400» читается как два
+     числа. word-spacing поджимает только пробелы, цифры не трогает. */
+  .hero, .r .val, .r .tag, .hist-amt, .num { word-spacing: -0.3em; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { background: var(--page, #cdb4db); }
+  #bg {
+    position: fixed; inset: 0; z-index: -1;
+    background-color: var(--page, #cdb4db);
+    background-blend-mode: overlay, normal, normal, normal;
+    background-size: 120px 120px, auto, auto, auto;
+  }
+  body {
+    font-family: 'Onest', -apple-system, sans-serif;
+    background: transparent; color: var(--ink);
+    font-variant-numeric: tabular-nums;
+    padding: 26px 22px 40px; max-width: 480px; margin: 0 auto;
+  }
+  .head { font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 24px; }
+  .hero-label { font-size: 13px; color: var(--ink-soft); }
+  .hero { font-family: var(--font-mono); font-size: 40px; font-weight: 500; letter-spacing: -0.03em; line-height: 1.05; margin-bottom: 20px; white-space: nowrap; }
+  @keyframes blurIn { from { filter: blur(12px); opacity: 0; } to { filter: blur(0); opacity: 1; } }
+  .hero.blur-in { animation: blurIn 0.85s cubic-bezier(0.2, 0.6, 0.2, 1); }
+  .r { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+  .r .lbl { font-size: 14px; white-space: nowrap; }
+  .r .tag { font-family: var(--font-mono); font-size: 11px; font-weight: 500; color: var(--ink-soft); white-space: nowrap; }
+  .r .val { font-family: var(--font-mono); font-size: 15px; font-weight: 500; white-space: nowrap; margin-left: auto; }
+  .plan { margin: 18px 0 0; }
+  .plan .bar-track { height: 3px; background: var(--track); overflow: hidden; margin-top: 7px; }
+  .plan .bar-fill { height: 100%; background: var(--ink); width: 0; }
+  .btn { display: block; width: 100%; text-align: center; padding: 14px; border-radius: 10px; font-size: 14px; font-weight: 400; border: none; cursor: pointer; font-family: inherit; background: var(--ink); color: #fff; margin-top: 24px; }
+  .btn:active { background: #333; }
+  .btn-ghost { background: transparent; color: var(--ink); border: 1px solid var(--faint); margin-top: 10px; }
+  .btn-ghost:active { background: #f4f4f4; }
+  #err { font-size: 13px; color: #780000; padding: 16px 0; display: none; }
+
+  /* ── панель «Траты за смену» (внутри мини-апа) ── */
+  #spend { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 90; display: none; }
+  #spend.on { display: flex; align-items: flex-end; }
+  .sheet { background: #fff; width: 100%; max-width: 480px; margin: 0 auto; border-radius: 18px 18px 0 0; padding: 22px 20px 26px; }
+  .sheet-title { font-size: 17px; font-weight: 400; }
+  .sheet-sub { font-size: 13px; color: var(--ink-soft); margin: 2px 0 16px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .chip { font-size: 14px; font-weight: 400; padding: 9px 16px; border-radius: 20px; border: 1px solid var(--faint); background: #fff; cursor: pointer; font-family: inherit; color: var(--ink); }
+  .chip.sel { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .spend-inputs { display: none; gap: 8px; margin-bottom: 6px; }
+  .spend-inputs.on { display: flex; }
+  #day details[open] .spend-inputs { display: flex; }
+  [hidden] { display: none !important; }
+  .spend-inputs input { flex: 1; min-width: 0; font-family: inherit; font-size: 15px; padding: 11px 12px; border: 1px solid var(--faint); border-radius: 10px; background: #fff; }
+  #spend-amount { font-family: var(--font-mono); }
+  .spend-inputs input:focus { outline: none; border-color: var(--ink); }
+  #spend-submit { flex: 0 0 auto; padding: 11px 16px; border-radius: 10px; border: none; background: var(--ink); color: #fff; font-weight: 400; font-family: inherit; font-size: 15px; cursor: pointer; }
+  .spend-note { font-size: 13px; color: var(--ink-soft); min-height: 18px; margin-bottom: 12px; }
+
+  /* ── разбор дня из календаря ── */
+  #day { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 92; display: none; }
+  #day.on { display: flex; align-items: flex-end; }
+  #day .sheet { max-height: min(85vh, 760px); overflow-y: auto; padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
+  .day-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+  .day-header .sheet-title { margin: 0; }
+  #day-close { flex: 0 0 auto; min-height: 44px; padding: 8px 0 8px 12px; border: 0; background: none; color: var(--ink-soft); font: inherit; font-size: 14px; cursor: pointer; }
+  .day-edit { border-top: 1px solid #eee; margin-top: 12px; padding-top: 2px; }
+  #day details:not([open]) > :not(summary) { display: none !important; }
+  .day-edit summary { cursor: pointer; padding: 12px 0; font-size: 15px; list-style-position: inside; }
+  .day-edit[open] summary { margin-bottom: 6px; }
+  .day-tip-fields { display: none; gap: 14px; }
+  #day details[open] .day-tip-fields { display: grid; }
+  .day-tip-fields label,.day-shift-fields label { font-size: 13px; color: var(--ink-soft); }
+  .day-tip-fields input[type=number],.day-shift-fields input[type=time] { display: block; width: 100%; min-height: 48px; margin-top: 6px; padding: 10px 12px; border: 1px solid var(--faint); border-radius: 10px; background: #fff; color: var(--ink); font: 16px 'Onest',sans-serif; }
+  .day-account { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; border: 0; }
+  .day-account-title { grid-column: 1 / -1; margin-bottom: 1px; font-size: 13px; color: var(--ink-soft); }
+  .day-account label { position: relative; cursor: pointer; }
+  .day-account input { position: absolute; opacity: 0; }
+  .day-account span { display: flex; align-items: center; justify-content: center; min-height: 44px; border: 1px solid var(--faint); border-radius: 10px; color: var(--ink); font-size: 14px; }
+  .day-account input:checked + span { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .day-account input:focus-visible + span,#day button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .day-primary { min-height: 48px; margin-top: 14px; font-size: 15px; }
+  .day-tip-record { display: grid; grid-template-columns: minmax(0,1fr) auto auto; align-items: center; gap: 10px; min-height: 56px; border-bottom: 1px solid #eee; }
+  .day-tip-record:first-child { margin-top: 12px; }
+  .day-tip-record span { font-size: 14px; }
+  .day-tip-record strong { font-size: 15px; font-weight: 500; white-space: nowrap; }
+  .day-tip-record button { min-height: 44px; padding: 8px 0 8px 8px; border: 0; background: none; color: #8c3838; font: inherit; font-size: 13px; cursor: pointer; }
+  .day-shift-fields { display: none; grid-template-columns: 1fr 1fr; gap: 12px; }
+  #day details[open] .day-shift-fields { display: grid; }
+  .day-shift-actions { display: flex; align-items: center; gap: 14px; margin: 14px 0 6px; }
+  .day-shift-actions .btn { flex: 1; width: auto; min-height: 48px; margin: 0; }
+  .day-shift-actions #day-shift-delete { flex: 0 0 auto; border: 0; background: none; color: #8c3838; padding: 10px 0; }
+  .day-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f2f2f2; }
+  .day-row:last-child { border-bottom: none; }
+  .day-row .k { font-size: 14px; color: var(--ink-soft); }
+  .day-row .v { font-family: var(--font-mono); font-size: 15px; font-weight: 500; white-space: nowrap; word-spacing: -0.3em; }
+  .day-row.total { border-top: 1px solid var(--ink); border-bottom: none; margin-top: 4px; padding-top: 12px; }
+  .day-row.total .k { color: var(--ink); font-weight: 400; font-size: 15px; }
+  .day-row.total .v { font-size: 19px; font-weight: 400; }
+  .day-note { font-size: 14px; color: var(--ink-soft); padding: 10px 0 2px; }
+  #day-status:empty { display: none; }
+
+  /* ── история и правки ── */
+  #history { position: fixed; inset: 0; background: #fff; z-index: 95; display: none; overflow-y: auto; }
+  #history.on { display: block; }
+  .hist-inner { max-width: 480px; margin: 0 auto; padding: 24px 20px 40px; }
+  .hist-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .hist-title { font-size: 18px; font-weight: 400; }
+  .hist-x { background: none; border: none; font-family: inherit; font-size: 14px; font-weight: 400; color: var(--ink-soft); cursor: pointer; }
+  .hist-item { border-bottom: 1px solid #f0f0f0; }
+  .hist-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 2px; cursor: pointer; }
+  .hist-cat { font-size: 15px; font-weight: 400; }
+  .hist-meta { font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+  /* Дата и время моноширинные (колонка выравнивается), название счёта — текст */
+  .hist-meta .txt { font-family: 'Onest', -apple-system, sans-serif; }
+  .hist-amt { font-family: var(--font-mono); font-size: 15px; font-weight: 400; white-space: nowrap; margin-left: 12px; }
+  .hist-edit { display: none; padding: 2px 2px 16px; }
+  .hist-item.open .hist-edit { display: block; }
+  .hist-edit-row { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; }
+  .hist-edit input { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 15px; padding: 10px 12px; border: 1px solid var(--faint); border-radius: 10px; }
+  .hist-edit input:focus { outline: none; border-color: var(--ink); }
+  .acc-toggle { display: flex; gap: 6px; }
+  .acc-btn { font-size: 13px; font-weight: 400; padding: 9px 13px; border-radius: 18px; border: 1px solid var(--faint); background: #fff; cursor: pointer; font-family: inherit; color: var(--ink); }
+  .acc-btn.sel { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .hist-actions { display: flex; gap: 8px; }
+  .hist-save { flex: 1; padding: 11px; border: none; border-radius: 10px; background: var(--ink); color: #fff; font-weight: 400; font-family: inherit; font-size: 14px; cursor: pointer; }
+  .hist-del { padding: 11px 16px; border: 1px solid #e0b4b4; border-radius: 10px; background: #fff; color: #a02020; font-weight: 400; font-family: inherit; font-size: 14px; cursor: pointer; }
+  .hist-empty { font-size: 14px; color: var(--ink-soft); padding: 20px 2px; }
+
+  /* ── шапка календаря с листанием месяцев ── */
+  .cal-head { display: flex; align-items: center; justify-content: space-between; margin: 22px 0 12px; }
+  .cal-title { font-size: 14px; font-weight: 400; }
+  .cal-nav { background: none; border: none; font-family: inherit; font-size: 24px; line-height: 1; color: var(--ink); cursor: pointer; padding: 2px 14px; border-radius: 8px; }
+  .cal-nav:disabled { color: var(--faint); cursor: default; }
+  .cal-nav:active:not(:disabled) { background: rgba(0,0,0,.06); }
+  .cal-sum { font-size: 13px; color: var(--ink-soft); margin-top: 10px; min-height: 18px; }
+  .cal-hint { font-size: 12px; line-height: 1.45; color: var(--ink-soft); margin-top: 8px; }
+  .iphone-calendar { margin-top:22px; }
+  .iphone-calendar-toggle { width:100%; min-height:48px; border:1px solid var(--accent); border-radius:10px; background:transparent; color:var(--accent); padding:10px 14px; font:400 14px 'Onest',sans-serif; text-align:center; cursor:pointer; }
+  .iphone-calendar-toggle:disabled { opacity:.55; cursor:default; }
+  .iphone-calendar-panel { padding:14px 0 4px; font:400 13px/1.5 'Onest',sans-serif; }
+  .iphone-calendar-panel p { margin:0 0 12px; }
+  .iphone-calendar-panel input { box-sizing:border-box; width:100%; min-height:44px; padding:9px 11px; border:1px solid var(--ink-soft); border-radius:9px; background:var(--tile); color:var(--ink); font:400 13px 'Onest',sans-serif; }
+  .iphone-calendar-actions { display:flex; flex-wrap:wrap; gap:8px 18px; margin:12px 0; }
+  .iphone-calendar-actions button { border:0; background:none; color:var(--accent); padding:8px 0; font:400 13px 'Onest',sans-serif; cursor:pointer; }
+  .iphone-calendar-help { margin-top:10px; color:var(--ink-soft); font-size:12px; }
+  .iphone-calendar-help summary { cursor:pointer; }
+  .iphone-calendar-manage { margin-top:8px; }
+  .iphone-calendar-panel .iphone-calendar-note { color:var(--ink-soft); font-size:12px; }
+  #iphone-calendar-status { color:var(--ink-soft); font-size:12px; }
+  .cal-grid.loading { opacity: .45; }
+  .cal-wd { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-bottom: 5px; }
+  .cal-wd span { font-size: 10px; color: var(--ink-soft); text-align: center; }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+  .cal-cell { aspect-ratio: 1; border: 0; padding: 0; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); background: rgba(255,255,255,0.35); cursor: pointer; }
+  .cal-cell:disabled { cursor: default; opacity: .55; }
+  .cal-time { font-size: 8px; line-height: 1.1; white-space: nowrap; margin-top: 2px; letter-spacing: -.3px; }
+  .cal-cell.empty { background: transparent; }
+  :root {
+    --thistle:#cdb4db;--pastel-petal:#ffc8dd;--baby-pink:#ffafcc;
+    --icy-blue:#bde0fe;--sky-blue:#a2d2ff;--porcelain:#fffffc;
+    --page:var(--thistle);--tile:var(--porcelain);--accent:#343157;
+    --ink:#181617;--ink-soft:#4f474d;
+  }
+  :root[data-palette=pastel-petal] { --page:var(--pastel-petal); }
+  :root[data-palette=baby-pink] { --page:var(--baby-pink); }
+  :root[data-palette=icy-blue] { --page:var(--icy-blue); }
+  :root[data-palette=sky-blue] { --page:var(--sky-blue); }
+  #bg { background:var(--page); }
+  /* Original flat calendar; only the subscription button uses glass. */
+  .cal-cell { aspect-ratio:1;width:100%;min-width:0;border-radius:8px;background:rgba(255,255,255,.35);
+    font-family:'Onest',sans-serif;font-size:14px;line-height:1.2;color:var(--ink-soft); }
+  .cal-cell.shift { box-shadow:inset 0 0 0 1.5px var(--card); }
+  .cal-cell.shift.dark { box-shadow:inset 0 0 0 1.5px #9ecbe8; }
+  .cal-cell.today { box-shadow:inset 0 0 0 2px var(--ink);color:var(--ink);font-weight:400; }
+  .cal-cell.today.dark { box-shadow:inset 0 0 0 2px #fff;color:#fff; }
+  .cal-cell.empty { background:none;box-shadow:none; }
+  .cal-time { font-size:11px;line-height:1.05;letter-spacing:0;white-space:normal;max-width:100%; }
+  .cal-title { font-size:15px;font-weight:400; }
+  .cal-nav { min-height:44px;min-width:44px; }
+  .iphone-calendar-toggle {
+    background:linear-gradient(145deg,rgba(255,255,255,.22),rgba(255,255,255,.08));
+    border:1px solid rgba(255,255,255,.5);border-radius:16px;color:var(--accent);min-height:50px;
+    -webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 8px 24px rgba(52,49,87,.05);
+  }
+  .cal-cell:focus-visible,.iphone-calendar-toggle:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
+  .cal-cell:active:not(:disabled),.iphone-calendar-toggle:active:not(:disabled) { background-color:rgba(255,255,252,.6); }
+  @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))) {
+    .iphone-calendar-toggle { background:rgba(255,255,252,.5); }
+  }
+  @media (prefers-reduced-transparency:reduce) {
+    .iphone-calendar-toggle { background:var(--tile);-webkit-backdrop-filter:none;backdrop-filter:none; }
+  }
+  .calendar-disclosure { margin-top:28px; border:0; }
+  .calendar-disclosure>summary { font-size:24px; color:var(--ink); font-weight:400; padding:0 0 18px; }
+  .app-footer { display:flex; flex-direction:row; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:8px; border:0; margin:48px 0 10px; padding:0; }
+  .app-footer button { appearance:none; -webkit-appearance:none; border:0; border-radius:0; box-shadow:none; background:transparent; padding:8px 0; min-height:40px; color:var(--ink); font:400 clamp(10px, 3vw, 12px) 'Onest',sans-serif; white-space:nowrap; cursor:pointer; }
+  #help-panel { position:fixed; inset:0; z-index:100; background:rgba(0,0,0,.35); display:none; align-items:flex-end; }
+  #help-panel.on { display:flex; }
+  #help-panel .sheet { max-height:min(85vh,760px); overflow-y:auto; padding-bottom:calc(20px + env(safe-area-inset-bottom)); }
+  .help-head { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px; }
+  .help-head button { border:0; background:transparent; font:inherit; color:var(--ink-soft); padding:8px 0; min-height:44px; cursor:pointer; }
+  .help-copy { font-size:14px; line-height:1.5; color:var(--ink-soft); margin-bottom:16px; }
+  .help-action { display:block; width:100%; border:1px solid var(--faint); border-radius:12px; background:#fff; padding:16px; margin:10px 0; text-align:left; font:inherit; font-size:16px; color:var(--ink); cursor:pointer; }
+  .help-action:active { background:#f4f4f4; }
+  .help-action.primary { background:var(--ink); border-color:var(--ink); color:#fff; }
+  .help-status { font-size:13px; line-height:1.4; color:var(--ink-soft); min-height:0; }
+  .help-status.error { color:#8d2b39; }
+  .help-manual { display:inline-block; font-size:13px; margin-top:8px; color:var(--accent); }
+  .help-question { border-bottom:1px solid var(--faint); padding:16px 0; }
+  .help-question summary { cursor:pointer; font-size:15px; list-style:none; }
+  .help-question summary::-webkit-details-marker { display:none; }
+  .help-question summary::after { content:'›'; float:right; }
+  .help-question[open] summary::after { content:'⌄'; }
+  .help-question p { margin-top:12px; font-size:14px; line-height:1.5; color:var(--ink-soft); }
+  .help-question p + p { margin-top:8px; }
+  #ux-access-retry:not([hidden]) { width:100%; text-align:left; }
+  .calendar-disclosure>summary { list-style:none; }
+  .calendar-disclosure>summary::-webkit-details-marker { display:none; }
+  #cal-sum,#cal-hint { display:none; }
+  #cal-sum.error { display:block; color:#8d2b39; }
+  .cal-head { margin:3px 0 12px; }
+  .cal-grid { gap:5px; }
+  .app-footer { border:0; }
+</style><style>[hidden] { display:none!important; }
+.app-tabs { display:flex; align-items:baseline; gap:22px; border:0; margin:0 0 22px; padding:0; background:none; overflow-x:auto; scrollbar-width:none; }
+.app-tabs::-webkit-scrollbar { display:none; }
+.app-tabs button { flex:0 0 auto; border:0; background:none; color:var(--ink); padding:12px 0 0; font:400 12px 'Onest',sans-serif; cursor:pointer; white-space:nowrap; }
+.app-tabs button[aria-selected=true] { color:var(--ink); border:0; box-shadow:none; font:400 25px 'Onest',sans-serif; font-size:25px!important; letter-spacing:-.035em; }
+#tips-dashboard { color:var(--ink); }
+.dashboard-controls { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.period-link,.privacy-link { border:0; background:none; padding:8px 0; color:var(--ink); font:400 14px 'Onest',sans-serif; cursor:pointer; text-align:left; }
+.privacy-link { text-align:right; white-space:nowrap; }
+.range-backdrop { position:fixed; inset:0; z-index:85; display:flex; align-items:end; background:rgba(0,0,0,.38); }
+.range-picker { width:100%; max-width:480px; margin:0 auto; padding:20px 20px calc(20px + env(safe-area-inset-bottom)); border-radius:18px 18px 0 0; background:#fff; box-shadow:0 -6px 28px #0001; }
+.range-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
+.range-head h2 { font:400 21px 'Onest',sans-serif; }
+.range-head button { border:0; background:none; color:var(--ink); font:22px 'Onest',sans-serif; min-width:40px; min-height:40px; }
+.range-picker label { display:block; margin:11px 0; font:400 14px 'Onest',sans-serif; }
+.range-picker input { display:block; width:100%; min-width:0; min-height:48px; margin-top:6px; padding:9px 12px; background:#f5f5f7; color:var(--ink); border:0; border-radius:10px; font:400 16px 'Onest',sans-serif; color-scheme:light; }
+.range-hint { color:var(--ink-soft); font:12px 'Onest',sans-serif; margin:10px 0; }
+.range-apply { width:100%; min-height:48px; margin-top:12px; border:0; border-radius:10px; background:var(--ink); color:white; font:400 15px 'Onest',sans-serif; }
+.range-home { width:100%; min-height:44px; margin-top:8px; border:0; background:none; color:var(--accent); font:400 14px 'Onest',sans-serif; }
+#tips-range-error { color:#8d2b39; font-size:12px; }
+#tips-range-error:empty { display:none; }
+#tips-error { color:#8d2b39; font-size:13px; margin-top:12px; }
+#tips-error:empty { display:none; }
+.tips-hero { padding:16px 0 0; }
+.tips-field { font:400 14px 'Onest',sans-serif; }
+.tips-gross { display:block; width:100%; margin:4px 0 26px; padding:0; border:0; background:none; color:var(--ink); text-align:left; cursor:pointer; }
+.tips-gross span { display:block; color:var(--accent); font:400 14px 'Onest',sans-serif; }
+.tips-gross strong { display:block; font:400 clamp(57px,17vw,82px)/1.2 'Prata',Georgia,serif; letter-spacing:-.06em; font-variant-numeric:lining-nums; overflow-wrap:anywhere; }
+.tips-secondary { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+.tips-secondary span { display:block; font:400 14px 'Onest',sans-serif; color:var(--ink); }
+.tips-secondary strong { display:block; font:400 clamp(31px,9vw,42px)/1.3 'Prata',Georgia,serif; letter-spacing:-.06em; margin-top:2px; overflow-wrap:anywhere; }
+.expense-link { display:block; width:100%; padding:0; border:0; background:none; color:var(--ink); text-align:left; cursor:pointer; }
+.tips-secondary .expense-link span { color:var(--accent); }
+.tips-hero button:disabled { cursor:default; }
+.tips-placeholder { width:58%; border-radius:8px; background:rgba(17,17,17,.1); color:transparent; }
+.tips-secondary .tips-placeholder { width:68%; }
+.detail-backdrop { position:fixed; inset:0; z-index:88; display:flex; align-items:end; background:rgba(0,0,0,.38); }
+.detail-sheet { box-sizing:border-box; width:100%; max-width:480px; max-height:88vh; margin:0 auto; padding:20px 20px calc(20px + env(safe-area-inset-bottom)); overflow:auto; border-radius:18px 18px 0 0; background:#fff; color:var(--ink); box-shadow:0 -6px 28px #0001; }
+.detail-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.detail-head h2 { margin:0; font:400 20px 'Onest',sans-serif; }
+.detail-head button { flex:0 0 40px; min-height:40px; border:0; background:none; color:var(--ink); font:22px 'Onest',sans-serif; }
+#tips-detail-status { min-height:1em; color:#8d2b39; font:400 13px 'Onest',sans-serif; }
+.detail-totals { display:grid; grid-template-columns:1fr 1fr; gap:14px; padding:12px 0 16px; border-bottom:1px solid #e9e9e9; font:400 13px 'Onest',sans-serif; }
+.detail-totals strong { display:block; margin-top:4px; font:400 23px 'Prata',Georgia,serif; }
+.detail-row { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:13px 0; border-bottom:1px solid #eee; }
+.detail-row span { display:block; color:#64646a; font:400 13px 'Onest',sans-serif; }
+.detail-row strong { display:block; margin-top:3px; font:400 18px 'Onest',sans-serif; }
+.detail-row button { flex:0 0 auto; border:0; background:none; color:var(--accent); font:400 13px 'Onest',sans-serif; }
+.detail-empty { color:#64646a; font:400 14px 'Onest',sans-serif; }
+.detail-form { display:grid; gap:12px; padding-top:18px; }
+.detail-form label { display:block; font:400 13px 'Onest',sans-serif; }
+.detail-form input,.detail-form select { box-sizing:border-box; display:block; width:100%; min-height:46px; margin-top:6px; padding:8px 12px; border:1px solid #ddd; border-radius:9px; background:#f7f7f8; color:var(--ink); font:400 16px 'Onest',sans-serif; }
+.detail-form button,.detail-primary { min-height:46px; padding:9px 14px; border:0; border-radius:9px; background:var(--ink); color:white; font:400 14px 'Onest',sans-serif; }
+.detail-primary { width:100%; margin-top:18px; }
+.detail-edit-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.detail-edit-actions #tips-delete { background:#f2eded; color:#8d2b39; }
+.tips-disclosure { border:0; }
+.tips-disclosure>summary { cursor:pointer; }
+.tips-actions { display:flex; gap:25px; border:0; padding:0; margin-top:54px; }
+.tips-actions .btn { width:auto; margin:0; padding:8px 0; border:0; background:none; box-shadow:none; color:var(--ink); font:400 14px 'Onest',sans-serif; }
+.text-action { border:0; background:none; padding:10px 0; font:14px 'Onest',sans-serif; color:var(--ink); }
+.app-tabs :focus-visible,#tips-dashboard :focus-visible,.calendar-disclosure :focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+@media(max-width:370px) { .app-tabs {gap:16px} .app-tabs button[aria-selected=true] {font-size:23px!important} .privacy-link,.period-link {font-size:12px} }
+</style><style>
+html{background:#EFC1DA}#gradient-backdrop{position:fixed;inset:0;z-index:-1;background-color:#EFC1DA;background-image:linear-gradient(90deg,#EFC1DA 0%,#EFC1DA 20%,#CEC99F 23.9%,#CEC99F 51.1%,#DCD6F6 58.9%,#DCD6F6 81.1%,#B5D0D9 85%,#B5D0D9 100%)}#gradient-canvas{width:100%;height:100%;display:block}.preview-note{font-size:12px;line-height:1.5;color:var(--ink-soft);margin:0 0 20px}body{isolation:isolate}.app-tabs{margin-top:0}
+</style><body><div id="gradient-backdrop" aria-hidden="true"><canvas id="gradient-canvas"></canvas></div>
+<p class="preview-note">Локальный предпросмотр · примерные данные</p>
+<nav class="app-tabs"><button aria-selected="true">Чаевые</button><button disabled>План</button><button disabled>Ресторан</button></nav>
+<section><div class="dashboard-controls"><button class="period-link">Сегодня ›</button><button class="privacy-link">Приватность ›</button></div>
+<div class="tips-hero"><button class="tips-gross"><span>Грязные ›</span><strong>1 196</strong></button><div class="tips-secondary"><div><span>Чистые</span><strong>1 196</strong></div><button class="expense-link"><span>Расходы ›</span><strong>0</strong></button></div></div></section>
+  <details class="tips-disclosure calendar-disclosure" open><summary>Календарь смен</summary>
+  <div class="cal-head">
+    <button class="cal-nav" id="cal-prev" type="button" aria-label="Предыдущий месяц">‹</button>
+    <span class="cal-title" id="cal-title">Календарь</span>
+    <button class="cal-nav" id="cal-next" type="button" aria-label="Следующий месяц">›</button>
+  </div>
+  <div class="cal-wd" id="cal-wd"></div>
+  <div class="cal-grid" id="cal-grid"></div>
+  <p class="cal-sum" id="cal-sum" role="status"></p>
+  <p class="cal-hint" id="cal-hint">Нажми на день, чтобы добавить или исправить смену и чаевые.</p>
+  <div class="iphone-calendar" id="iphone-calendar" hidden>
+    <button class="iphone-calendar-toggle" id="iphone-calendar-toggle" type="button">Подключить календарь ›</button>
+    <p id="iphone-calendar-status" role="status" hidden></p>
+    <details class="iphone-calendar-help" id="iphone-calendar-help" hidden><summary>Как добавить подписку?</summary>
+      <p>На iPhone добавь ссылку как календарь подписки. На Android установи ICSx⁵ и вставь ссылку в новую подписку. Google-аккаунт не нужен.</p>
+      <input id="iphone-calendar-link" aria-label="Личная ссылка на календарь" readonly>
+      <div class="iphone-calendar-actions">
+        <button id="iphone-calendar-copy" type="button">Скопировать ссылку ›</button>
+        <button id="iphone-calendar-guide" type="button">Открыть инструкцию ›</button>
+      </div>
+      <details class="iphone-calendar-manage"><summary>Управление подпиской</summary>
+      <div class="iphone-calendar-actions">
+        <button id="iphone-calendar-rotate" type="button">Заменить ссылку ›</button>
+        <button id="iphone-calendar-revoke" type="button">Отключить ссылку ›</button>
+      </div>
+      </details>
+      <p class="iphone-calendar-note">Ссылка личная: тот, у кого она есть, увидит твой график.</p>
+    </details>
+  </div>
+  </details>
+  <div id="day" role="dialog" aria-modal="true" aria-labelledby="day-title">
+    <div class="sheet">
+      <div class="day-header"><p class="sheet-title" id="day-title">—</p><button id="day-close" type="button">Готово</button></div>
+      <div id="day-body"></div>
+      <p class="sheet-sub" id="day-status" role="status"></p>
+      <details class="day-edit" id="day-tips-details">
+        <summary id="day-tips-summary">Добавить чаевые</summary>
+        <div class="day-tip-fields" id="day-tip-inputs"><label>Сумма чаевых<input id="day-tip-amount" type="number" inputmode="decimal" min="0.01" max="10000000" step="0.01" placeholder="Сумма ₽"></label><div class="day-account" role="group" aria-label="Куда поступили"><span class="day-account-title">Куда поступили</span><label><input type="radio" name="day-tip-account" value="card" checked><span>На карту</span></label><label><input type="radio" name="day-tip-account" value="cash"><span>Наличными</span></label></div></div>
+        <button class="btn day-primary" id="day-tip-add">Записать чаевые</button>
+        <div id="day-tip-list"></div>
+      </details>
+      <details class="day-edit" id="day-shift-details">
+        <summary id="day-shift-summary">Добавить смену в график</summary>
+        <div class="day-shift-fields"><label>Начало<input id="day-start" type="time"></label><label>Конец<input id="day-end" type="time"></label></div>
+        <div class="day-shift-actions"><button class="btn" id="day-shift-save">Добавить смену</button><button class="btn btn-ghost" id="day-shift-delete" hidden>Убрать смену</button></div>
+      </details>
+    </div>
+  </div>
+
+  <!-- История и правки -->
+<script>const MONTHS_UP = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
+const MONTHS_GEN = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"];
+const WD = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
+
+window.privateMoney={state:{lost:false}};const privateMoney=window.privateMoney;
+let calYear=null,calMonth=null;
+function rub(v){return Math.round(v).toLocaleString('ru-RU')}
+function shiftsWord(n){return n+' смен'}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function calendarEdit(){}
+function paintCalendar(view) {
+  document.getElementById('cal-sum').classList.remove('error');
+  calYear = view.year;
+  calMonth = view.month;
+
+  document.getElementById("cal-title").textContent =
+    MONTHS_UP[view.month - 1] + " " + view.year;
+  document.getElementById("cal-prev").disabled = view.year === 2000 && view.month === 1;
+  document.getElementById("cal-next").disabled = view.year === 2100 && view.month === 12;
+
+  const firstDow = (new Date(Date.UTC(view.year, view.month - 1, 1)).getUTCDay() + 6) % 7; // Пн=0
+  const shiftDays = new Set((view.scheduled_shifts || []).map(function (d) {
+    return parseInt(d.slice(8, 10), 10);
+  }));
+  const plannedByDay = new Map((view.planned_times || []).map(function (s) { return [Number(s.shift_date.slice(8)),s]; }));
+  const vmax = Math.max.apply(null, view.days.map(function (d) { return d.tips; }).concat([1]));
+
+  document.getElementById("cal-wd").innerHTML =
+    WD.map(function (x) { return "<span>" + x + "</span>"; }).join("");
+  const grid = document.getElementById("cal-grid");
+  grid.innerHTML = "";
+  for (let i = 0; i < firstDow; i++) {
+    const b = document.createElement("div");
+    b.className = "cal-cell empty";
+    grid.appendChild(b);
+  }
+  view.days.forEach(function (d) {
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = "cal-cell";
+    cell.textContent = d.day;
+    const plannedTime=plannedByDay.get(d.day);
+    if (plannedTime?.starts_at && plannedTime?.ends_at) {
+      const shortTime=function(v) {return v.slice(3,5)==='00'?String(Number(v.slice(0,2))):v.slice(0,5);};
+      const label=document.createElement('span');label.className='cal-time';
+      label.textContent=shortTime(plannedTime.starts_at)+'–'+
+        shortTime(plannedTime.ends_at);
+      cell.appendChild(label);
+    }
+    if (d.tips > 0) {
+      // Количество кодируем темнотой, а не цветом: цвет в этом приложении
+      // занят счётом (нал/карта), и синяя шкала спорила с подложкой смены,
+      // и с фоном. Нейтральный графит не конфликтует ни с чем.
+      const alpha = 0.12 + 0.76 * (d.tips / vmax);
+      cell.style.backgroundColor = "rgba(17,17,17," + alpha.toFixed(2) + ")";
+      const dark = alpha > 0.55;
+      cell.style.color = dark ? "#fff" : "var(--ink)";
+      if (dark) cell.classList.add("dark");   // светлая отметка сегодняшнего дня
+      cell.style.fontWeight = "400";
+      cell.title = d.day + ": " + rub(d.tips) + " ₽";
+    }
+    if (shiftDays.has(d.day)) cell.classList.add("shift");
+    if (d.day === view.today_day) {
+      cell.classList.add("today");   // null в чужих месяцах
+      cell.setAttribute('aria-current','date');
+    }
+
+    cell.setAttribute("aria-label", d.day + " " + MONTHS_GEN[view.month - 1] + ". Открыть день");
+    cell.onclick = function () { openDay(view, d); };
+    grid.appendChild(cell);
+  });
+
+  const sum = document.getElementById("cal-sum");
+  const planned = (view.scheduled_shifts || []).length;
+  if (window.privateMoney.state.lost) {
+    sum.innerHTML=(planned ? "Запланировано " + shiftsWord(planned) + ". " : "График пуст. ") +
+      "Личный журнал недоступен на этом устройстве.";
+  } else if (view.shifts_count) {
+    sum.innerHTML = shiftsWord(view.shifts_count) +
+      ' · <span class="num">' + rub(view.tips_total) + "</span> ₽ чая";
+  } else if (planned) {
+    // Месяц вперёд: чая ещё нет, но смены уже поставлены
+    sum.innerHTML = "Запланировано " + shiftsWord(planned);
+  } else {
+    sum.textContent = "Чаевые за месяц не записаны";
+  }
+  if (selectedDayISO && selectedDayISO.slice(0,7) === view.year + "-" + String(view.month).padStart(2,"0")) {
+    const day = Number(selectedDayISO.slice(8));
+    if (view.days[day-1]) openDay(view, view.days[day-1]);
+  }
+}
+
+const WD_FULL = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"];
+
+function dayRow(k, v, total) {
+  return '<div class="day-row' + (total ? " total" : "") + '">' +
+    '<span class="k">' + k + '</span><span class="v">' + v + "</span></div>";
+}
+
+function workClock(iso) {
+  const instant = new Date(iso);
+  if (!Number.isFinite(instant.getTime())) return null;
+  return new Intl.DateTimeFormat('ru-RU', {
+    timeZone: 'Europe/Moscow', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).format(instant);
+}
+
+function openDay(view, d) {
+  const nextDay = view.year + "-" + String(view.month).padStart(2,"0") + "-" + String(d.day).padStart(2,"0");
+  if (lastOpenedDayISO !== nextDay) {
+    if (!dayTipPending) dayTipOperation = null;
+    document.getElementById('day-tips-details').open=false;
+    document.getElementById('day-shift-details').open=false;
+  }
+  lastOpenedDayISO = nextDay;
+  selectedDayISO = nextDay;
+  const dt = new Date(view.year, view.month - 1, d.day);
+  const wd = WD_FULL[(dt.getDay() + 6) % 7];
+  document.getElementById("day-title").textContent =
+    wd.charAt(0).toUpperCase() + wd.slice(1) + ", " + d.day + " " + MONTHS_GEN[view.month - 1];
+
+  const spent = d.spent || 0;
+  const rows = [];
+  const planned = (view.planned_times || []).find(function (s) { return s.shift_date === selectedDayISO; });
+  const worked = (view.worked_times || []).find(function (s) { return s.shift_date === selectedDayISO; });
+  if (planned) rows.push(dayRow("По графику", planned.starts_at && planned.ends_at ? planned.starts_at.slice(0,5) + "–" + planned.ends_at.slice(0,5) : "время не указано"));
+  if (worked) {
+    const start = workClock(worked.actual_start);
+    const end = workClock(worked.actual_end);
+    rows.push(dayRow("Фактически", start && end ? start + "–" + end : "не удалось показать время"));
+  }
+  if (d.tips > 0) {
+    rows.push(dayRow("Чаевые", rub(d.tips) + " ₽"));
+  }
+  // Итог показываем, только если есть что вычитать: без трат он дословно
+  // повторял бы строку «Чай».
+  if (spent > 0) {
+    rows.push(dayRow("Траты смены", "−" + rub(spent) + " ₽"));
+    rows.push(dayRow("Чистыми за смену", rub(d.tips - spent) + " ₽", true));
+  }
+
+  document.getElementById("day-body").innerHTML = rows.length
+    ? rows.join("")
+    : '<p class="day-note">Записей пока нет.</p>';
+  document.getElementById("day-start").value = planned && planned.starts_at ? planned.starts_at.slice(0,5) : "";
+  document.getElementById("day-end").value = planned && planned.ends_at ? planned.ends_at.slice(0,5) : "";
+  document.getElementById("day-shift-save").textContent = planned ? "Изменить время смены" : "Добавить смену";
+  document.getElementById("day-shift-summary").textContent = planned ? "Изменить смену в графике" : "Добавить смену в график";
+  document.getElementById("day-shift-delete").hidden = !planned;
+  document.getElementById('day-tips-details').hidden=privateMoney.state.lost;
+  document.getElementById('day-tip-inputs').hidden=privateMoney.state.lost;
+  document.getElementById('day-tip-add').hidden=privateMoney.state.lost;
+  document.getElementById("day-status").textContent = calendarNotice?.date===selectedDayISO ? calendarNotice.text : "";
+  const tips = privateMoney.state.lost ? [] : (view.tip_entries || []).filter(function (e) { return e.date === selectedDayISO; });
+  document.getElementById('day-tips-summary').textContent=tips.length?'Чаевые: добавить или убрать':'Добавить чаевые';
+  const list = document.getElementById("day-tip-list");
+  list.replaceChildren();
+  tips.forEach(function (e) {
+    const row = document.createElement("div");
+    row.className = "day-tip-record";
+    const label = document.createElement("span");
+    label.textContent = e.account === "cash" ? "Наличными" : "На карту";
+    const amount = document.createElement("strong");
+    amount.textContent = rub(e.amount) + " ₽";
+    const remove = document.createElement("button");
+    remove.type = "button"; remove.textContent = "Удалить";
+    remove.setAttribute('aria-label','Удалить чаевые '+label.textContent+' '+amount.textContent);
+    remove.onclick = function () { calendarEdit({action:"tip_delete",entry_id:e.id}); };
+    row.append(label,amount,remove);list.appendChild(row);
+  });
+  document.getElementById("day").classList.add("on");
+}
+
+let selectedDayISO = null;
+let lastOpenedDayISO = null;
+let dayTipOperation = null;
+let dayTipPending = null;
+let dayTipBusy = false;
+let calendarNotice = null;
+
+const sample={year:2026,month:10,today_day:9,days:Array.from({length:31},(_,i)=>({day:i+1,tips:i===1?7850:0,spent:0})),
+ scheduled_shifts:['2026-10-02','2026-10-09'],planned_times:[{shift_date:'2026-10-02',starts_at:'09:00:00',ends_at:'21:00:00'},{shift_date:'2026-10-09',starts_at:'14:45:00',ends_at:'23:30:00'}],worked_times:[],tip_entries:[],shifts_count:0,tips_total:7850};
+paintCalendar(sample);document.getElementById('iphone-calendar').hidden=false;document.getElementById('iphone-calendar-toggle').textContent='Подключить iPhone ›';
+document.getElementById('day-close').onclick=()=>{selectedDayISO=null;document.getElementById('day').classList.remove('on')};
+</script><script>(() => {
+  const canvas=document.getElementById('gradient-canvas');
+  const gl=canvas.getContext('webgl',{alpha:false,antialias:false,depth:false,stencil:false});
+  if(!gl)return; // The supplied CSS approximation remains available.
+  const vertex='attribute vec2 position;varying vec2 uv;void main(){uv=position*.5+.5;gl_Position=vec4(position,0.,1.);}';
+  const fragment=`precision highp float;
+    varying vec2 uv;uniform vec2 size;uniform float phase;
+    void main(){
+      float angle=radians(90.0+sin(phase*0.6)*28.0);
+      vec2 axis=vec2(sin(angle),-cos(angle));
+      vec2 across=vec2(cos(angle),sin(angle));
+      vec2 p=(vec2(uv.x,1.0-uv.y)-0.5)*size;
+      float along=dot(p,axis)/dot(abs(axis),size)+0.5;
+      float crossAxis=dot(p,across)/dot(abs(across),size)+0.5;
+      along+=(12.0/100.0)*0.35*sin(crossAxis*2.4*6.28318530718+20.75+phase*1.2);
+      vec3 bubblegum=vec3(239.,193.,218.)/255.;
+      vec3 matcha=vec3(206.,201.,159.)/255.;
+      vec3 mauve=vec3(220.,214.,246.)/255.;
+      vec3 blue=vec3(181.,208.,217.)/255.;
+      // Feather intervals from the supplied CSS export (softness 26, scale 68).
+      vec3 color=mix(bubblegum,matcha,clamp((along-.2)/.039,0.,1.));
+      color=mix(color,mauve,clamp((along-.511)/.078,0.,1.));
+      color=mix(color,blue,clamp((along-.811)/.039,0.,1.));
+      gl_FragColor=vec4(color,1.);
+    }`;
+  function compile(type,source){const shader=gl.createShader(type);gl.shaderSource(shader,source);gl.compileShader(shader);if(!gl.getShaderParameter(shader,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(shader));return shader;}
+  const program=gl.createProgram();gl.attachShader(program,compile(gl.VERTEX_SHADER,vertex));gl.attachShader(program,compile(gl.FRAGMENT_SHADER,fragment));gl.linkProgram(program);
+  if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program));
+  gl.useProgram(program);
+  const buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);
+  const position=gl.getAttribLocation(program,'position');gl.enableVertexAttribArray(position);gl.vertexAttribPointer(position,2,gl.FLOAT,false,0,0);
+  const size=gl.getUniformLocation(program,'size'),phase=gl.getUniformLocation(program,'phase');
+  function resize(){const dpr=Math.min(devicePixelRatio||1,2);canvas.width=Math.ceil(innerWidth*dpr);canvas.height=Math.ceil(innerHeight*dpr);gl.viewport(0,0,canvas.width,canvas.height);gl.uniform2f(size,innerWidth,innerHeight);draw(elapsed);}
+  function draw(t){gl.uniform1f(phase,t);gl.drawArrays(gl.TRIANGLES,0,6);}
+  const reduced=matchMedia('(prefers-reduced-motion: reduce)');let frame=null,previous=null,elapsed=0;
+  function tick(now){frame=null;if(previous!==null)elapsed+=(now-previous)/1000;previous=now;draw(elapsed);frame=requestAnimationFrame(tick);}
+  function restart(){if(frame!==null)cancelAnimationFrame(frame);frame=null;previous=null;if(document.hidden)return;if(reduced.matches)draw(0);else frame=requestAnimationFrame(tick);}
+  window.addEventListener('resize',resize);document.addEventListener('visibilitychange',restart);reduced.addEventListener('change',restart);
+  resize();restart();
+  window.gradientPreview={renderer:'WebGL canvas',angle:()=>90+Math.sin(elapsed*.6)*28,clock:()=>20.75+elapsed*1.2,phase:()=>elapsed};
+})();
+</script><footer class="app-footer"><span>История и правки ›</span><span>Помощь и обратная связь ›</span></footer></body></html>

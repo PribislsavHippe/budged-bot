@@ -14,11 +14,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=Prata&display=swap">
-<script>
-  // One pastel theme per opening; never change it while the user is working.
-  const PALETTES=['mint','lavender','pink','sand','sky'];
-  document.documentElement.dataset.palette=PALETTES[Math.floor(Math.random()*PALETTES.length)];
-</script>
+<script src="/app/background.js" defer></script>
 <style>
   :root {
     --ink: #111111;
@@ -39,13 +35,12 @@
      числа. word-spacing поджимает только пробелы, цифры не трогает. */
   .hero, .r .val, .r .tag, .hist-amt, .num { word-spacing: -0.3em; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html { background: var(--page, #d3f8e2); }
-  #bg {
-    position: fixed; inset: 0; z-index: -1;
-    background-color: var(--page, #d3f8e2);
-    background-blend-mode: overlay, normal, normal, normal;
-    background-size: 120px 120px, auto, auto, auto;
+  html { background: var(--page, #efc1da); }
+  #bg { position:fixed;inset:0;z-index:-1;pointer-events:none;
+    background-color:#EFC1DA;
+    background-image:linear-gradient(90deg,#EFC1DA 0%,#EFC1DA 20%,#CEC99F 23.9%,#CEC99F 51.1%,#DCD6F6 58.9%,#DCD6F6 81.1%,#B5D0D9 85%,#B5D0D9 100%);
   }
+  #gradient-canvas { width:100%;height:100%;display:block; }
   body {
     font-family: 'Onest', -apple-system, sans-serif;
     background: transparent; color: var(--ink);
@@ -189,16 +184,9 @@
   .cal-time { font-size: 8px; line-height: 1.1; white-space: nowrap; margin-top: 2px; letter-spacing: -.3px; }
   .cal-cell.empty { background: transparent; }
   :root {
-    --mint:#d3f8e2;--lavender:#e4c1f9;--pink:#f694c1;
-    --sand:#ede7b1;--sky:#a9def9;--porcelain:#fffffc;
-    --page:var(--mint);--tile:var(--porcelain);--accent:#343157;
+    --porcelain:#fffffc;--page:#efc1da;--tile:var(--porcelain);--accent:#343157;
     --ink:#181617;--ink-soft:#4f474d;
   }
-  :root[data-palette=lavender] { --page:var(--lavender); }
-  :root[data-palette=pink] { --page:var(--pink); }
-  :root[data-palette=sand] { --page:var(--sand); }
-  :root[data-palette=sky] { --page:var(--sky); }
-  #bg { background:var(--page); }
   /* Original flat calendar; only the subscription button uses glass. */
   .cal-cell { aspect-ratio:1;width:100%;min-width:0;border-radius:8px;background:rgba(255,255,255,.35);
     font-family:'Onest',sans-serif;font-size:14px;line-height:1.2;color:var(--ink-soft); }
@@ -258,7 +246,7 @@
 </style>
 </head>
 <body>
-  <div id="bg"></div>
+  <div id="bg" aria-hidden="true"><canvas id="gradient-canvas"></canvas></div>
   <nav class="app-tabs" role="tablist" aria-label="Разделы">
     <button id="tab-earnings" role="tab" aria-selected="true" aria-controls="earnings-panel">Чаевые</button>
     <button id="tab-sales" role="tab" aria-selected="false" aria-controls="sales-panel">План</button>
