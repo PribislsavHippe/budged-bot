@@ -450,7 +450,7 @@ async def prompt_work_end(bot):
                             .lte('shift_date',now.date().isoformat()).order('shift_date').order('id'))
         for row in rows:
             end=datetime.combine(datetime.fromisoformat(row['shift_date']).date(),
-                                 schedule.clock(row.get('ends_at') or '23:30'),schedule.TZ)
+                                 schedule.clock(row.get('ends_at') or '23:00'),schedule.TZ)
             if row.get('starts_at') and schedule.clock(row['ends_at'])<=schedule.clock(row['starts_at']):
                 end+=timedelta(days=1)
             if not end<=now<=end+timedelta(hours=12):continue

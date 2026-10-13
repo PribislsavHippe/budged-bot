@@ -25,9 +25,9 @@ def cell(value):
     if len(parts)==2:
         end=clock(parts[1])
     else:
-        end_minutes=min(start.hour*60+start.minute+12*60,23*60+30)
+        end_minutes=min(start.hour*60+start.minute+12*60,23*60)
         if end_minutes<=start.hour*60+start.minute:
-            raise ValueError('Начало смены должно быть раньше 23:30.')
+            raise ValueError('Укажи начало и конец смены, например 23–02.')
         end=time(end_minutes//60,end_minutes%60)
     if start==end:raise ValueError('Проверь плановое время смены.')
     return start.strftime('%H:%M'),end.strftime('%H:%M')

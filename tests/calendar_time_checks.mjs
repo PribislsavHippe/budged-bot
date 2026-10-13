@@ -13,3 +13,18 @@ assert.equal(workClock('2026-10-02T09:00:00+03:00'), '09:00');
 assert.equal(workClock('2026-10-02T23:30:00+03:00'), '23:30');
 assert.equal(workClock('2026-10-02T23:00:00+00:00'), '02:00');
 assert.equal(workClock('invalid'), null);
+
+const endSuggestion = html.match(/document\.getElementById\("day-start"\)\.onchange = (function \(\) \{[\s\S]*?\n\});/)?.[1];
+assert.ok(endSuggestion, 'shift end suggestion exists');
+const endField = { value: '' };
+const suggestEnd = runInNewContext(`(${endSuggestion})`, {
+  document: { getElementById: () => endField }, Number, Math, String
+});
+for (const [start, expected] of [['09:00', '21:00'], ['10:00', '22:00'], ['12:00', '23:00'], ['14:00', '23:00']]) {
+  endField.value = '';
+  suggestEnd.call({ value: start });
+  assert.equal(endField.value, expected);
+}
+endField.value = '22:30';
+suggestEnd.call({ value: '14:00' });
+assert.equal(endField.value, '22:30', 'explicitly entered end is preserved');

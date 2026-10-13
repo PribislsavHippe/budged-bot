@@ -724,7 +724,7 @@ document.getElementById("day-start").onchange = function () {
   const end=document.getElementById("day-end");
   if (!this.value || end.value) return;
   const parts=this.value.split(":").map(Number);
-  const minutes=Math.min(parts[0]*60+parts[1]+12*60,23*60+30);
+  const minutes=Math.min(parts[0]*60+parts[1]+12*60,23*60);
   if (minutes>parts[0]*60+parts[1]) end.value=String(Math.floor(minutes/60)).padStart(2,"0")+":"+String(minutes%60).padStart(2,"0");
 };
 document.getElementById("day-shift-delete").onclick = function () {

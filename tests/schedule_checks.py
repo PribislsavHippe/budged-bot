@@ -68,10 +68,10 @@ class Times(unittest.TestCase):
         self.assertEqual(str(scheduler.timezone),'Europe/Moscow')
 
     def test_cells_and_dates(self):
-        for text,want in [('10',('10:00','22:00')),('11',('11:00','23:00')),('14',('14:00','23:30')),('9–17',('09:00','17:00')),('10-23',('10:00','23:00')),('10-23:30',('10:00','23:30')),('23-02',('23:00','02:00'))]:
+        for text,want in [('10',('10:00','22:00')),('11',('11:00','23:00')),('12',('12:00','23:00')),('14',('14:00','23:00')),('9–17',('09:00','17:00')),('10-23',('10:00','23:00')),('10-23:30',('10:00','23:30')),('23-02',('23:00','02:00'))]:
             self.assertEqual(schedule.cell(text),want)
         for text in ('','в','-'):self.assertIsNone(schedule.cell(text))
-        for bad in ('?','24','11-24','10-10','23:45'):
+        for bad in ('?','24','11-24','10-10','23','23:45'):
             with self.assertRaises(ValueError):schedule.cell(bad)
         self.assertEqual(schedule.month('Октябрь 2026'),'2026-10')
         with self.assertRaises(ValueError):schedule.month('октябрь')
