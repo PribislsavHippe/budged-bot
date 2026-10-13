@@ -3,8 +3,23 @@
 Never infer row coordinates if the grid does not match. Crops live only in memory.
 """
 import io
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 from report_layout import encode
+
+
+def whole_image(data):
+    """Keep all dates/names and original resolution for an unknown layout."""
+    with Image.open(io.BytesIO(data)) as source:
+        if source.format not in {'JPEG','PNG'}:
+            raise ValueError('Пришли график в JPG или PNG.')
+        if source.width*source.height>12_000_000:
+            raise ValueError('Слишком большое разрешение графика.')
+        image=ImageOps.exif_transpose(source).convert('RGB')
+    output=io.BytesIO()
+    image.save(output,format='JPEG',quality=95)
+    if output.tell()>8*1024*1024:
+        raise ValueError('Пришли график размером до 8 МБ.')
+    return output.getvalue()
 
 
 def groups(values):
@@ -30,10 +45,18 @@ def detect(data):
     if any(not 13*scale<=gap<=21*scale for gap in gaps):raise ValueError('Не разобрал строки графика. Нужен ровный скриншот.')
     head=range(max(1,ys[0]-round(16*scale)),ys[1]-1)
     xs=groups([x for x in range(w) if sum(max(px[x,y])<195 for y in head)/len(head)>.7])
-    if len(xs)<5 or abs(xs[0]-74*scale)>3*scale or abs(xs[1]-147*scale)>3*scale or w-xs[-1]>3*scale:
+    # Read actual rules: the name/spacer widths vary between schedule exports.
+    # Keep the known two-column layout and reject missing or clipped boundaries.
+    if len(xs)<5 or not 50*scale<=xs[0]<=90*scale or w-xs[-1]>3*scale:
         raise ValueError('Не разобрал столбцы графика. Пришли таблицу целиком.')
     if any(not 50*scale<=b-a<=90*scale for a,b in zip(xs,xs[1:])):
         raise ValueError('Столбцы графика прочитались неоднозначно.')
+    margin=max(2,round(4*scale))
+    spacer=[px[x,y] for top,bottom in zip(ys[1:],ys[2:])
+            for y in range(top+margin,bottom-margin)
+            for x in range(xs[0]+margin,xs[1]-margin)]
+    if not spacer or sum(min(pixel)>=175 for pixel in spacer)/len(spacer)<.98:
+        raise ValueError('Не разобрал пустой столбец рядом с именами. Пришли всю таблицу графика.')
     return image,xs,ys,list(zip(ys[1:],ys[2:]))
 
 

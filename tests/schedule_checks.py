@@ -30,6 +30,18 @@ def notice_rpc(name,args):
 store.rpc=notice_rpc
 
 class Times(unittest.TestCase):
+    def test_employee_directory_rejects_duplicates_and_malformed_answers(self):
+        from schedule_reader import clean_directory
+        for raw in ({'rows':[]}, {'rows':[{'name':'Лёша'},{'name':'Леша'}]},
+                    {'rows':['not a row']}, {'rows':[{'name':' '}]},
+                    {'rows':[{'name':'Person'}]*41}):
+            with self.assertRaises(ValueError):clean_directory(raw,40,'whole')
+        for index in (True,-1,3):
+            with self.assertRaises(ValueError):
+                clean_directory({'rows':[{'name':'Person','index':index}]},3,'grid')
+        self.assertEqual(clean_directory({'rows':[{'name':'Person','index':999}]},40,'whole'),
+                         [{'name':'Person','index':0}])
+
     def test_google_sheet_rows_and_links(self):
         import schedule_sheet as sheets
         sheet_id='1gx13NYuISndRuCzG6I-DpD3zlkmfzc_S4LF1Pk0_dwU'
@@ -91,6 +103,79 @@ class Flow(unittest.IsolatedAsyncioTestCase):
         photo.drafts.clear();store.rows.clear()
         self.message=NS(text='октябрь 2026',from_user=NS(id=7),answer=AsyncMock(),edit_text=AsyncMock())
     def cb(self,data,uid=7):return NS(data=data,from_user=NS(id=uid),message=self.message,answer=AsyncMock())
+    async def test_invalid_image_is_explained_before_reading_names(self):
+        draft=photo.Draft('nonce','id','file',phase='consent')
+        photo.drafts[7]=draft
+        callback=self.cb('unused')
+        callback.bot=NS(get_file=AsyncMock(return_value=NS(file_size=0,file_path='photo')),
+                        download_file=AsyncMock())
+        reason='Слишком большое разрешение графика.'
+        with patch.object(schedule,'enabled',return_value=True), \
+             patch('schedule_layout.directory',side_effect=ValueError('unknown grid')), \
+             patch('schedule_layout.whole_image',side_effect=ValueError(reason)), \
+             patch.object(chat.vision,'request_json',new=AsyncMock()) as read, \
+             patch.object(chat.research,'track'):
+            await chat.start_photo(callback,draft)
+        read.assert_not_awaited()
+        self.assertEqual(self.message.edit_text.await_args.args[0],reason)
+        self.assertEqual(draft.phase,'consent')
+        self.assertIsNone(draft.image)
+    async def test_unknown_table_uses_whole_image_and_preserves_mode_after_selection(self):
+        draft=photo.Draft('nonce','id','file',phase='consent')
+        photo.drafts[7]=draft
+        callback=self.cb('unused')
+        async def download(path,destination):destination.write(b'original')
+        callback.bot=NS(get_file=AsyncMock(return_value=NS(file_size=0,file_path='photo')),
+                        download_file=AsyncMock(side_effect=download))
+        responses=[{'rows':[{'name':'Лёша'},{'name':'Коллега'}]},
+                   {'name':'Лёша','ambiguous':False,'cells':[{'day':19,'text':'9-17'}]},
+                   {'name':'Лёша','ambiguous':False,'cells':[{'day':2,'text':'10'}]}]
+        with patch.object(schedule,'enabled',return_value=True), \
+             patch('schedule_layout.directory',side_effect=ValueError('unknown grid')), \
+             patch('schedule_layout.whole_image',return_value=b'whole table'), \
+             patch('schedule_layout.row_image') as crop, \
+             patch.object(chat.vision,'request_json',new=AsyncMock(side_effect=responses)) as read, \
+             patch.object(schedule,'save',new=AsyncMock()) as save, \
+             patch.object(chat.research,'track'):
+            await chat.start_photo(callback,draft)
+            self.assertEqual(draft.phase,'schedule_name')
+            self.assertEqual(draft.report['image_mode'],'whole')
+            await chat.photo_action(self.cb('sch:nonce:row0'))
+            self.assertEqual(draft.report['image_mode'],'whole')
+            await chat.photo_month(self.message)
+            self.assertEqual(draft.phase,'schedule_review')
+            self.assertEqual(draft.report['cells'],[{'date':'2026-10-19','start':'09:00','end':'17:00'}])
+            self.assertEqual(draft.image,b'original')
+            save.assert_not_awaited()
+            # Changing the month must re-read the full table, not relabel cached days.
+            await chat.photo_action(self.cb('sch:nonce:month'))
+            self.message.text='ноябрь 2026'
+            await chat.photo_month(self.message)
+            self.assertEqual(read.await_count,3)
+            self.assertIn('2026-11',read.await_args.args[1])
+            self.assertEqual(draft.report['cells'][0]['date'],'2026-11-02')
+            crop.assert_not_called()
+            await chat.photo_action(self.cb('sch:nonce:save'))
+            save.assert_awaited_once_with(7,draft.report['cells'])
+            self.assertIsNone(draft.image)
+    async def test_ambiguous_whole_row_preserves_image_and_never_reaches_save(self):
+        draft=photo.Draft('n','id','file',phase='schedule_month',image=b'photo',
+                          report={'name':'Алексей','index':0,'image_mode':'whole'})
+        photo.drafts[7]=draft
+        for raw in ({'name':'Другой','ambiguous':False,'cells':[{'day':1,'text':'10'}]},
+                    {'name':'Алексей','ambiguous':True,'cells':[]},
+                    {'name':'Алексей','cells':[{'day':1,'text':'10'}]},
+                    {'name':'Алексей','ambiguous':False,'cells':[{'day':1,'text':'10'},{'day':1,'text':'11'}]}):
+            with patch('schedule_layout.whole_image',return_value=b'whole table'), \
+                 patch.object(chat.vision,'request_json',new=AsyncMock(return_value=raw)), \
+                 patch.object(schedule,'save',new=AsyncMock()) as save, \
+                 patch.object(chat.research,'track'):
+                await chat.photo_month(self.message)
+                self.assertEqual(draft.phase,'schedule_month')
+                self.assertEqual(draft.image,b'photo')
+                self.assertNotIn('raw_cells',draft.report)
+                await chat.photo_action(self.cb('sch:n:save'))
+                save.assert_not_awaited()
     async def test_work_time_prompt_uses_human_date_and_cancel_button(self):
         state=NS(set_state=AsyncMock(),set_data=AsyncMock(),get_state=AsyncMock(return_value=chat.Work.end.state),clear=AsyncMock())
         with patch.object(schedule,'load_shift',new=AsyncMock(return_value={'starts_at':'10:00:00'})):
