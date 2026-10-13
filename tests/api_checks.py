@@ -577,6 +577,12 @@ def test_iphone_calendar_creates_private_read_only_feed_and_revokes_it():
                        'ends_at':'22:00','calendar_updated_at':'2026-10-04T12:00:00Z'})
     created = run(webapp_api.api_iphone_calendar(_iphone_request(action='create')))
     assert created.status == 200 and created.data['enabled']
+    from urllib.parse import parse_qs, urlsplit
+    google_url = urlsplit(created.data['google_subscribe_url'])
+    assert google_url.scheme == 'https' and google_url.netloc == 'www.google.com'
+    assert google_url.path == '/calendar/render'
+    assert parse_qs(google_url.query) == {
+        'cid': ['webcal://' + created.data['feed_url'].removeprefix('https://')]}
     assert created.data['feed_url'].startswith('https://example.test/calendar/iphone/')
     assert run(webapp_api.api_iphone_calendar(_iphone_request())).data['feed_url'] == created.data['feed_url']
     feed_request = _iphone_feed_request(created.data['feed_url'])
@@ -589,6 +595,7 @@ def test_iphone_calendar_creates_private_read_only_feed_and_revokes_it():
     setup = run(webapp_api.iphone_calendar_setup(_iphone_feed_request(created.data['setup_url'])))
     assert setup.status == 200 and created.data['feed_url'] in setup.text
     assert ('webcal://' + created.data['feed_url'].removeprefix('https://')) in setup.text
+    assert created.data['google_subscribe_url'] in setup.text
     launch = run(webapp_api.iphone_calendar_subscribe(_iphone_feed_request(created.data['setup_url'])))
     assert launch.status == 302
     assert launch.headers['Location'] == 'webcal://' + created.data['feed_url'].removeprefix('https://')
@@ -614,6 +621,10 @@ def test_iphone_calendar_rotation_invalidates_old_link_and_rejects_bad_token():
     old = run(webapp_api.api_iphone_calendar(_iphone_request(action='create'))).data['feed_url']
     changed = run(webapp_api.api_iphone_calendar(_iphone_request(action='rotate')))
     assert changed.status == 200 and changed.data['feed_url'] != old
+    from urllib.parse import parse_qs, urlsplit
+    google_feed = parse_qs(urlsplit(changed.data['google_subscribe_url']).query)['cid']
+    assert google_feed == ['webcal://' + changed.data['feed_url'].removeprefix('https://')]
+    assert google_feed != ['webcal://' + old.removeprefix('https://')]
     assert run(webapp_api.iphone_calendar_feed(_iphone_feed_request(old))).status == 404
     assert run(webapp_api.iphone_calendar_feed(_iphone_feed_request(changed.data['feed_url']))).status == 200
     malformed = _iphone_feed_request(changed.data['feed_url'])

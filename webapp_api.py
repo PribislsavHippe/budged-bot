@@ -14,7 +14,7 @@ import uuid
 from calendar import monthrange
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, urlsplit, urlencode
 
 from aiohttp import web
 
@@ -631,6 +631,12 @@ def _calendar_urls(base: str, row: dict, bot_token: str) -> tuple[str, str]:
     return root + '.ics', root
 
 
+def _google_calendar_subscribe_url(feed_url: str) -> str:
+    # Google confirms a read-only subscription; this grants us no account access.
+    webcal_url = 'webcal://' + feed_url.removeprefix('https://')
+    return 'https://www.google.com/calendar/render?' + urlencode({'cid': webcal_url})
+
+
 async def api_iphone_calendar(request: web.Request) -> web.Response:
     """Manage a revocable schedule-only feed from signed Telegram initData."""
     user_id, body = await _auth(request)
@@ -658,6 +664,7 @@ async def api_iphone_calendar(request: web.Request) -> web.Response:
     feed_url, setup_url = _calendar_urls(base, row, request.app['bot_token'])
     return web.json_response({'available': True, 'enabled': True,
                               'feed_url': feed_url, 'setup_url': setup_url,
+                              'google_subscribe_url': _google_calendar_subscribe_url(feed_url),
                               'subscribe_url': setup_url + '/subscribe'}, headers=NO_CACHE)
 
 
@@ -714,6 +721,7 @@ async def iphone_calendar_setup(request: web.Request) -> web.Response:
     feed_url, _ = _calendar_urls(base, row, request.app['bot_token'])
     safe = html.escape(feed_url, quote=True)
     subscription = html.escape('webcal://' + feed_url.removeprefix('https://'), quote=True)
+    google_subscription = html.escape(_google_calendar_subscribe_url(feed_url), quote=True)
     page = ("<!doctype html><html lang='ru'><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>Календарь смен</title><style>body{max-width:36rem;margin:3rem auto;"
@@ -725,12 +733,16 @@ async def iphone_calendar_setup(request: web.Request) -> web.Response:
             "«Добавить календарь» → «Добавить календарь подписки» и вставь её.</p>"
             f"<input aria-label='Личная ссылка на календарь' readonly value='{safe}'>"
             f"<p><a href='{subscription}'>Добавить подписку на iPhone</a></p>"
-            "<h2>Android</h2><p>Установи <a href='https://icsx5.bitfire.at/'>ICSx⁵</a>, "
+            "<h2>Google Календарь</h2>"
+            f"<p><a href='{google_subscription}'>Подключить Google Календарь</a></p>"
+            "<p>Подтверди подписку в Google. Если появится просьба войти, выбери свой аккаунт. "
+            "Бот не получает доступ к нему. Google получит ссылку на твой график и время смен. "
+            "Изменения могут появляться с задержкой.</p>"
+            "<p>Если подписка не открылась, добавь ссылку через Google Календарь на компьютере: "
+            "«Другие календари» → «Добавить» → «По URL».</p>"
+            "<h2>Android без Google</h2><p>Установи <a href='https://icsx5.bitfire.at/'>ICSx⁵</a>, "
             "добавь подписку и вставь эту ссылку. Google-аккаунт не нужен. "
             "Разреши приложению доступ к календарю телефона: там появятся смены.</p>"
-            "<p>Если пользуешься Google Календарём, открой его веб-версию на компьютере: "
-            "«Другие календари» → «Добавить» → «По URL». Вставь ссылку. "
-            "Войти в свой Google придётся, но доступ к аккаунту боту не передаётся.</p>"
             "<p>Подписка обновляет смены автоматически. Открытие файла .ics как обычного "
             "файла создаст разовый импорт. Ссылка даёт доступ только к датам и времени смен; "
             "не передавай её другим людям.</p></html>")

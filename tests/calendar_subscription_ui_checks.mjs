@@ -5,7 +5,8 @@ import { runInNewContext } from 'node:vm';
 const html=readFileSync(new URL('../webapp/index.html',import.meta.url),'utf8');
 const source=html.slice(html.indexOf('let iphoneCalendarData='),html.indexOf("document.getElementById('iphone-calendar-copy').onclick"));
 const data={available:true,enabled:true,feed_url:'https://example.test/feed.ics',
-  setup_url:'https://example.test/setup',subscribe_url:'https://example.test/setup/subscribe'};
+  setup_url:'https://example.test/setup',subscribe_url:'https://example.test/setup/subscribe',
+  google_subscribe_url:'https://www.google.com/calendar/render?cid=webcal%3A%2F%2Fexample.test%2Ffeed.ics'};
 function scenario(platform){
   const elements=new Map(),calls=[],opened=[];
   const document={getElementById(id){if(!elements.has(id))elements.set(id,{});return elements.get(id);}};
@@ -33,8 +34,28 @@ assert.equal(ios.opened.length,2);
 
 const android=scenario('android');
 await android.context.iphoneCalendarRefresh();
+assert.equal(android.opened.length,0,'preparing Android does not send its feed to Google');
+assert.equal(android.button.textContent,'Подключить Google Календарь ›');
+const androidClick=android.button.onclick();
+assert.deepEqual(android.opened,[data.google_subscribe_url],'Android opens Google synchronously in the tap');
+await androidClick;
 await android.button.onclick();
-assert.deepEqual(android.opened,[data.setup_url],'Android retains its supported setup path');
+assert.deepEqual(android.calls,['create'],'Android reuses the prepared URL without another request');
+assert.equal(android.opened.length,2);
+assert.equal(android.document.getElementById('iphone-calendar-status').hidden,true,'opening Google does not claim successful connection');
+
+// A previously revoked link needs a new URL and a fresh gesture after preparation.
+android.context.paintIphoneCalendar({available:true,enabled:false});
+await android.button.onclick();
+assert.equal(android.opened.length,2,'do not open Google after awaiting the API');
+assert.match(android.document.getElementById('iphone-calendar-status').textContent,/Нажми «Подключить Google Календарь»/);
+await android.button.onclick();
+assert.equal(android.opened.length,3);
+
+const olderServer=scenario('android');
+olderServer.context.paintIphoneCalendar({...data,google_subscribe_url:undefined});
+await olderServer.button.onclick();
+assert.deepEqual(olderServer.opened,[data.setup_url],'older API retains a working instruction fallback');
 
 const failure=scenario('ios');
 failure.context.fetch=async()=>{throw new Error('Не получилось подключить календарь. Попробуй ещё раз.');};

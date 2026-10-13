@@ -293,7 +293,8 @@
     <button class="iphone-calendar-toggle" id="iphone-calendar-toggle" type="button">Подключить календарь ›</button>
     <p id="iphone-calendar-status" role="status" hidden></p>
     <details class="iphone-calendar-help" id="iphone-calendar-help" hidden><summary>Как добавить подписку?</summary>
-      <p>На iPhone добавь ссылку как календарь подписки. На Android установи ICSx⁵ и вставь ссылку в новую подписку. Google-аккаунт не нужен.</p>
+      <p>На iPhone подтверди подписку в «Календаре». На Android подтверди её в Google Календаре. Если Google попросит войти, выбери свой аккаунт. Бот не получает доступ к аккаунту; Google получит ссылку на график и время смен. Изменения могут появляться с задержкой.</p>
+      <p>Если подключение не открылось, скопируй ссылку и добавь её в Google Календарь на компьютере: «Другие календари» → «Добавить» → «По URL». Другой способ для Android — в инструкции ниже.</p>
       <input id="iphone-calendar-link" aria-label="Личная ссылка на календарь" readonly>
       <div class="iphone-calendar-actions">
         <button id="iphone-calendar-copy" type="button">Скопировать ссылку ›</button>
@@ -935,7 +936,7 @@ function paintIphoneCalendar(data){
   if(!data?.available)return;
   document.getElementById('iphone-calendar-toggle').textContent=usesAppleCalendar()
     ? 'Подключить iPhone ›'
-    : (data.enabled?'Настроить календарь ›':'Подключить календарь ›');
+    : 'Подключить Google Календарь ›';
   document.getElementById('iphone-calendar-help').hidden=!data.enabled;
   document.getElementById('iphone-calendar-link').value=data.feed_url||'';
   iphoneCalendarStatus('');
@@ -946,7 +947,8 @@ function iphoneCalendarStatus(message){
   status.textContent=message;status.hidden=!message;
 }
 function openIphoneCalendar(){
-  const url=usesAppleCalendar()?iphoneCalendarData?.subscribe_url:iphoneCalendarData?.setup_url;
+  const url=usesAppleCalendar()?iphoneCalendarData?.subscribe_url
+    :(iphoneCalendarData?.google_subscribe_url||iphoneCalendarData?.setup_url);
   document.getElementById('iphone-calendar-help').hidden=false;
   if(!url)throw new Error('Не получилось открыть календарь. Открой инструкцию ниже.');
   if(tg?.openLink)tg.openLink(url,{try_instant_view:false});
@@ -957,9 +959,9 @@ async function iphoneCalendarRefresh(){
   iphoneCalendarBusy=true;
   const button=document.getElementById('iphone-calendar-toggle');button.disabled=true;
   try{
-    // Prepare only our read-only URL. Apple still requires the user's consent.
+    // Prepare only our read-only URL. The calendar provider still asks for consent.
     // openLink must run within one second of the tap, without an API round trip.
-    paintIphoneCalendar(await iphoneCalendarRequest(usesAppleCalendar()?'create':'status'));
+    paintIphoneCalendar(await iphoneCalendarRequest('create'));
   }
   catch(e){document.getElementById('iphone-calendar').hidden=true;}
   finally{iphoneCalendarBusy=false;button.disabled=false;}
@@ -973,10 +975,10 @@ document.getElementById('iphone-calendar-toggle').onclick=async function(){
   iphoneCalendarBusy=true;
   this.disabled=true;iphoneCalendarStatus('Подготавливаю календарь…');
   try{paintIphoneCalendar(await iphoneCalendarRequest('create'));
-    // After explicit revocation (or on Android), a fresh tap is needed to keep
+    // After explicit revocation, a fresh tap is needed to keep
     // Telegram's browser handoff within the allowed user-interaction window.
     iphoneCalendarStatus('Ссылка готова. Нажми «Подключить iPhone», чтобы добавить подписку.');
-    if(!usesAppleCalendar())iphoneCalendarStatus('Ссылка готова. Нажми «Настроить календарь», чтобы добавить подписку.');}
+    if(!usesAppleCalendar())iphoneCalendarStatus('Ссылка готова. Нажми «Подключить Google Календарь», чтобы добавить подписку.');}
   catch(e){iphoneCalendarStatus(e.message);}
   finally{iphoneCalendarBusy=false;this.disabled=false;}
 };
