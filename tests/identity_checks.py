@@ -11,6 +11,9 @@ with patch.dict(os.environ, {'SUPABASE_URL':'https://example.invalid','SUPABASE_
     import report_photo as photo
 
 class IdentityTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.auto=patch('report_auto.enabled',new=AsyncMock(return_value=False))
+        self.auto.start();self.addCleanup(self.auto.stop)
     async def test_pending_profile_describes_personal_access_without_waiting(self):
         message=NS(from_user=NS(id=42),answer=AsyncMock())
         row={'id':'00000000-0000-0000-0000-000000000001','restaurant_name':'Кафе',

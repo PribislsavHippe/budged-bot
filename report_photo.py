@@ -123,6 +123,8 @@ async def receive_photo(message):
     if not vision.configured():
         await message.answer('Читать фото пока не умею. Можно записать отчёт сообщением.')
         return
+    import report_auto
+    if await report_auto.receive(message):return
     old = drafts.get(message.from_user.id)
     if old and (old.lock.locked() or old.phase == 'uncertain'):
         await message.answer('Сначала заверши предыдущий отчёт.')
@@ -307,6 +309,12 @@ async def photo_callback(callback):
                                           'Чтобы поменять и дату: «отчёт за вчера, вино 73 238».',
                                           reply_markup=kb(draft, [('Отмена', 'cancel')]))
         elif action == 'save' and draft.phase in ('review', 'uncertain'):
+            if draft.report.get('auto_profile'):
+                import report_auto
+                try:await report_auto.save_and_show(callback.message,draft,draft.report['auto_profile'])
+                except Exception:
+                    await callback.message.answer('Ответ о сохранении не пришёл. Нажми «Сохранить ещё раз» — второй такой записи не появится.',reply_markup=kb(draft,[('Сохранить ещё раз','save')]))
+                return
             draft.phase = 'uncertain'
             try:
                 await db.get_or_create_user(callback.from_user.id)

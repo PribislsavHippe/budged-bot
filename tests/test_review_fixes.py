@@ -4,6 +4,7 @@ import io
 import logging
 import os
 import threading
+import httpx
 import unittest
 from datetime import date, datetime, timezone
 from types import SimpleNamespace as NS
@@ -126,6 +127,49 @@ class ReviewFixTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(calls[-1].args['succeeded'])
         self.assertEqual(self.dispatcher.feed_raw_update.await_count, 2)
         self.assertEqual(calls[0].args['batch'], calls[2].args['batch'])
+
+    async def test_remote_protocol_failure_retries_same_batch(self):
+        number, actor, sealed, _ = self.inbox.pack(update())
+        row = {'update_id': number, 'actor_key': actor, 'payload': sealed,
+               'batch_id': '00000000-0000-4000-8000-000000000001'}
+        calls = []
+
+        async def execute(query):
+            calls.append(query)
+            return NS(data=[row] if query.name == 'claim_telegram_batch' else None)
+
+        self.dispatcher.feed_raw_update.side_effect = [httpx.RemoteProtocolError('disconnected'), None]
+        with patch.object(db.supabase, 'rpc', side_effect=lambda name, args: NS(name=name, args=args)), \
+                patch.object(db, '_execute', side_effect=execute):
+            with self.assertRaises(httpx.RemoteProtocolError):
+                await self.inbox.process([row])
+            self.assertFalse(calls[-1].args['succeeded'])
+            await self.inbox.process([row])
+            self.assertTrue(calls[-1].args['succeeded'])
+        self.assertEqual(calls[0].args['batch'], calls[2].args['batch'])
+        self.assertEqual(calls[0].args['ids'], calls[2].args['ids'])
+
+    async def test_database_network_diagnostic_keeps_origin_without_sensitive_data(self):
+        from diagnostics import failure
+        query = Mock()
+        query.execute.side_effect = httpx.RemoteProtocolError(
+            'SECRET_AMOUNT_54321 SECRET_TOKEN',
+            request=httpx.Request('POST', 'https://private.example.invalid/sensitive?token=SECRET_TOKEN'))
+        with self.assertLogs(level='ERROR') as logs:
+            try:
+                await db._execute(query)
+            except httpx.RemoteProtocolError as error:
+                code, _ = failure(error, area='telegram_inbox', stage='process')
+            else:
+                self.fail('Transport failure was swallowed')
+        # A database write must not be blindly retried after an uncertain response.
+        query.execute.assert_called_once()
+        self.assertEqual(code, 'network')
+        line=' '.join(logs.output)
+        self.assertIn('provider=supabase', line)
+        self.assertIn('db.py:_execute:', line)
+        self.assertNotIn('SECRET_', line)
+        self.assertNotIn('private.example', line)
 
     async def test_group_forward_cannot_bypass_router(self):
         raw = update(text='Получены чаевые\nЧаевые: 500 р.', chat_type='group')

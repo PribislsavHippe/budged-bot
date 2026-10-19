@@ -64,7 +64,20 @@ def controls(draft):
 
 
 async def load_rows(message, draft, name, selected_config=None):
-    import categories
+    import categories,report_auto
+    if await report_auto.enabled():
+        try:return await report_auto.load_sheet(message,draft,name)
+        except sheet.SheetParseError as error:
+            if str(error)=='no_matching_categories':raise
+        except Exception as error:
+            from diagnostics import failure
+            failure(error,area='report_auto',stage='sheet')
+        if draft.phase=='uncertain':
+            await message.answer('Ответ о сохранении не пришёл. Нажми «Сохранить ещё раз» — второй такой записи не появится.',reply_markup=photo.kb(draft,[('Сохранить ещё раз','save')]))
+        else:
+            photo.expire(message.chat.id,draft)
+            await report_auto.issue(message,draft.oid,'sheet')
+        return True
     cfg = selected_config or (await categories.context(message.chat.id, sheet.sheet_month(name)) if sheet.sheet_month(name) else None)
     if cfg is None and sheet.sheet_month(name):
         choices=await categories.options(message.chat.id,sheet.sheet_month(name))
@@ -92,6 +105,15 @@ async def load_rows(message, draft, name, selected_config=None):
 async def start(message, draft, *, fallback=False):
     names = await sheet.tabs(draft.report['sheet_source'])
     candidates = [n for n in names if sheet.sheet_month(n) == op_today().strftime('%Y-%m')]
+    import report_auto
+    automatic=await report_auto.enabled()
+    if automatic and draft.report.get('explicit_gid'):
+        ids=sheet.tab_ids(await sheet.fetch(draft.report['sheet_source'],directory=True))
+        candidates=[n for n in names if ids.get(n)==draft.report['explicit_gid']]
+        if len(candidates)!=1 or not sheet.sheet_month(candidates[0]):
+            photo.expire(message.chat.id,draft)
+            await report_auto.issue(message,draft.oid,'date');return
+        draft.report.pop('explicit_gid',None)
     if len(candidates) == 1 and not draft.report.get('explicit_gid'):
         try:
             if await load_rows(message, draft, candidates[0]):
@@ -111,6 +133,9 @@ async def start(message, draft, *, fallback=False):
                 return
     if len(candidates) == 1 and not draft.report.get('explicit_gid'):
         raise sheet.SheetParseError('unsupported_layout_or_no_results')
+    if automatic:
+        photo.expire(message.chat.id,draft)
+        await report_auto.issue(message,draft.oid,'date');return
     draft.report = {'sheet_source': draft.report['sheet_source'], 'sheet_names': names}
     draft.phase = 'sheet_tabs'
     await message.answer('Выбери лист с результатами', reply_markup=buttons(draft,
@@ -146,9 +171,17 @@ async def receive_link(message):
             async with _slots:
                 await start(message, draft, fallback=True)
         except sheet.SheetParseError as error:
+            import report_auto
+            if await report_auto.enabled():
+                photo.expire(uid,draft)
+                await report_auto.issue(message,draft.oid,'sheet');return
             await report_failure(message, draft, error)
             draft.phase = 'sheet_retry'
         except ValueError as error:
+            import report_auto
+            if await report_auto.enabled():
+                photo.expire(uid,draft)
+                await report_auto.issue(message,draft.oid,'sheet');return
             draft.phase = 'sheet_retry'
             await message.answer(html.escape(str(error)), reply_markup=buttons(draft, controls(draft)))
 

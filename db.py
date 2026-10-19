@@ -5,6 +5,8 @@
 """
 import os
 import asyncio
+
+from httpx import TransportError
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
@@ -37,6 +39,10 @@ async def _execute(query):
         task=asyncio.create_task(asyncio.to_thread(query.execute))
         try:
             return await asyncio.shield(task)
+        except TransportError as error:
+            # Static origin only: never attach the URL, credentials or payload.
+            error._diagnostic_provider = 'supabase'
+            raise
         except asyncio.CancelledError:
             # A cancelled waiter must not free a slot while its thread still runs.
             try:await task

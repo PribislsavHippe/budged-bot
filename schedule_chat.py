@@ -92,7 +92,7 @@ async def reminder_settings(message):
 async def set_reminder_settings(callback):
     await callback.answer('Напоминания сейчас приходят для каждой смены.',show_alert=True)
 
-async def start_photo(callback,draft):
+async def start_photo(callback,draft,image_bytes=None):
     from report_photo import LimitedImage,_recognition_slots
     if not schedule.enabled():
         await callback.message.answer('Импорт графика пока не подключён.');return
@@ -103,11 +103,13 @@ async def start_photo(callback,draft):
     try:
         if _recognition_slots.locked():raise vision.VisionError('Сейчас читаю другие фото. Попробуй через минуту.')
         async with _recognition_slots:
-            file=await callback.bot.get_file(draft.file_id)
-            if (file.file_size or 0)>vision.MAX_BYTES:raise vision.VisionError('Пришли файл до 8 МБ.')
-            image=LimitedImage();await callback.bot.download_file(file.file_path,destination=image)
+            if image_bytes is None:
+                file=await callback.bot.get_file(draft.file_id)
+                if (file.file_size or 0)>vision.MAX_BYTES:raise vision.VisionError('Пришли файл до 8 МБ.')
+                image=LimitedImage();await callback.bot.download_file(file.file_path,destination=image)
+                data=image.getvalue()
+            else:data=image_bytes
             from report_photo import drafts,MAX_IMAGE_MEMORY
-            data=image.getvalue()
             if sum(len(d.image or b'') for d in drafts.values())+len(data)>MAX_IMAGE_MEMORY:raise vision.VisionError('Сейчас читаю другие фото. Попробуй позже.')
             draft.image=data
             import schedule_reader

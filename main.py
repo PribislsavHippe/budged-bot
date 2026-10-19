@@ -45,6 +45,8 @@ def build_dispatcher() -> Dispatcher:
     import category_chat
     dp.include_router(category_chat.router)
     dp.include_router(ux_chat.router)
+    import report_auto
+    dp.include_router(report_auto.router)
     import report_sheet_chat
     dp.include_router(report_sheet_chat.router)
     import schedule_chat

@@ -151,6 +151,8 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('919 783,5',photo.preview(draft))
 
     async def asyncSetUp(self):
+        self.auto=patch('report_auto.enabled',new=AsyncMock(return_value=False))
+        self.auto.start();self.addCleanup(self.auto.stop)
         photo.drafts.clear()
         self.category_context=patch('categories.context',new=AsyncMock(return_value=None))
         self.category_context.start();self.addCleanup(self.category_context.stop)

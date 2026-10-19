@@ -9,6 +9,7 @@ CREATE TABLE users(id BIGINT PRIMARY KEY);INSERT INTO users VALUES(1),(2),(3);
 CREATE TABLE restaurants(id UUID PRIMARY KEY,owner_id BIGINT,name TEXT DEFAULT 'Тест');INSERT INTO restaurants(id,owner_id) VALUES('${r}',1),('${r2}',3);
 CREATE TABLE employee_links(user_id BIGINT,restaurant_id UUID,status TEXT);INSERT INTO employee_links VALUES(2,'${r}','approved');`);
 await db.exec(await fs.readFile(new URL('../migration_v27.sql',import.meta.url),'utf8'));
+await db.exec(await fs.readFile(new URL('../migration_v28.sql',import.meta.url),'utf8'));
 const definitions=[{id:c,name:'Гарниры',unit:'amount'},{id:other,name:'Шоты',unit:'count'}];
 const configure=async(actor,restaurant,month,expected,operation,defs=definitions)=>db.query('SELECT configure_categories($1,$2,$3,$4,$5,$6)',[actor,restaurant,month,expected,operation,JSON.stringify(defs)]);
 const op='55555555-5555-4555-8555-555555555555';
@@ -60,6 +61,17 @@ for(const role of ['anon','authenticated']){
  await db.exec('SET ROLE '+role);
  await assert.rejects(discover(2,r,newOp),/permission denied/);
  await assert.rejects(db.query('SELECT * FROM category_alerts'),/permission denied/);
+ await db.exec('RESET ROLE');
+}
+// Reviews persist across restart/retry; a delayed OK cannot restore bad results.
+await assert.rejects(db.query("SELECT review_category_report(3,$1,'flagged')",[newOp]),/category_forbidden/);
+assert.equal((await db.query("SELECT review_category_report(2,$1,'flagged') s",[newOp])).rows[0].s,'flagged');
+assert.equal((await db.query("SELECT review_category_report(2,$1,'confirmed') s",[newOp])).rows[0].s,'flagged');
+await discover(2,r,newOp);
+assert.equal((await db.query('SELECT review_status FROM category_reports WHERE id=$1',[newOp])).rows[0].review_status,'flagged');
+for(const role of ['anon','authenticated']){
+ await db.exec('SET ROLE '+role);
+ await assert.rejects(db.query("SELECT review_category_report(2,$1,'flagged')",[newOp]),/permission denied/);
  await db.exec('RESET ROLE');
 }
 await db.exec('DELETE FROM category_reports WHERE user_id<>2');

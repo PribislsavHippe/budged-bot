@@ -94,6 +94,8 @@ class ExportTests(unittest.IsolatedAsyncioTestCase):
 
 class FlowTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        self.auto=patch('report_auto.enabled',new=AsyncMock(return_value=False))
+        self.auto.start();self.addCleanup(self.auto.stop)
         photo.drafts.clear()
         chat._alerts.clear()
         self.context_patch=patch('categories.context',new=AsyncMock(return_value=None))

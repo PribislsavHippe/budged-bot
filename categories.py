@@ -95,10 +95,10 @@ async def context(uid, month):
     from admin import is_admin
     import identity
     owned=await identity.owner_restaurants(uid) if is_admin(uid) else []
-    if len(owned)>1:return None
     rows=(await db._execute(db.supabase.table('employee_links').select('restaurant_id')
                           .eq('user_id',uid).eq('status','approved'))).data
     if rows:return await config(rows[0]['restaurant_id'],month) or empty_context(rows[0]['restaurant_id'],month,uid)
+    if len(owned)>1:return None
     if len(owned)==1:return await config(owned[0]['id'],month) or empty_context(owned[0]['id'],month,uid)
     return empty_context(None,month,uid)
 
@@ -136,6 +136,7 @@ def summary(reports, cfg=None):
     """Snapshot definitions preserve old labels/units, including changed configurations."""
     latest={}
     for report in sorted(reports,key=lambda r:(r['created_at'],r['id'])):
+        if report.get('review_status')=='flagged':continue
         definitions={c['id']:c for c in report['definitions']}
         for cid,v in report['metrics'].items():
             old=latest.get(cid)
@@ -155,7 +156,7 @@ def summary(reports, cfg=None):
 
 async def view(uid, month):
     try:
-        reports=await db._pages(lambda:db.supabase.table('category_reports').select('id,created_at,definitions,metrics')
+        reports=await db._pages(lambda:db.supabase.table('category_reports').select('*')
                                .eq('user_id',uid).eq('month',month).order('created_at').order('id'))
         return summary(reports,await context(uid,month))
     except APIError as error:

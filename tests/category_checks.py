@@ -12,6 +12,9 @@ RAW={'month':'2026-10','categories':[{'name':'Хлеб','unit':'amount'},{'name'
 def cfg(raw=RAW):return {'restaurant_id':R,'month':raw['month'],'revision':1,'definitions':categories.clean(raw,R)['categories']}
 
 class CategoryTests(unittest.IsolatedAsyncioTestCase):
+ async def asyncSetUp(self):
+  self.auto=patch('report_auto.enabled',new=AsyncMock(return_value=False))
+  self.auto.start();self.addCleanup(self.auto.stop)
  def test_ids_history_and_unit_validation(self):
   a=cfg();b=cfg({'month':'2026-11','categories':RAW['categories']})
   self.assertNotEqual(a['definitions'][0]['id'],b['definitions'][0]['id'])

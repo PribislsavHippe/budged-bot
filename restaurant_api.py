@@ -24,7 +24,7 @@ async def member_sales(link, month):
         from postgrest.exceptions import APIError
         import categories
         try:
-            custom_reports=await db._pages(lambda:db.supabase.table('category_reports').select('id,created_at,definitions,metrics')
+            custom_reports=await db._pages(lambda:db.supabase.table('category_reports').select('*')
                 .eq('user_id',uid).eq('restaurant_id',link['restaurant_id']).eq('month',month)
                 .gte('created_at',since).order('created_at').order('id'))
             custom=categories.include_legacy_sales(categories.summary(custom_reports,await categories.config(link['restaurant_id'],month)),month,settings[0] if settings else None,events)
