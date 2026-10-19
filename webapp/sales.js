@@ -6,8 +6,9 @@
   const counts=new Set(['cocktails','postcards','dvd']);
   const num=n=>Number(n).toLocaleString('ru-RU',{maximumFractionDigits:2});
   const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const val=(k,n)=>num(n)+(counts.has(k)?' шт.':' ₽');
-  const fields=(prefix,keys)=>keys.map(k=>`<label>${labels[k]} · ${counts.has(k)?'шт.':'₽'}<input id="${prefix}-${k}" inputmode="decimal" placeholder="Не указано"></label>`).join('');
+  const neutral=new Set();
+  const val=(k,n)=>num(n)+(neutral.has(k)?'':counts.has(k)?' шт.':' ₽');
+  const fields=(prefix,keys)=>keys.map(k=>`<label>${esc(labels[k])} · ${counts.has(k)?'шт.':'₽'}<input id="${prefix}-${k}" inputmode="decimal" placeholder="Не указано"></label>`).join('');
   let data=null,busy=false,pending=null,editing=null,serviceSeq=0;
   const storage='sales-correction-'+(tg?.initDataUnsafe?.user?.id||'local');
   try {pending=JSON.parse(sessionStorage.getItem(storage)||'null');} catch(_){}
@@ -49,10 +50,12 @@
   }
   function render(s){
     const openMetrics=data?.month===s.month?[...document.querySelectorAll('.sales-goal[open]')].map(el=>el.dataset.metric):[];
+    const custom=s.category_metrics||[];
+    for(const category of custom){const k='category_'+category.id.replaceAll('-','');labels[k]=category.name;if(category.unit==='number')neutral.add(k);else neutral.delete(k);if(category.unit==='count')counts.add(k);else counts.delete(k);}
     data=s;$('sales-month').value=s.month;$('sales-content').hidden=false;
     $('sales-period').textContent=new Date(s.month+'-01T12:00:00').toLocaleDateString('ru-RU',{month:'long',year:'numeric'})+' ›';
     const shortDate=d=>new Date(d+'T12:00:00').toLocaleDateString('ru-RU',{day:'numeric',month:'short'});
-    const cutoffs=Object.values(s.metrics).map(v=>v.cutoff).filter(Boolean).sort();
+    const cutoffs=[...Object.values(s.metrics),...custom].map(v=>v.cutoff).filter(Boolean).sort();
     $('sales-freshness').textContent=cutoffs.length?'Отчёт по '+shortDate(cutoffs.at(-1)):'Отчёта пока нет';
     function metric(k,v){
       const target=v.target,denom=target||1;
@@ -61,12 +64,13 @@
       const progress=v.pct===null?'—':Number(v.pct).toLocaleString('ru-RU',{maximumFractionDigits:1})+'%';
       const status=target?(v.remaining===null?'Нет записей':v.remaining===0?'План выполнен':'Осталось '+val(k,v.remaining)):'План не задан';
       const provenance=[v.official!==null?'По отчёту на '+shortDate(v.cutoff)+': '+val(k,v.official):'',v.recorded?(v.cutoff?'После отчёта: ':'Записано: ')+val(k,v.recorded):'',v.estimated?'Бокалы: оценка '+val(k,v.estimated)+' по '+num(s.glass_price)+' ₽':''].filter(Boolean).join('<br>')||'Записей за месяц пока нет.';
-      return `<details class="sales-goal" data-metric="${k}" ${openMetrics.includes(k)?'open':''}><summary aria-label="${labels[k]}: ${esc(amount)}${target?'; план '+val(k,target)+'; выполнено '+progress:''}. ${status}. Показать расчёт"><div class="sales-goal-top"><span class="sales-goal-name">${labels[k]}</span><span class="sales-goal-percent">${target?progress:''}</span></div><div class="sales-goal-amount"><strong>${amount}</strong>${target?`<span> из ${val(k,target)}</span>`:''}</div>${target?`<div class="sales-track" aria-hidden="true"><i style="width:${widths[0]}%"></i><i class="recorded" style="width:${widths[1]}%"></i><i class="estimated" style="width:${widths[2]}%"></i></div>`:''}<span class="sales-expand" aria-hidden="true">⌄</span></summary><div class="sales-goal-detail"><strong>${status}</strong><div>${provenance}</div></div></details>`;
+      return `<details class="sales-goal" data-metric="${k}" ${openMetrics.includes(k)?'open':''}><summary aria-label="${esc(labels[k])}: ${esc(amount)}${target?'; план '+val(k,target)+'; выполнено '+progress:''}. ${status}. Показать расчёт"><div class="sales-goal-top"><span class="sales-goal-name">${esc(labels[k])}</span><span class="sales-goal-percent">${target?progress:''}</span></div><div class="sales-goal-amount"><strong>${amount}</strong>${target?`<span> из ${val(k,target)}</span>`:''}</div>${target?`<div class="sales-track" aria-hidden="true"><i style="width:${widths[0]}%"></i><i class="recorded" style="width:${widths[1]}%"></i><i class="estimated" style="width:${widths[2]}%"></i></div>`:''}<span class="sales-expand" aria-hidden="true">⌄</span></summary><div class="sales-goal-detail"><strong>${status}</strong><div>${provenance}</div></div></details>`;
     }
     const main=s.metrics.turnover,mainValue=main.total===null?'—':(main.estimated?'≈ ':'')+num(main.total);
     $('sales-turnover').innerHTML=`<div class="plan-hero"><p>Товарооборот</p><strong>${mainValue}</strong>${main.target?`<span>План ${num(main.target)} ₽ · ${main.pct===null?'—':num(main.pct)+'%'}</span>`:''}</div>`;
-    $('sales-metrics').innerHTML=['wine','cocktails','desserts'].map(k=>metric(k,s.metrics[k])).join('');
-    $('sales-counts').innerHTML=['postcards','dvd'].map(k=>{const v=s.metrics[k];return `<div><span>${labels[k]}</span><strong>${v.total===null?'—':num(v.total)} <small>шт.</small></strong></div>`;}).join('');
+    $('sales-metrics').innerHTML=['wine','cocktails','desserts'].filter(k=>!custom.some(c=>c.legacy_metric===k)&&(!custom.length||s.metrics[k].total!==null)).map(k=>metric(k,s.metrics[k])).join('')+custom.map(c=>metric('category_'+c.id.replaceAll('-',''),c)).join('');
+    $('sales-turnover').hidden=custom.some(c=>c.legacy_metric==='turnover')||(!!custom.length&&main.total===null);
+    $('sales-counts').innerHTML=['postcards','dvd'].filter(k=>!custom.some(c=>c.legacy_metric===k)&&(!custom.length||s.metrics[k].total!==null)).map(k=>{const v=s.metrics[k];return `<div><span>${esc(labels[k])}</span><strong>${v.total===null?'—':num(v.total)} <small>шт.</small></strong></div>`;}).join('');
     $('sales-settings').hidden=!s.has_settings;
     if(!$('sales-settings').open){for(const k of ['wine','cocktails','desserts','turnover'])$('target-'+k).value=s.targets[k]??'';$('glass-price').value=s.glass_price;}
     $('sales-reports').innerHTML='<details class="sales-form"><summary>Официальные отчеты</summary>'+ (s.reports.length?s.reports.map((r,i)=>`<div class="sales-record"><span>По ${esc(r.cutoff)}</span><button data-report="${i}" data-change>Исправить отчет</button></div>`).join(''):'<p class="sales-muted">Нет отчётов</p>')+'</details>';

@@ -70,6 +70,9 @@ async def prune_private_money_backups():
 
 def setup_scheduler(bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
+    from category_notifications import send_pending
+    scheduler.add_job(send_pending,"interval",minutes=2,args=[bot],max_instances=1)
+    scheduler.add_job(send_pending,args=[bot],max_instances=1)
     scheduler.add_job(tomorrow_shift_reminder, "cron", hour=19, minute=0, args=[bot],max_instances=1)
     scheduler.add_job(retry_tomorrow_shift_reminder, "interval", minutes=10, args=[bot],max_instances=1)
     scheduler.add_job(retry_tomorrow_shift_reminder, args=[bot],max_instances=1)

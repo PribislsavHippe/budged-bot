@@ -80,7 +80,7 @@ class IdentityTests(unittest.IsolatedAsyncioTestCase):
         query=NS(from_user=NS(id=42),data='ocr:nonce:read',message=message,bot=bot,answer=AsyncMock())
         result={'cutoff':'2026-09-13','targets':{},'rows':[{'name':'Семён Тестов','totals':{'wine':100}},{'name':'Другой','totals':{'wine':200}}]}
         try:
-            with patch.dict(os.environ,{'IDENTITY_ENABLED':'1'}),patch.object(photo.vision,'recognize',new=AsyncMock(return_value=result)),patch.object(identity,'report_row',new=AsyncMock(return_value=0)),patch.object(photo,'save_report',new=AsyncMock()) as save:
+            with patch.dict(os.environ,{'IDENTITY_ENABLED':'1'}),patch('categories.context',new=AsyncMock(return_value=None)),patch('categories.options',new=AsyncMock(return_value=[])),patch.object(photo.vision,'recognize',new=AsyncMock(return_value=result)),patch.object(identity,'report_row',new=AsyncMock(return_value=0)),patch.object(photo,'save_report',new=AsyncMock()) as save:
                 await photo.photo_callback(query)
                 self.assertEqual(draft.phase,'review')
                 self.assertEqual(draft.totals,{'wine':100})

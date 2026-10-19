@@ -19,7 +19,18 @@ async def member_sales(link, month):
     events=await db._pages(lambda:scoped('sales_events').order('created_at').order('id'))
     reports=await db._pages(lambda:scoped('sales_reports').order('created_at').order('id'))
     data=compute_sales(month,settings[0] if settings else None,events,reports)
-    return {'metrics':data['metrics'],'report_dates':[r['cutoff'] for r in data['reports']],
+    custom=[]
+    if link.get('restaurant_id'):
+        from postgrest.exceptions import APIError
+        import categories
+        try:
+            custom_reports=await db._pages(lambda:db.supabase.table('category_reports').select('id,created_at,definitions,metrics')
+                .eq('user_id',uid).eq('restaurant_id',link['restaurant_id']).eq('month',month)
+                .gte('created_at',since).order('created_at').order('id'))
+            custom=categories.include_legacy_sales(categories.summary(custom_reports,await categories.config(link['restaurant_id'],month)),month,settings[0] if settings else None,events)
+        except APIError as error:
+            if error.code not in ('42P01','PGRST205'):raise
+    return {'category_metrics':custom,'metrics':data['metrics'],'report_dates':[r['cutoff'] for r in data['reports']],
             'records':len([e for e in events if not e.get('voided')])}
 
 
@@ -70,7 +81,7 @@ async def handle(request):
         if status not in identity.STATUSES:raise ValueError('Выбери раздел со списком сотрудников.')
         stage='roster'
         roster=await db._pages(lambda:db.supabase.table('employee_links')
-            .select('id,user_id,report_name,status,requested_at').eq('restaurant_id',restaurant['id'])
+            .select('id,user_id,restaurant_id,report_name,status,requested_at').eq('restaurant_id',restaurant['id'])
             .order('requested_at').order('id'))
         counts={key:sum(r['status']==key for r in roster) for key in identity.STATUSES}
         selected=[r for r in roster if r['status']==status]

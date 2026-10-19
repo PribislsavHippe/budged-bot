@@ -42,7 +42,11 @@ def build_dispatcher() -> Dispatcher:
     import ux_chat
     dp.message.outer_middleware(ux_chat.ActivityMiddleware())
     dp.callback_query.outer_middleware(ux_chat.ActivityMiddleware())
+    import category_chat
+    dp.include_router(category_chat.router)
     dp.include_router(ux_chat.router)
+    import report_sheet_chat
+    dp.include_router(report_sheet_chat.router)
     import schedule_chat
     dp.include_router(schedule_chat.router)
     # Админский роутер первым: иначе /admin и /broadcast перехватит

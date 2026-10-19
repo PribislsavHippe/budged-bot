@@ -152,6 +152,10 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         photo.drafts.clear()
+        self.category_context=patch('categories.context',new=AsyncMock(return_value=None))
+        self.category_context.start();self.addCleanup(self.category_context.stop)
+        self.category_options=patch('categories.options',new=AsyncMock(return_value=[]))
+        self.category_options.start();self.addCleanup(self.category_options.stop)
         self.bot=NS(id=10,get_file=AsyncMock(return_value=NS(file_path='private',file_size=10)),download_file=AsyncMock())
         self.message=NS(from_user=NS(id=1),chat=NS(id=1),message_id=5,photo=[NS(file_id='file',file_size=10)],
                         bot=self.bot,answer=AsyncMock(),edit_text=AsyncMock())

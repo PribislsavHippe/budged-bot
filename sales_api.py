@@ -39,6 +39,8 @@ def track_failure(request, user_id, action, code):
 async def payload(user_id, month):
     settings, events, reports = await sales_db.load(user_id, month)
     result = compute_sales(month, settings, events, reports)
+    import categories
+    result["category_metrics"]=categories.include_legacy_sales(await categories.view(user_id,month),month,settings,events)
     result["has_settings"] = settings is not None
     result["events"] = list(reversed(events))[:50]
     result["today"] = op_today().isoformat()

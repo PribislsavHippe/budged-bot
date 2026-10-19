@@ -42,6 +42,12 @@ async def export(user_id):
         result[table] = await db._pages(lambda table=table: db.supabase.table(table).select("*")
                                       .eq("user_id", user_id).order("month").order("created_at")
                                       .order("user_id" if table == "sales_months" else "id"))
+    from postgrest.exceptions import APIError
+    try:
+        result['category_reports']=await db._pages(lambda:db.supabase.table('category_reports').select('*').eq('user_id',user_id).order('created_at').order('id'))
+    except APIError as error:
+        if error.code not in ('42P01','PGRST205'):raise
+        result['category_reports']=[]
     return result
 
 

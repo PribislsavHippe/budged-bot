@@ -80,6 +80,16 @@ def preview(draft):
     lines = [f"<b>Отчёт по {human_date(draft.cutoff) if draft.cutoff else '—'} включительно</b>"]
     if draft.report.get('selected_name'):
         lines.append(html.escape(draft.report['selected_name']))
+    if draft.report.get('category_config'):
+        cfg=draft.report['category_config']
+        lines.append(html.escape(cfg['month']))
+        for item in cfg['definitions']:
+            value=draft.report.get('category_values',{}).get(item['id'])
+            if value is None:continue
+            unit={'count':'шт.','amount':'₽','number':''}[item['unit']]
+            lines.append(html.escape(item['name'])+': '+number(value['value'])+' '+unit+
+                         ' · по '+human_date(value['cutoff']))
+        return '\n'.join(lines)
     for key, label in LABELS.items():
         value = draft.totals.get(key)
         unit = 'шт.' if key in ('cocktails', 'postcards', 'dvd') else '₽'
@@ -145,11 +155,34 @@ async def ask_date_or_preview(message, draft):
         await message.answer('По какой день этот отчёт? Например: «13 сентября», «13.09» или «вчера».',
                              reply_markup=kb(draft, [('Отмена', 'cancel')]))
         return
+    if draft.report.get('category_config'):
+        import categories
+        cfg=draft.report['category_config']
+        if cfg.get('discovered') and cfg['month']!=draft.cutoff[:7] and draft.file_id:
+            stored=await categories.config(cfg['restaurant_id'],draft.cutoff[:7]) if cfg['restaurant_id'] else None
+            base=stored or {**cfg,'month':draft.cutoff[:7],'definitions':[]}
+            new=categories.discover(base,[{'name':d['name'],'unit':d['unit'] if d.get('unit_source')=='explicit' else None} for d in cfg['definitions']])
+            old_ids={categories.key(d['name']):d['id'] for d in cfg['definitions']}
+            values=draft.report['category_values']
+            draft.report['category_values']={d['id']:{**values[old_ids[categories.key(d['name'])]],'cutoff':draft.cutoff} for d in new['definitions'] if old_ids[categories.key(d['name'])] in values}
+            draft.report['category_config']=new
+        try:
+            for value in draft.report['category_values'].values():
+                if value.get('cutoff') is None:value['cutoff']=draft.cutoff
+            draft.report['category_values']=categories.validate_values(draft.report['category_config'],draft.report['category_values'])
+        except ValueError:
+            from report_sheet_chat import report_failure
+            await report_failure(message,draft,ValueError('category_date_or_values'))
+            draft.phase='date'
+            return
     if draft.report.get('row_mode'):
         await check_plan(message.chat.id, draft)
     draft.phase = 'review'
-    await message.answer(preview(draft), reply_markup=kb(draft, [
-        ('Сохранить', 'save'), ('Исправить', 'edit'), ('Отмена', 'cancel')]))
+    markup = kb(draft, [('Сохранить', 'save'), ('Исправить', 'edit'), ('Отмена', 'cancel')])
+    if draft.report.get('sheet_source'):
+        from report_sheet_chat import buttons
+        markup.inline_keyboard.insert(-1, buttons(draft, [('Начать заново', 'restart')]).inline_keyboard[0])
+    await message.answer(preview(draft), reply_markup=markup)
 
 
 @router.callback_query(F.data.startswith('ocr:'))
@@ -165,6 +198,21 @@ async def photo_callback(callback):
     await callback.answer()
     async with draft.lock:
         action = parts[2]
+        if action.startswith('cr') and draft.phase=='category_restaurant':
+            from admin import is_admin
+            import identity,categories
+            if not is_admin(callback.from_user.id):return
+            try:
+                index=int(action[2:]);choices=draft.report['category_choices']
+                if not 0<=index<len(choices):return
+                selected=choices[index]['config']
+                if not await identity.owner_restaurant(callback.from_user.id,selected['restaurant_id']):return
+                selected=await categories.config(selected['restaurant_id'],selected['month'])
+                if selected is None:selected=categories.empty_context(choices[index]['config']['restaurant_id'],choices[index]['config']['month'],callback.from_user.id)
+            except (ValueError,IndexError,KeyError):return
+            draft.report={'category_config':selected};draft.phase='consent';action='read'
+        if action=='restart' and draft.phase!='uncertain' and draft.file_id:
+            draft.phase='consent';draft.report={};draft.image=None;action='read'
         if action == 'cancel':
             expire(callback.from_user.id, draft)
             await callback.message.edit_text('Хорошо, этот отчёт не сохраняю.')
@@ -177,6 +225,7 @@ async def photo_callback(callback):
             research.track(callback.from_user.id,'vision_started')
             draft.phase = 'reading'
             await callback.message.edit_text('Распознаю…')
+            cfg=None
             try:
                 if _recognition_slots.locked():
                     raise vision.VisionError('Распознавание занято. Попробуй через минуту.')
@@ -186,7 +235,19 @@ async def photo_callback(callback):
                         raise vision.VisionError('Пришли фото размером до 8 МБ.')
                     image = LimitedImage()
                     await callback.bot.download_file(file.file_path, destination=image)
-                    if vision.row_mode():
+                    import categories
+                    cfg=draft.report.get('category_config') or await categories.context(callback.from_user.id,op_today().strftime('%Y-%m'))
+                    if cfg is None:
+                        choices=await categories.options(callback.from_user.id,op_today().strftime('%Y-%m'))
+                        if len(choices)==1:cfg=choices[0]['config']
+                        elif len(choices)>1:
+                            draft.phase='category_restaurant';draft.report={'category_choices':choices}
+                            await callback.message.edit_text('Для какого ресторана эти результаты?',reply_markup=kb(draft,[(c['name'],f'cr{i}') for i,c in enumerate(choices)]+[('Отмена','cancel')]))
+                            return
+                    if cfg:
+                        import category_groq
+                        draft.report=await category_groq.recognize(image.getvalue(),cfg)
+                    elif vision.row_mode():
                         data = image.getvalue()
                         if sum(len(item.image or b'') for item in drafts.values() if item is not draft) + len(data) > MAX_IMAGE_MEMORY:
                             raise vision.VisionError('Сейчас читаю другие отчёты. Попробуй через минуту.')
@@ -200,6 +261,10 @@ async def photo_callback(callback):
                 research.track(callback.from_user.id,'vision_failed',error_code='vision')
                 draft.image = None
                 draft.phase = 'consent'
+                if cfg:
+                    from report_sheet_chat import report_failure
+                    await report_failure(callback.message,draft,ValueError('category_photo_read'))
+                    return
                 text = str(error) if isinstance(error, vision.VisionError) else 'Не удалось скачать фото. Попробуй ещё раз.'
                 await callback.message.edit_text(text, reply_markup=kb(draft, [('Повторить', 'read'), ('Отмена', 'cancel')]))
                 return
@@ -235,6 +300,9 @@ async def photo_callback(callback):
             await ask_date_or_preview(callback.message, draft)
         elif action == 'edit' and draft.phase == 'review':
             draft.phase = 'edit'
+            if draft.report.get('category_config'):
+                await callback.message.answer('Напиши, что исправить, обычным сообщением — например: «гарниров на 1500».',reply_markup=kb(draft,[('Отмена','cancel')]))
+                return
             await callback.message.answer('Напиши, что исправить: «вино 73 238, коктейлей 57». Остальные числа оставлю. '
                                           'Чтобы поменять и дату: «отчёт за вчера, вино 73 238».',
                                           reply_markup=kb(draft, [('Отмена', 'cancel')]))
@@ -243,10 +311,14 @@ async def photo_callback(callback):
             try:
                 await db.get_or_create_user(callback.from_user.id)
                 month = draft.cutoff[:7]
-                if draft.report.get('targets'):
+                if not draft.report.get('category_config') and draft.report.get('targets'):
                     await chat_write(callback.from_user.id, draft.oid, {'action': 'settings', 'month': month,
                                                                       'targets': draft.report['targets']})
-                await save_report(callback.from_user.id, draft.oid, month, draft.cutoff, draft.totals)
+                if draft.report.get('category_config'):
+                    import categories
+                    await categories.save(callback.from_user.id,draft.oid,draft.report['category_config'],draft.report['category_values'])
+                else:
+                    await save_report(callback.from_user.id, draft.oid, month, draft.cutoff, draft.totals)
             except Exception:
                 import research
                 research.track(callback.from_user.id,'sales_report_error',error_code='save')
@@ -274,6 +346,13 @@ async def photo_text(message):
         try:
             if draft.phase == 'date':
                 draft.cutoff = date_valid(message.text.strip())
+            elif draft.report.get('category_config'):
+                import categories
+                corrected=categories.parse_correction(message.text,draft.report['category_config'])
+                updated={cid:dict(v) for cid,v in draft.report['category_values'].items()}
+                for cid,value in corrected.items():
+                    updated[cid]={'value':value,'cutoff':updated.get(cid,{}).get('cutoff',draft.cutoff)}
+                draft.report['category_values']=updated
             else:
                 cutoff, totals = parse_report_edit(message.text, op_today(), draft.cutoff, draft.totals)
                 draft.cutoff = date_valid(cutoff)
@@ -282,6 +361,10 @@ async def photo_text(message):
                 draft.report['percent'] = {}
             await ask_date_or_preview(message, draft)
         except (ValueError, TypeError) as error:
+            if draft.report.get('category_config'):
+                from report_sheet_chat import report_failure
+                await report_failure(message,draft,ValueError('category_correction'))
+                return
             await message.answer(html.escape(str(error)) if isinstance(error, ValueError) else
                                  'Не совсем понял. Напиши дату словами или показатель и число: «вино 73 238».')
 
@@ -306,6 +389,8 @@ async def select_row(message, draft, index):
             research.track(message.chat.id,'vision_failed',error_code='vision')
             await message.answer(str(exc),reply_markup=kb(draft,[('Повторить',f'row{index}'),('Отмена','cancel')]))
             return False
+    if draft.report.get('category_config'):
+        draft.report['category_values']={cid:{'value':value,'cutoff':draft.cutoff} for cid,value in row['totals'].items()}
     draft.totals=row['totals']
     draft.report['selected_name']=row['name']
     draft.report.pop('rows',None)

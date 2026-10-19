@@ -21,6 +21,11 @@ async def main():
        'sales_events':[{'id':'e','user_id':3,'month':'2026-09','kind':'bottle','value':100,'work_date':'2026-09-12','created_at':'2026-09-12T00:00:00Z'},
                        {'id':'old','user_id':3,'month':'2026-09','kind':'bottle','value':99999,'work_date':'2026-09-01','created_at':'2026-09-01T00:00:00Z'},
                        {'id':'other','user_id':5,'month':'2026-09','kind':'bottle','value':77777,'work_date':'2026-09-12','created_at':'2026-09-12T00:00:00Z'}]}
+    cid='cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+    store.rows['category_reports']=[
+      {'id':'new','user_id':3,'restaurant_id':'aaaaaaaa-0000-0000-0000-000000000001','month':'2026-09','created_at':'2026-09-12T00:00:00Z','definitions':[{'id':cid,'name':'Хлеб','unit':'amount'}],'metrics':{cid:{'value':123,'cutoff':'2026-09-12'}}},
+      {'id':'prior','user_id':3,'restaurant_id':'aaaaaaaa-0000-0000-0000-000000000001','month':'2026-09','created_at':'2026-09-01T00:00:00Z','definitions':[{'id':cid,'name':'Хлеб','unit':'amount'}],'metrics':{cid:{'value':99999,'cutoff':'2026-09-14'}}},
+      {'id':'foreign','user_id':3,'restaurant_id':'bbbbbbbb-0000-0000-0000-000000000002','month':'2026-09','created_at':'2026-09-12T00:00:00Z','definitions':[{'id':cid,'name':'Хлеб','unit':'amount'}],'metrics':{cid:{'value':77777,'cutoff':'2026-09-14'}}}]
     with patch.dict(os.environ,{'SUPABASE_URL':'https://example.invalid','SUPABASE_KEY':'test','IDENTITY_ENABLED':'1'}),patch('supabase.create_client',return_value=store):
         import db,identity,admin,webapp_api
         app=web.Application();webapp_api.register_webapp_routes(app,TOKEN,'testbot')
@@ -70,7 +75,9 @@ async def main():
                     await post('transfer',status=400,restaurant_id='aaaaaaaa-0000-0000-0000-000000000001',
                                target_restaurant_id='aaaaaaaa-0000-0000-0000-000000000001',id=ids[0])
                     transfer.assert_awaited_once()
+                checked=await post('view',restaurant_id='aaaaaaaa-0000-0000-0000-000000000001')
+                assert checked['rows'][0]['sales']['category_metrics'][0]['total']==123,checked
                 with patch.dict(os.environ,{'IDENTITY_ENABLED':'0'}):await post('view',status=404)
-                assert set(store.tables)<={'restaurants','employee_links','sales_months','sales_events','sales_reports'},store.tables
+                assert set(store.tables)<={'restaurants','employee_links','sales_months','sales_events','sales_reports','category_reports','category_months'},store.tables
     print('Restaurant HTTP checks passed: signed identity, owner isolation, membership boundaries, no tips access, actions and feature flag.')
 if __name__=='__main__':asyncio.run(main())
