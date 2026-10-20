@@ -59,7 +59,9 @@ sys.modules["aiohttp.web"] = _web
 
 # ─── заглушка httpx (google_calendar импортирует его, сеть в тестах не нужна) ─
 
+from httpx import TransportError
 _httpx = types.ModuleType("httpx")
+_httpx.TransportError = TransportError
 
 
 class _AsyncClient:
