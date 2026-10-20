@@ -185,20 +185,20 @@ def empty_context(restaurant,month,uid):
             'definitions':[],'personal_scope':str(uid) if restaurant is None else None}
 
 
-def discover(cfg, detected):
+def discover(cfg, detected, *, use_baseline=True):
     """Observed labels become report data, never administrator configuration."""
     known={key(d['name']):d for d in cfg['definitions']}
     raw={'month':cfg['month'],'categories':[]}
     for item in detected:
         name=item['name'];old=known.get(key(name))
-        unit=item.get('unit') if item.get('unit') in ('amount','count') else (old['unit'] if old else (BASE_UNITS.get(key(name)) or 'number'))
+        unit=item.get('unit') if item.get('unit') in ('amount','count') else (old['unit'] if old else ((BASE_UNITS.get(key(name)) if use_baseline else None) or 'number'))
         row={'name':name,'unit':unit}
         if old and old['unit']==unit and old.get('target') is not None:row['target']=old['target']
         raw['categories'].append(row)
     data=clean(raw)
     scope=cfg['restaurant_id'] or ('personal:'+cfg.get('personal_scope',''))
     for row,source in zip(data['categories'],detected):
-        row['unit_source']='explicit' if source.get('unit') in ('amount','count') else 'known' if key(row['name']) in known or key(row['name']) in BASE_UNITS else 'unknown'
+        row['unit_source']='explicit' if source.get('unit') in ('amount','count') else 'known' if key(row['name']) in known or (use_baseline and key(row['name']) in BASE_UNITS) else 'unknown'
         old=known.get(key(row['name']))
         row['id']=old['id'] if old else str(uuid5(NAMESPACE_URL,f"category:{scope}:{cfg['month']}:{key(row['name'])}"))
     return {**cfg,'definitions':data['categories'],'discovered':True}

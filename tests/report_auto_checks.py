@@ -7,7 +7,8 @@ from uuid import uuid4
 from PIL import Image
 sys.path.insert(0,os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 with patch.dict(os.environ,{'SUPABASE_URL':'https://example.invalid','SUPABASE_KEY':'test'}),patch('supabase.create_client'):
- import report_auto as auto,report_photo as photo,category_groq as groq,categories,report_sheet_chat as sheets
+ import report_auto as auto,report_photo as photo,category_groq as groq,categories,report_sheet_chat as sheets,report_table as table
+from report_table_checks import LAYOUT,READ,transcriptions,image
 R='11111111-1111-4111-8111-111111111111'
 PROFILE={'restaurant_id':R,'restaurant_name':'Тест ресторан','report_name':'Тест Имя','name_key':'тест имя','status':'approved','has_admin':True,'requested_at':'2026-10-01T00:00:00Z'}
 def cfg():return categories.discover(categories.empty_context(R,'2026-10',7),[{'name':'Гарниры','unit':'amount'}])
@@ -35,20 +36,17 @@ class AutoTests(unittest.IsolatedAsyncioTestCase):
   with patch.object(auto,'process_photo',new=AsyncMock()) as read:
    await auto.consent(q);read.assert_not_awaited()
  async def test_targeted_read_finds_missing_row_with_fragments(self):
-  c=categories.empty_context(R,'2026-10',7);missing=raw();missing['rows']=[]
-  with patch.object(groq,'request_json',new=AsyncMock(side_effect=[missing,raw(),missing])) as read,patch.object(groq,'enlarged_fragments',return_value=[b'original',b'crop']) as crop:
-   result=await groq.recognize_person(b'image',c,'Тест Имя')
-   self.assertEqual(result['rows'][0]['name'],'Тест Имя');self.assertEqual(read.await_count,3)
-   self.assertIn('Тест Имя',read.call_args.args[1]);crop.assert_called_once()
+  with patch.object(table.vision,'request_json',new=AsyncMock(side_effect=[{'kind':'sales','blocks':[]},{'kind':'sales'},copy.deepcopy(LAYOUT),*transcriptions()])) as read:
+   result=await groq.recognize_person(image(),categories.empty_context(R,'2026-10',7),'Тест Имя')
+   self.assertEqual(result['rows'][0]['name'],'Тест Имя');self.assertEqual(read.await_count,6)
  async def test_wrong_or_duplicate_employee_is_never_saved(self):
-  c=categories.empty_context(R,'2026-10',7)
-  for response in [raw('Другой'),{**raw(),'rows':[raw()['rows'][0],raw()['rows'][0]]}]:
-   with patch.object(groq,'request_json',new=AsyncMock(return_value=response)),patch.object(groq,'enlarged_fragments',return_value=[b'crop']):
-    with self.assertRaises(ValueError):await groq.recognize_person(b'image',c,'Тест Имя')
+  layout=copy.deepcopy(LAYOUT);layout['blocks'][0]['n']='Другой'
+  with patch.object(table.vision,'request_json',new=AsyncMock(return_value=layout)):
+   with self.assertRaises(ValueError):await groq.recognize_person(image(),categories.empty_context(R,'2026-10',7),'Тест Имя')
  async def test_valid_target_does_not_scan_all_waiters_or_retry(self):
-  with patch.object(groq,'request_json',new=AsyncMock(return_value=raw())) as read,patch.object(groq,'enlarged_fragments') as crop:
-   await groq.recognize_person(b'image',categories.empty_context(R,'2026-10',7),'Тест Имя')
-   read.assert_awaited_once();crop.assert_not_called()
+  with patch.object(table.vision,'request_json',new=AsyncMock(side_effect=[copy.deepcopy(LAYOUT),*transcriptions()])) as read:
+   await groq.recognize_person(image(),categories.empty_context(R,'2026-10',7),'Тест Имя')
+   self.assertEqual(read.await_count,4);self.assertNotIn('Тест Имя',read.await_args_list[1].args[1])
  async def test_schedule_is_routed_without_sales_write(self):
   m=message();m.answer.return_value=m;d=draft()
   with patch.object(auto,'person',new=AsyncMock(return_value=PROFILE)),patch.object(auto,'configuration',new=AsyncMock(return_value=cfg())),patch.object(groq,'recognize_person',new=AsyncMock(return_value={'document_kind':'schedule'})),patch('schedule_chat.start_photo',new=AsyncMock()) as schedule,patch.object(categories,'save',new=AsyncMock()) as save:
@@ -69,6 +67,21 @@ class AutoTests(unittest.IsolatedAsyncioTestCase):
   with patch.object(categories,'save',new=AsyncMock()) as save:
    with self.assertRaises(ValueError):await auto.finish(message(),d,PROFILE,d.report['rows'])
    save.assert_not_awaited()
+ async def test_model_cannot_silently_move_report_to_2017(self):
+  batches=transcriptions()
+  for batch in batches:batch['date_text']='18 октября 2017'
+  with patch.object(table.vision,'request_json',new=AsyncMock(side_effect=[copy.deepcopy(LAYOUT),*batches])),patch.object(categories,'config',new=AsyncMock(return_value=None)) as rebase:
+   with self.assertRaisesRegex(ValueError,'report_month_unverified'):await groq.recognize_person(image(),categories.empty_context(R,'2026-10',7),'Тест Имя')
+   rebase.assert_not_awaited()
+ async def test_save_checks_month_even_if_recognizer_returns_rebased_config(self):
+  d=draft();d.cutoff='2017-10-18';d.report['category_config']['month']='2017-10'
+  d.report['expected_month']='2026-10'
+  cid=d.report['category_config']['definitions'][0]['id']
+  d.report['category_values']={cid:{'value':0,'cutoff':'2017-10-18'}}
+  with patch.object(auto,'person',new=AsyncMock(return_value=PROFILE)),patch.object(categories,'save',new=AsyncMock()) as save:
+   with self.assertRaises(ValueError):await auto.save_and_show(message(),d,PROFILE)
+   save.assert_not_awaited()
+
  async def test_missing_row_runs_automatic_error_path_without_save(self):
   m=message();m.answer.return_value=m;d=draft();bad={**d.report,'cutoff':'2026-10-14','rows':[{'name':'Другой','totals':{d.report['category_config']['definitions'][0]['id']:999}}]}
   with patch.object(auto,'person',new=AsyncMock(return_value=PROFILE)),patch.object(auto,'configuration',new=AsyncMock(return_value=cfg())),patch.object(groq,'recognize_person',new=AsyncMock(return_value=bad)),patch.object(categories,'save',new=AsyncMock()) as save,patch.object(auto,'issue',new=AsyncMock()) as issue,self.assertLogs(level='ERROR'):
@@ -81,10 +94,10 @@ class AutoTests(unittest.IsolatedAsyncioTestCase):
    self.assertFalse(any('Записал твой отчёт' in str(call) for call in m.answer.call_args_list))
    self.assertEqual(m.answer.call_args.kwargs['reply_markup'].inline_keyboard[0][0].callback_data,'ocr:n:save')
  async def test_duplicate_values_in_recovery_are_not_silently_combined(self):
-  missing=raw();missing['rows']=[]
-  with patch.object(groq,'request_json',new=AsyncMock(side_effect=[missing,raw(),raw()])),patch.object(groq,'enlarged_fragments',return_value=[b'a',b'b']):
-   with self.assertRaisesRegex(ValueError,'ambiguous_employee_fragments'):
-    await groq.recognize_person(b'image',categories.empty_context(R,'2026-10',7),'Тест Имя')
+  read=copy.deepcopy(READ);read['cols'][1]=read['cols'][0]
+  with patch.object(table.vision,'request_json',new=AsyncMock(side_effect=[copy.deepcopy(LAYOUT),read,{'kind':'sales'},copy.deepcopy(LAYOUT),read])):
+   with self.assertRaisesRegex(ValueError,'duplicate_cell'):
+    await groq.recognize_person(image(),categories.empty_context(R,'2026-10',7),'Тест Имя')
 
  async def test_unknown_employee_reports_to_owner_without_values(self):
   m=message()
@@ -110,8 +123,7 @@ class AutoTests(unittest.IsolatedAsyncioTestCase):
   bad={**old,'id':'b','created_at':'2026-10-15','review_status':'flagged','metrics':{cid:{'value':999,'cutoff':'2026-10-15'}}}
   self.assertEqual(categories.summary([old,bad])[0]['total'],100)
  def test_crops_keep_full_width_and_bounded_size(self):
-  data=io.BytesIO();Image.new('RGB',(1000,1200),'white').save(data,format='PNG')
-  parts=groq.enlarged_fragments(data.getvalue());self.assertEqual(len(parts),2)
-  for crop in parts:self.assertEqual(Image.open(io.BytesIO(crop)).width,2000)
+  enlarged=Image.open(io.BytesIO(table.enlarge(image())))
+  self.assertEqual(enlarged.width,2000);self.assertLessEqual(enlarged.width*enlarged.height,16_000_000)
 
 if __name__=='__main__':unittest.main()

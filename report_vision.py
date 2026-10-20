@@ -68,7 +68,7 @@ async def request_json(image, prompt, max_tokens=1800):
             'messages': [{'role': 'system', 'content': prompt}, {'role': 'user', 'content': [
                 {'type': 'text', 'text': 'Extract this report as JSON.'},
                 {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,' + base64.b64encode(image).decode()}}]}],
-            'response_format': {'type': 'json_object'}, 'max_completion_tokens': max_tokens}
+            'response_format': {'type': 'json_object'}, 'max_completion_tokens': max_tokens, 'temperature':0}
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post('https://api.groq.com/openai/v1/chat/completions',
@@ -82,7 +82,13 @@ async def request_json(image, prompt, max_tokens=1800):
                 message = ''
             if isinstance(message, str) and 'request too large' in message.lower():
                 raise VisionError('Фото не проходит по размеру запроса. Попробуй прислать только таблицу, без полей вокруг.')
-            raise VisionError('Сервис пока не принимает новые фото. Попробуй чуть позже.')
+            error=VisionError('Сервис пока не принимает новые фото. Попробуй чуть позже.')
+            # Allow bounded read-only retries without exposing provider text.
+            try:
+                seconds=float(response.headers.get('retry-after',''))
+                if 0<seconds<=25:error.retry_after=seconds
+            except (ValueError,TypeError):pass
+            raise error
         if response.status_code in (401, 403):
             raise VisionError('Фото пока прочитать не получается. Сообщи администратору — он проверит подключение.')
         if response.status_code != 200:
