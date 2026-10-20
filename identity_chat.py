@@ -54,7 +54,7 @@ async def invite(message,uid=None):
         bot=await message.bot.get_me()
         await message.answer(f"Приглашение в {html.escape(restaurant['name'])}:\n"
                              f"https://t.me/{bot.username}?start=team_{token}\n\n"
-                             'Ссылка действует 7 дней. Предыдущая ссылка больше не работает. '
+                             'Ссылка бессрочная. Предыдущая ссылка больше не работает. '
                              'После ввода имени человек сможет пользоваться личным ботом. '
                              'Его связь с отчётом ресторана ты подтвердишь в разделе «Сотрудники и заявки».')
     except Exception as exc: await error(message,exc)
