@@ -18,6 +18,15 @@ RAW={'cutoff':None,'targets':{'wine':143000},'rows':[{'name':'Алексей','t
                                                 {'name':'Другой','totals':{'wine':100}}]}
 
 class VisionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_quota_is_distinct_from_oversized_request(self):
+        for text,quota in [('Rate limit reached for private account',True),('Request too large for private account',False)]:
+            client=httpx.AsyncClient(transport=httpx.MockTransport(lambda request:httpx.Response(429,headers={'retry-after':'2'},json={'error':{'message':text}})))
+            with patch.dict(os.environ,{'GROQ_API_KEY':'test','REPORT_VISION_ENABLED':'1'}),patch.object(vision.httpx,'AsyncClient',return_value=client):
+                with self.assertRaises(vision.VisionError) as caught:await vision.request_json(b'\xff\xd8\xfftest','test')
+                self.assertEqual(isinstance(caught.exception,vision.VisionQuotaError),quota)
+                self.assertNotIn('private account',str(caught.exception))
+                if quota:self.assertEqual(caught.exception.retry_after,2)
+
     def test_missing_and_invalid(self):
         result=vision.clean_result(RAW)
         self.assertNotIn('postcards',result['rows'][0]['totals'])

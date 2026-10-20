@@ -93,6 +93,18 @@ class AutoTests(unittest.IsolatedAsyncioTestCase):
    self.assertEqual(d.phase,'uncertain');self.assertEqual(d.report['auto_profile']['report_name'],'Тест Имя')
    self.assertFalse(any('Записал твой отчёт' in str(call) for call in m.answer.call_args_list))
    self.assertEqual(m.answer.call_args.kwargs['reply_markup'].inline_keyboard[0][0].callback_data,'ocr:n:save')
+ async def test_quota_replaces_progress_without_saving_or_owner_alert(self):
+  for edit_fails in (False,True):
+   m=message();status=NS(edit_text=AsyncMock(side_effect=RuntimeError('edit failed') if edit_fails else None));m.answer.return_value=status
+   d=draft();photo.drafts[7]=d
+   with patch.object(auto,'person',new=AsyncMock(return_value=PROFILE)),patch.object(auto,'configuration',new=AsyncMock(return_value=cfg())),patch.object(groq,'recognize_person',new=AsyncMock(side_effect=auto.vision.VisionQuotaError('quota'))),patch.object(categories,'save',new=AsyncMock()) as save,patch.object(auto,'issue',new=AsyncMock()) as issue,self.assertLogs(level='ERROR'):
+    await auto.process_photo(m,d)
+    save.assert_not_awaited();issue.assert_not_awaited();m.bot.send_message.assert_not_awaited()
+    self.assertNotIn(7,photo.drafts)
+    expected='У ИИ закончились токены — пока не могу прочитать отчёт. Ничего не записал. Попробуй позже или внеси данные вручную'
+    status.edit_text.assert_awaited_once_with(expected)
+    self.assertEqual(m.answer.await_count,2 if edit_fails else 1)
+    if edit_fails:self.assertEqual(m.answer.call_args.args[0],expected)
  async def test_duplicate_values_in_recovery_are_not_silently_combined(self):
   read=copy.deepcopy(READ);read['cols'][1]=read['cols'][0]
   with patch.object(table.vision,'request_json',new=AsyncMock(side_effect=[copy.deepcopy(LAYOUT),read,{'kind':'sales'},copy.deepcopy(LAYOUT),read])):

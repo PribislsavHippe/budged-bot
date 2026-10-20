@@ -27,6 +27,11 @@ class VisionError(Exception):
     pass
 
 
+class VisionQuotaError(VisionError):
+    """Provider rate/quota limit; no raw provider details in the message."""
+    pass
+
+
 def configured():
     return bool(os.getenv('GROQ_API_KEY', '').strip()) and os.getenv('REPORT_VISION_ENABLED', '0') == '1'
 
@@ -82,7 +87,7 @@ async def request_json(image, prompt, max_tokens=1800):
                 message = ''
             if isinstance(message, str) and 'request too large' in message.lower():
                 raise VisionError('Фото не проходит по размеру запроса. Попробуй прислать только таблицу, без полей вокруг.')
-            error=VisionError('Сервис пока не принимает новые фото. Попробуй чуть позже.')
+            error=VisionQuotaError('Сервис пока не принимает новые фото. Попробуй чуть позже.')
             # Allow bounded read-only retries without exposing provider text.
             try:
                 seconds=float(response.headers.get('retry-after',''))

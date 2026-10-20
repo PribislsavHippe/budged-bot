@@ -160,7 +160,15 @@ async def process_photo(message,draft):
     except Exception as error:
         from diagnostics import failure
         failure(error,area='report_auto',stage='photo')
-        if draft.phase=='uncertain':
+        if isinstance(error,vision.VisionQuotaError) and draft.phase!='uncertain':
+            photo.expire(uid,draft)
+            text='У ИИ закончились токены — пока не могу прочитать отчёт. Ничего не записал. Попробуй позже или внеси данные вручную'
+            try:
+                await status.edit_text(text)
+            except Exception:
+                # A failed status edit must not hide the result of the attempt.
+                await message.answer(text)
+        elif draft.phase=='uncertain':
             # Retain exact operation for explicit retry; do not start a new save.
             await message.answer('Ответ о сохранении не пришёл. Нажми «Сохранить ещё раз» — второй такой записи не появится.',reply_markup=photo.kb(draft,[('Сохранить ещё раз','save')]))
         else:
