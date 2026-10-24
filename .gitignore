@@ -5,3 +5,9 @@ __pycache__/
 .venv/
 venv/
 node_modules/
+
+# Личное и локальное — репозиторий публичный
+portfolio/
+screenshots/
+outputs/
+*.docx

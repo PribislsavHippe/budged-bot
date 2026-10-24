@@ -123,6 +123,7 @@ async def start_photo(callback,draft,image_bytes=None):
         research.track(callback.from_user.id,'vision_failed',screen='calendar',error_code='vision')
         draft.image=None;draft.phase='consent'
         text=str(error) if isinstance(error,(vision.VisionError,ValueError)) and str(error) else 'Не разобрал имена. Пришли более чёткий график.'
+        text=vision.owner_note(callback.from_user.id,error,text)
         from report_photo import kb
         await callback.message.edit_text(html.escape(text),reply_markup=kb(draft,[('Повторить график','schedule'),('Отмена','cancel')]))
 

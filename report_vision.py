@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import json
+import logging
 import os
 import re
 from datetime import date
@@ -24,7 +25,21 @@ If this is not a sales report, return rows: []. Limit 30 rows. Do not calculate 
 
 
 class VisionError(Exception):
-    pass
+    # Короткая техническая пометка для владельца: код ответа и остатки лимитов.
+    # Обычный пользователь её не видит, тела ответа провайдера тут нет никогда.
+    diagnostic = ''
+
+
+def _note(response):
+    """Код ответа и остатки лимитов. Без тела — в нём бывают данные аккаунта."""
+    head = response.headers
+    note = (f"HTTP {response.status_code}"
+            f" · запросы {head.get('x-ratelimit-remaining-requests','?')}"
+            f"/{head.get('x-ratelimit-limit-requests','?')}"
+            f" · токены {head.get('x-ratelimit-remaining-tokens','?')}"
+            f"/{head.get('x-ratelimit-limit-tokens','?')}")
+    retry = head.get('retry-after') or head.get('x-ratelimit-reset-tokens')
+    return note + (f" · сброс {retry}" if retry else '')
 
 
 class VisionQuotaError(VisionError):
@@ -78,6 +93,9 @@ async def request_json(image, prompt, max_tokens=1800):
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post('https://api.groq.com/openai/v1/chat/completions',
                                          headers={'Authorization': 'Bearer ' + os.environ['GROQ_API_KEY']}, json=body)
+        note = _note(response)
+        if response.status_code != 200:
+            logging.warning('vision_http %s', note)
         if response.status_code == 429:
             # Classify provider text, but never echo it (may contain account data).
             try:
@@ -86,8 +104,11 @@ async def request_json(image, prompt, max_tokens=1800):
             except (ValueError, AttributeError):
                 message = ''
             if isinstance(message, str) and 'request too large' in message.lower():
-                raise VisionError('Фото не проходит по размеру запроса. Попробуй прислать только таблицу, без полей вокруг.')
+                oversized=VisionError('Фото не проходит по размеру запроса. Попробуй прислать только таблицу, без полей вокруг.')
+                oversized.diagnostic=note
+                raise oversized
             error=VisionQuotaError('Сервис пока не принимает новые фото. Попробуй чуть позже.')
+            error.diagnostic=note
             # Allow bounded read-only retries without exposing provider text.
             try:
                 seconds=float(response.headers.get('retry-after',''))
@@ -95,9 +116,13 @@ async def request_json(image, prompt, max_tokens=1800):
             except (ValueError,TypeError):pass
             raise error
         if response.status_code in (401, 403):
-            raise VisionError('Фото пока прочитать не получается. Сообщи администратору — он проверит подключение.')
+            denied=VisionError('Фото пока прочитать не получается. Сообщи администратору — он проверит подключение.')
+            denied.diagnostic=note
+            raise denied
         if response.status_code != 200:
-            raise VisionError('Не получилось прочитать фото. Попробуй чуть позже.')
+            failed=VisionError('Не получилось прочитать фото. Попробуй чуть позже.')
+            failed.diagnostic=note
+            raise failed
         choice = response.json()['choices'][0]
         if choice.get('finish_reason') != 'stop':
             raise ValueError('Incomplete response')
@@ -181,3 +206,19 @@ async def recognize_row(image, index, expected_name, relaxed_grid=False):
         return row
     except (ValueError,KeyError,IndexError,TypeError,OSError,AttributeError):
         raise VisionError('Не удалось надёжно прочитать строку. Пришли более чёткий файл.') from None
+
+
+def owner_note(user_id, error, text):
+    """Владельцу дописываем код ответа провайдера: дашборд не всегда под рукой.
+
+    Вызывается из обработчика ошибки, поэтому сам упасть не имеет права:
+    иначе человек вместо понятного сообщения не получит ничего.
+    """
+    try:
+        note = getattr(error, 'diagnostic', '')
+        if not note:
+            return text
+        from admin import is_admin
+        return text + '\n\n' + note if is_admin(user_id) else text
+    except Exception:
+        return text
