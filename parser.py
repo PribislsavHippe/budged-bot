@@ -22,8 +22,35 @@ class AmountFormatError(ValueError):
     """An ambiguous amount must not silently become a different operation."""
 
 
+_THOUSANDS = re.compile(r"\d{1,3}(?: \d{3})+")
+
+
+def _integer_part(token: str) -> str:
+    return re.split(r"[.,]", token.strip().lstrip("-−+").strip(), maxsplit=1)[0]
+
+
+def _bad_grouping(token: str) -> bool:
+    """Пробел внутри числа — разделитель тысяч только в виде «30 000», «1 250 000».
+
+    «500 35» не похоже ни на одно число, поэтому такую запись не угадываем.
+    """
+    integer = _integer_part(token)
+    return " " in integer and not _THOUSANDS.fullmatch(integer)
+
+
+def _two_amounts_lookalike(token: str) -> bool:
+    """«500 350» читается и как 500 350, и как две суммы.
+
+    Для чаевых, которые не бывают шестизначными, это почти всегда две суммы.
+    """
+    groups = _integer_part(token).split(" ")
+    return len(groups) > 1 and len(groups[0]) == 3 and groups[-1] != "000"
+
+
 def _checked_number(match: re.Match, text: str) -> Decimal:
     raw = match.group().strip().replace(" ", "").replace(",", ".")
+    if _bad_grouping(match.group()):
+        raise AmountFormatError("amount_format")
     if match.start()>0 and text[match.start()-1] in '.,':
         raise AmountFormatError("amount_format")
     if raw.startswith(("-", "−")) or ("." in raw and len(raw.rsplit(".", 1)[1]) > 2):
@@ -109,7 +136,7 @@ def parse_reconciliation(text: str) -> dict | None:
 _INCOME_RULES = [
     (r"\bчаевы[ех]\b|\bчай\b", "Чаевые"),
     (r"\bзп\b|зарплат|аванс|оклад", "Зарплата"),
-    (r"\bсмена\b|за смену|подработк|шабашк", "Подработка"),
+    (r"\bсмена\b|подработк|шабашк", "Подработка"),
     (r"преми|бонус", "Зарплата"),
     (r"подарил|подарок\s+\d|вернул[аи]?\s|долг\s+вернул", "Прочее"),
 ]
@@ -133,10 +160,18 @@ def classify(text: str) -> tuple[str, str]:
     for pattern, category in _INCOME_RULES:
         if re.search(pattern, lower):
             return "income", category
+    if re.search(r"за смену", lower) and re.search(r"получил|заработал|выплатил|заплатили|дали\b|пришл", lower):
+        return "income", "Подработка"
     for pattern, category in _EXPENSE_RULES:
         if re.search(pattern, lower):
             return "expense", category
+    # «за смену» без слова расхода — оплата смены; «такси 350 за смену» — расход.
+    if re.search(r"за смену", lower) and not re.search(_GENERAL_EXPENSE, lower):
+        return "income", "Подработка"
     return "expense", "Прочее"
+
+
+_GENERAL_EXPENSE = r"расход|трат|потрат|заплатил|штраф|вычл|списал|удерж|оплатил|купил"
 
 
 def default_account(kind: str, category: str) -> str:
@@ -147,6 +182,27 @@ def default_account(kind: str, category: str) -> str:
 
 
 # ─── операции ────────────────────────────────────────────────────────────────
+
+# Числа в пояснении к записи — не суммы: номер стола, время, число гостей, год.
+_NOT_AMOUNTS = [re.compile(p, re.IGNORECASE) for p in (
+    r"(?:\bстол\w*|\bст\.|№|#)\s*№?\s*\d+",
+    r"\b\d{1,2}:\d{2}\b",
+    r"\b\d{1,2}\.\d{1,2}\.\d{4}\b",
+    r"\d+\s*(?:шт|штук|чел|человек|гост|персон)\w*",
+    r"\b(?:на|для)\s+\d{1,2}\s+(?:человек|гост|персон)\w*",
+)]
+_YEAR = re.compile(r"\b20\d{2}\b")
+
+
+def _amount_text(part: str) -> str:
+    """Фрагмент без пояснений с числами; если их вычеркнуть нечем — как есть."""
+    text = _normalize(part)
+    stripped = text
+    for pattern in _NOT_AMOUNTS:
+        stripped = pattern.sub(" ", stripped)
+    if len(_NUMBER.findall(stripped)) > 1:
+        stripped = _YEAR.sub(" ", stripped)
+    return stripped if _NUMBER.search(stripped) else text
 
 def parse_transactions(text: str) -> list[dict]:
     """Разбирает одну или несколько операций через запятую/перенос строки.
@@ -165,10 +221,16 @@ def parse_transactions(text: str) -> list[dict]:
         part = part.strip()
         if not part:
             continue
-        amount = extract_amount(part)
+        counted = _amount_text(part)
+        # Две суммы в одном фрагменте: вторая молча пропала бы, а первая записалась бы.
+        if len(_NUMBER.findall(counted)) > 1:
+            raise AmountFormatError("several_amounts")
+        amount = extract_amount(counted)
         if amount is None:
             continue
         kind, category = classify(part)
+        if category == "Чаевые" and any(_two_amounts_lookalike(m.group()) for m in _NUMBER.finditer(counted)):
+            raise AmountFormatError("amount_format")
         account = detect_account(part) or default_account(kind, category)
         items.append({
             "kind": kind,
@@ -185,7 +247,7 @@ def parse_transactions(text: str) -> list[dict]:
 # Точная форма: сумма стоит сразу после «Чаевые:» — только она защищает от
 # соседних сумм в том же сообщении («Сумма заказа: 7690.00 р.»).
 _BANK_TIPS_TIGHT = re.compile(
-    r"чаевы[ех]?\s*[:—]?\s*([-−+]?\d[\d ]*(?:[.,]\d+)?)",
+    r"чаевы[ех]?\s*[:—]?\s*([-−+]?\d[\d ]*(?:[.,]\d+)?)(?![.,:]?\d)",
     re.IGNORECASE,
 )
 # Свободная форма: сумма до слова «чаевые» («Перевод 500 ₽ — чаевые от гостя»)

@@ -265,6 +265,63 @@ def test_ambiguous_money_is_rejected_instead_of_changed():
     assert parse_transactions('чай 4350,16')[0]['amount']==4350.16
 
 
+def test_expense_word_beats_for_shift_phrase():
+    for text, category in (("такси 350 за смену", "Транспорт"), ("обед 400 за смену", "Еда")):
+        (tx,) = parse_transactions(text)
+        assert (tx["kind"], tx["category"], tx["amount"]) == ("expense", category, float(text.split()[1])), text
+    for text in ("за смену 2500", "получил 2500 за смену", "смена 2500"):
+        (tx,) = parse_transactions(text)
+        assert (tx["kind"], tx["category"], tx["amount"]) == ("income", "Подработка", 2500.0), text
+
+
+def test_second_amount_is_rejected_instead_of_dropped():
+    from parser import AmountFormatError
+    for text in ("чай 500 такси 350", "кофе 200 чай 500", "потратил 250 на 3 кофе"):
+        try:parse_transactions(text)
+        except AmountFormatError:pass
+        else:raise AssertionError(text)
+    # Это по-прежнему одна сумма или несколько записей через разделитель.
+    assert [r["amount"] for r in parse_transactions("чай 500, такси 350")] == [500, 350]
+    assert parse_transactions("кофе 200 нал")[0]["amount"] == 200
+    assert parse_transactions("чай 1 500 ₽")[0]["amount"] == 1500
+
+
+def test_numbers_in_a_note_are_not_second_amounts():
+    for text, amount in (("чай 500 стол 7", 500), ("чай 500 стол №12", 500), ("стол 5 чай 500", 500),
+                         ("кофе 200 в 15:30", 200), ("кофе 200 (2 шт)", 200), ("чай 500 на 4 гостей", 500),
+                         ("зп 30 000 за октябрь 2026", 30000), ("чай 2026", 2026)):
+        (tx,) = parse_transactions(text)
+        assert tx["amount"] == amount, text
+
+
+def test_expense_words_beat_for_shift_phrase_without_a_category():
+    for text in ("траты за смену 500", "расход 500 за смену", "штраф 500 за смену"):
+        (tx,) = parse_transactions(text)
+        assert (tx["kind"], tx["amount"]) == ("expense", 500.0), text
+
+
+def test_space_grouping_that_looks_like_two_amounts_is_rejected():
+    from parser import AmountFormatError
+    for text in ("чай 500 350", "250 500"):
+        try:parse_transactions(text)
+        except AmountFormatError:pass
+        else:raise AssertionError(text)
+    for text, amount in (("зп 30 000", 30000), ("зп 150 000", 150000), ("чай 1 500", 1500),
+                         ("зп 1 250 000", 1250000), ("чай 500 000", 500000),
+                         # Шестизначные суммы вне чаевых — обычные суммы с разделителем тысяч.
+                         ("зп 125 400", 125400), ("аренда 105 300", 105300)):
+        assert parse_transactions(text)[0]["amount"] == amount, text
+    try:parse_transactions("кофе 500 35")
+    except AmountFormatError:pass
+    else:raise AssertionError("500 35")
+
+
+def test_bank_tips_ignore_date_and_time_after_the_heading():
+    for text in ("Получены чаевые 15.10.2026\nСумма заказа: 7 690.00 р.\nЧаевые: 500.00 р.",
+                 "Получены чаевые 15.10.2026 в 21:30\nЧаевые: 500.00 р."):
+        assert parse_bank_tips(text) == 500.0, text
+
+
 def load_tests(loader, suite, pattern):
     import unittest
     return unittest.TestSuite(unittest.FunctionTestCase(fn) for name,fn in sorted(globals().items())
