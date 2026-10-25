@@ -533,6 +533,8 @@ async def api_entries(request: web.Request) -> web.Response:
     user_id, body = await _auth(request)
     if user_id is None:
         return body
+    if (await db.get_or_create_user(user_id)).get('private_money_mode'):
+        return web.json_response({"entries": []}, headers=NO_CACHE)
     entries = await db.get_recent_entries(user_id, limit=30)
     return web.json_response({"entries": entries}, headers=NO_CACHE)
 
@@ -553,6 +555,8 @@ async def api_entry_edit(request: web.Request) -> web.Response:
     except (TypeError, ValueError):
         return web.json_response({"error": "Не получилось найти запись. Обнови историю."}, status=400)
 
+    if (await db.get_or_create_user(user_id)).get('private_money_mode'):
+        return web.json_response({"error": "Запись уже удалена или недоступна. Обнови историю."}, status=404)
     entry = await db.get_entry(entry_id, user_id)
     if entry is None:
         return web.json_response({"error": "Запись уже удалена или недоступна. Обнови историю."}, status=404)
@@ -587,7 +591,10 @@ async def api_entry_edit(request: web.Request) -> web.Response:
                 raise ValueError()
         except (TypeError, ValueError, InvalidOperation):
             return web.json_response({"error": "Проверь сумму: она должна быть больше нуля, с точностью до копеек."}, status=400)
-        sign = 1 if entry["kind"] in ("income", "accrual") else -1
+        if entry["kind"] == "adjustment":
+            sign = -1 if float(entry["signed_amount"]) < 0 else 1
+        else:
+            sign = 1 if entry["kind"] in ("income", "accrual") else -1
         await db.update_entry_amount(entry_id, user_id, sign * float(amount))
     else:
         return web.json_response({"error": "Не получилось выполнить изменение. Обнови историю."}, status=400)

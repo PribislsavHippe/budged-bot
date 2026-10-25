@@ -1091,7 +1091,7 @@ function editEntry(id, payload, silent) {
     if (!entry) return Promise.resolve(null);
     const task=payload.action==='delete' ? privateMoney.remove(id)
       : privateMoney.edit(id,payload.action==='account' ? {account:payload.account}
-        : {signed_amount:(entry.kind==='income'||entry.kind==='accrual'?1:-1)*Number(payload.amount)});
+        : {signed_amount:(entry.kind==='adjustment'?(Number(entry.signed_amount)<0?-1:1):(entry.kind==='income'||entry.kind==='accrual'?1:-1))*Number(payload.amount)});
     return task.then(function () {
       const response={saved:true,stats:null,entries:null};
       if (!silent) {histEntries=privateMoney.entries.slice(-30).reverse();renderHistory();load();if(calYear)loadMonth(calYear,calMonth);}
