@@ -128,6 +128,13 @@ async def finish(message,draft,profile,rows):
     await save_and_show(message,draft,profile)
 
 
+async def known_schedule_grid(image):
+    import schedule_layout
+    try:await asyncio.to_thread(schedule_layout.detect,image)
+    except Exception:return False   # лишь ускорение: любая неудача отдаёт фото обычному разбору
+    return True
+
+
 async def process_photo(message,draft):
     import report_photo as photo
     uid=message.chat.id
@@ -140,7 +147,10 @@ async def process_photo(message,draft):
             target=photo.LimitedImage();await message.bot.download_file(file.file_path,destination=target)
             image=target.getvalue()
             profile=await person(uid)
-            if profile:
+            if profile and await known_schedule_grid(image):
+                # Привычная сетка графика узнаётся без модели; продажный разбор только сжёг бы лимит.
+                result={'document_kind':'schedule'}
+            elif profile:
                 expected_month=draft.report.get('expected_month') or op_today().strftime('%Y-%m')
                 cfg=await configuration(profile,expected_month,uid)
                 import category_groq

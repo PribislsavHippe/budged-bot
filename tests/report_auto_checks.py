@@ -51,6 +51,14 @@ class AutoTests(unittest.IsolatedAsyncioTestCase):
   m=message();m.answer.return_value=m;d=draft()
   with patch.object(auto,'person',new=AsyncMock(return_value=PROFILE)),patch.object(auto,'configuration',new=AsyncMock(return_value=cfg())),patch.object(groq,'recognize_person',new=AsyncMock(return_value={'document_kind':'schedule'})),patch('schedule_chat.start_photo',new=AsyncMock()) as schedule,patch.object(categories,'save',new=AsyncMock()) as save:
    await auto.process_photo(m,d);schedule.assert_awaited_once();save.assert_not_awaited()
+ async def test_known_schedule_grid_skips_sales_pipeline_and_its_model_calls(self):
+  # Раньше такой график сначала тратил 1–3 запроса продажного разбора и упирался в минутный лимит.
+  m=message();m.answer.return_value=m;d=draft()
+  with patch.object(auto,'person',new=AsyncMock(return_value=PROFILE)),patch.object(auto,'known_schedule_grid',new=AsyncMock(return_value=True)),patch.object(groq,'recognize_person',new=AsyncMock()) as sales,patch('schedule_chat.start_photo',new=AsyncMock()) as schedule:
+   await auto.process_photo(m,d);schedule.assert_awaited_once();sales.assert_not_awaited()
+ async def test_grid_check_never_blocks_the_normal_path(self):
+  self.assertFalse(await auto.known_schedule_grid(b'not an image'))
+  self.assertFalse(await auto.known_schedule_grid(b''))
  async def test_auto_save_then_review_contains_only_own_result(self):
   d=draft();m=message()
   with patch.object(auto,'person',new=AsyncMock(return_value=PROFILE)),patch.object(categories,'save',new=AsyncMock()) as save,patch.object(auto,'own_report',new=AsyncMock(return_value={'review_status':'confirmed'})),patch('research.track'):

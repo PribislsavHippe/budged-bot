@@ -5,6 +5,8 @@ import json
 import logging
 import os
 import re
+import time
+import weakref
 from datetime import date
 
 import httpx
@@ -30,16 +32,117 @@ class VisionError(Exception):
     diagnostic = ''
 
 
-def _note(response):
-    """Код ответа и остатки лимитов. Без тела — в нём бывают данные аккаунта."""
+def _note(response, detail=''):
+    """Код ответа и остатки лимитов. Без тела — в нём бывают данные аккаунта.
+
+    Groq: «запросы» — это суточный счётчик (RPD), «токены» — минутный (TPM).
+    """
     head = response.headers
     note = (f"HTTP {response.status_code}"
-            f" · запросы {head.get('x-ratelimit-remaining-requests','?')}"
+            f" · запросы в сутки {head.get('x-ratelimit-remaining-requests','?')}"
             f"/{head.get('x-ratelimit-limit-requests','?')}"
-            f" · токены {head.get('x-ratelimit-remaining-tokens','?')}"
+            f" · токены в минуту {head.get('x-ratelimit-remaining-tokens','?')}"
             f"/{head.get('x-ratelimit-limit-tokens','?')}")
-    retry = head.get('retry-after') or head.get('x-ratelimit-reset-tokens')
-    return note + (f" · сброс {retry}" if retry else '')
+    retry = head.get('retry-after')
+    if retry:
+        note += f" · ждать {retry} с"
+    elif head.get('x-ratelimit-reset-tokens'):
+        note += f" · сброс {head['x-ratelimit-reset-tokens']}"
+    return note + (f" · {detail}" if detail else '')
+
+
+def _limit_detail(message):
+    """Тип лимита и три числа из текста 429. Сам текст не сохраняется:
+    в нём бывают название организации и другие данные аккаунта."""
+    if not isinstance(message, str):
+        return ''
+    kind = re.search(r'\b(TPM|TPD|RPM|RPD)\b', message)
+    parts = [kind.group(1)] if kind else []
+    for word, label in (('Limit', 'лимит'), ('Used', 'занято'), ('Requested', 'запрошено')):
+        found = re.search(word + r'\s*[:=]?\s*(\d+)', message, re.IGNORECASE)
+        if found:
+            parts.append(f'{label} {found.group(1)}')
+    return ' '.join(parts)
+
+
+# ─── лимит токенов в минуту ──────────────────────────────────────────────────
+# У Groq общий на аккаунт бюджет токенов в минуту (на бесплатном плане 8000), а
+# каждая картинка стоит 2048 входных токенов независимо от размера. Запросы
+# идут через один темп-шлюз процесса: он ведёт копию «ведра», ждёт, пока в нём
+# хватит места, и подстраивается по заголовкам ответов провайдера.
+IMAGE_TOKENS = 2048
+TPM_FALLBACK = 8000
+MAX_WAIT = 60      # сколько секунд один запрос может ждать места в лимите
+MAX_RETRIES = 2    # повторов после 429 с известным «ждать N секунд»
+RETRY_TOKENS_CAP = 8000
+_clock = time.monotonic
+
+
+def _number(value):
+    try:
+        number = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return number if number >= 0 else None
+
+
+class _Pacer:
+    def __init__(self):
+        self.limit = float(TPM_FALLBACK)
+        self.tokens = self.limit
+        self.stamp = _clock()
+        self.inflight = 0.0
+        self.locks = weakref.WeakKeyDictionary()
+
+    def _lock(self):
+        loop = asyncio.get_running_loop()
+        if loop not in self.locks:
+            self.locks[loop] = asyncio.Lock()
+        return self.locks[loop]
+
+    def _refill(self):
+        now = _clock()
+        self.tokens = min(self.limit, self.tokens + (now - self.stamp) * self.limit / 60)
+        self.stamp = now
+
+    async def admit(self, cost, deadline):
+        """Ждёт места в минутном лимите; очередь первым пришёл — первым ушёл."""
+        cost = min(float(cost), self.limit)
+        async with self._lock():
+            self._refill()
+            wait = max(0.0, (cost - self.tokens) * 60 / self.limit)
+            if wait and _clock() + wait > deadline:
+                error = VisionQuotaError('Сервис пока не принимает новые фото. Попробуй чуть позже.')
+                error.diagnostic = f'очередь лимита: нужно ждать {wait:.0f} с, токенов в минуту {self.tokens:.0f}/{self.limit:.0f}'
+                raise error
+            # Место занято сразу (баланс может уйти в минус): следующие встают в очередь за нами,
+            # а спим мы уже без замка, чтобы долгое ожидание не держало остальных.
+            self.tokens -= cost
+            self.inflight += cost
+        if wait:
+            try:
+                await asyncio.sleep(wait)
+            except BaseException:
+                self.tokens += cost
+                self.inflight = max(0.0, self.inflight - cost)
+                raise
+        return cost
+
+    def settle(self, cost, headers=None):
+        """Запрос завершён: сверяем копию «ведра» с остатком от провайдера."""
+        self.inflight = max(0.0, self.inflight - cost)
+        if headers is None:
+            return
+        limit = _number(headers.get('x-ratelimit-limit-tokens'))
+        left = _number(headers.get('x-ratelimit-remaining-tokens'))
+        if limit:
+            self.limit = limit
+        if left is not None:
+            self.tokens = min(self.limit, max(0.0, left - self.inflight))
+            self.stamp = _clock()
+
+
+_pacer = _Pacer()
 
 
 class VisionQuotaError(VisionError):
@@ -73,6 +176,77 @@ def clean_result(raw):
     return {'cutoff': cutoff, 'targets': targets, 'rows': rows}
 
 
+async def chat_json(make_body, prompt_tokens, max_tokens, timeout=60):
+    """Один запрос к Groq через темп-шлюз; ответ — разобранный JSON.
+
+    Повторяются только чтение после 429 с понятным «ждать N секунд» и ответ,
+    обрезанный по длине. Запись в базу сюда не входит.
+    """
+    started = _clock()
+    deadline = started + MAX_WAIT
+    retries = 0
+    extended = False
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        while True:
+            cost = await _pacer.admit(prompt_tokens + max_tokens, deadline)
+            try:
+                response = await client.post('https://api.groq.com/openai/v1/chat/completions',
+                                             headers={'Authorization': 'Bearer ' + os.environ['GROQ_API_KEY']},
+                                             json=make_body(max_tokens))
+            except BaseException:
+                _pacer.settle(cost)
+                raise
+            _pacer.settle(cost, response.headers)
+            note = _note(response)
+            if response.status_code != 200:
+                logging.warning('vision_http %s', note)
+            if response.status_code in (413, 429):
+                # Classify provider text, but never echo it (may contain account data).
+                try:
+                    error = response.json().get('error', {})
+                    message = error.get('message', '') if isinstance(error, dict) else ''
+                except (ValueError, AttributeError):
+                    message = ''
+                text = message.lower() if isinstance(message, str) else ''
+                if response.status_code == 413 or 'request too large' in text:
+                    oversized = VisionError('Фото не проходит по размеру запроса. Попробуй прислать только таблицу, без полей вокруг.')
+                    oversized.diagnostic = _note(response, _limit_detail(message))
+                    raise oversized
+                quota = VisionQuotaError('Сервис пока не принимает новые фото. Попробуй чуть позже.')
+                quota.diagnostic = _note(response, _limit_detail(message))
+                seconds = _number(response.headers.get('retry-after'))
+                daily = bool(re.search(r'\b(?:TPD|RPD)\b|per day', message if isinstance(message, str) else '', re.IGNORECASE))
+                if seconds is not None and 0 < seconds <= 25:
+                    quota.retry_after = seconds
+                if (not daily and seconds is not None and 0 < seconds
+                        and retries < MAX_RETRIES and _clock() + seconds + 1 <= deadline):
+                    retries += 1
+                    await asyncio.sleep(seconds + 1)
+                    continue
+                raise quota
+            if response.status_code in (401, 403):
+                denied = VisionError('Фото пока прочитать не получается. Сообщи администратору — он проверит подключение.')
+                denied.diagnostic = note
+                raise denied
+            if response.status_code != 200:
+                failed = VisionError('Не получилось прочитать фото. Попробуй чуть позже.')
+                failed.diagnostic = note
+                raise failed
+            choice = response.json()['choices'][0]
+            if choice.get('finish_reason') == 'length' and not extended:
+                # Ответ обрезан: один раз просим больше места, но не больше, чем вообще
+                # помещается в минутный лимит вместе с картинкой и промптом.
+                room = int(min(_pacer.limit, RETRY_TOKENS_CAP) - prompt_tokens)
+                larger = min(max_tokens * 2, room)
+                if larger > max_tokens:
+                    extended = True
+                    max_tokens = larger
+                    continue
+            if choice.get('finish_reason') != 'stop':
+                raise ValueError('Incomplete response')
+            return json.loads(choice['message']['content'])
+
+
 async def request_json(image, prompt, max_tokens=1800):
     if not configured():
         raise VisionError('Читать фото пока не умею. Можно записать отчёт сообщением.')
@@ -84,56 +258,23 @@ async def request_json(image, prompt, max_tokens=1800):
         mime = 'image/png'
     else:
         raise VisionError('Пришли фото или скриншот в JPG или PNG.')
-    body = {'model': os.getenv('GROQ_VISION_MODEL', MODEL),
-            'messages': [{'role': 'system', 'content': prompt}, {'role': 'user', 'content': [
-                {'type': 'text', 'text': 'Extract this report as JSON.'},
-                {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,' + base64.b64encode(image).decode()}}]}],
-            'response_format': {'type': 'json_object'}, 'max_completion_tokens': max_tokens, 'temperature':0}
+    encoded = base64.b64encode(image).decode()
+
+    def body(tokens):
+        return {'model': os.getenv('GROQ_VISION_MODEL', MODEL),
+                'messages': [{'role': 'system', 'content': prompt}, {'role': 'user', 'content': [
+                    {'type': 'text', 'text': 'Extract this report as JSON.'},
+                    {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,' + encoded}}]}],
+                'response_format': {'type': 'json_object'}, 'max_completion_tokens': tokens, 'temperature': 0}
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post('https://api.groq.com/openai/v1/chat/completions',
-                                         headers={'Authorization': 'Bearer ' + os.environ['GROQ_API_KEY']}, json=body)
-        note = _note(response)
-        if response.status_code != 200:
-            logging.warning('vision_http %s', note)
-        if response.status_code == 429:
-            # Classify provider text, but never echo it (may contain account data).
-            try:
-                error = response.json().get('error', {})
-                message = error.get('message', '') if isinstance(error, dict) else ''
-            except (ValueError, AttributeError):
-                message = ''
-            if isinstance(message, str) and 'request too large' in message.lower():
-                oversized=VisionError('Фото не проходит по размеру запроса. Попробуй прислать только таблицу, без полей вокруг.')
-                oversized.diagnostic=note
-                raise oversized
-            error=VisionQuotaError('Сервис пока не принимает новые фото. Попробуй чуть позже.')
-            error.diagnostic=note
-            # Allow bounded read-only retries without exposing provider text.
-            try:
-                seconds=float(response.headers.get('retry-after',''))
-                if 0<seconds<=25:error.retry_after=seconds
-            except (ValueError,TypeError):pass
-            raise error
-        if response.status_code in (401, 403):
-            denied=VisionError('Фото пока прочитать не получается. Сообщи администратору — он проверит подключение.')
-            denied.diagnostic=note
-            raise denied
-        if response.status_code != 200:
-            failed=VisionError('Не получилось прочитать фото. Попробуй чуть позже.')
-            failed.diagnostic=note
-            raise failed
-        choice = response.json()['choices'][0]
-        if choice.get('finish_reason') != 'stop':
-            raise ValueError('Incomplete response')
-        return json.loads(choice['message']['content'])
+        return await chat_json(body, IMAGE_TOKENS + len(prompt) // 2 + 40, max_tokens)
     except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError):
         raise VisionError('Не удалось прочитать отчёт. Попробуй ещё раз или пришли более чёткое фото.') from None
 
 
 async def recognize(image):
     try:
-        result = clean_result(await request_json(image, PROMPT, 6000))
+        result = clean_result(await request_json(image, PROMPT, 4000))
     except (ValueError, TypeError):
         raise VisionError('Не уверен в цифрах на фото. Пришли более чёткий файл или запиши их сообщением.') from None
     if not result['rows']:

@@ -275,14 +275,8 @@ def verified_result(raw,blocks,cfg,expected,context_text=""):
 
 
 async def request(image,prompt,max_tokens=900):
-    waited=0
-    for attempt in range(3):
-        try:return await vision.request_json(image,prompt,max_tokens)
-        except vision.VisionError as error:
-            delay=getattr(error,'retry_after',None)
-            if attempt==2 or type(delay) not in (float,int) or not 0<delay<=25 or waited+delay+1>30:raise
-            waited+=delay+1
-            await asyncio.sleep(delay+1)
+    # Ожидание лимита и повтор после 429 делает vision.request_json; второго слоя нет.
+    return await vision.request_json(image,prompt,max_tokens)
 
 
 def header_bands(image,stop):

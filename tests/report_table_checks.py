@@ -90,14 +90,12 @@ class TableTests(unittest.IsolatedAsyncioTestCase):
  async def test_missing_employee_retries_enlarged_source_once(self):
   with patch.object(table.vision,'request_json',new=AsyncMock(side_effect=[{'kind':'sales','blocks':[]},{'kind':'sales'},copy.deepcopy(LAYOUT),*transcriptions()])) as read:
    await table.recognize(image(),cfg(),NAME);self.assertEqual(read.await_count,6)
- async def test_network_no_retry_but_short_explicit_quota_wait_is_bounded(self):
-  error=table.vision.VisionError('quota')
-  with patch.object(table.vision,'request_json',new=AsyncMock(side_effect=error)) as read:
-   with self.assertRaises(table.vision.VisionError):await table.recognize(image(),cfg(),NAME)
-   read.assert_awaited_once()
-  error.retry_after=1
-  with patch.object(table.vision,'request_json',new=AsyncMock(side_effect=[error,{'ok':True}])) as read,patch.object(table.asyncio,'sleep',new=AsyncMock()) as sleep:
-   self.assertEqual(await table.request(b'image','prompt'),{'ok':True});self.assertEqual(read.await_count,2);sleep.assert_awaited_once()
+ async def test_quota_error_is_not_retried_again_by_the_table_layer(self):
+  # Ожидание и повтор после 429 живут в vision.request_json; второго слоя быть не должно.
+  error=table.vision.VisionQuotaError('quota');error.retry_after=1
+  with patch.object(table.vision,'request_json',new=AsyncMock(side_effect=error)) as read,patch.object(table.asyncio,'sleep',new=AsyncMock()) as sleep:
+   with self.assertRaises(table.vision.VisionQuotaError):await table.recognize(image(),cfg(),NAME)
+   read.assert_awaited_once();sleep.assert_not_awaited()
  async def test_schedule_bypasses_sales_write(self):
   with patch.object(table.vision,'request_json',new=AsyncMock(return_value={'kind':'schedule'})) as read:
    self.assertEqual(await table.recognize(image(),cfg(),NAME),{'document_kind':'schedule'});read.assert_awaited_once()

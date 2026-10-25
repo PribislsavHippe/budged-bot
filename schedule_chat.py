@@ -223,6 +223,7 @@ async def photo_month(message):
         except (ValueError,KeyError,TypeError,AttributeError,OSError,vision.VisionError) as error:
             if attempted:research.track(message.from_user.id,'vision_failed',screen='calendar',error_code='vision')
             text=str(error) if isinstance(error,(ValueError,vision.VisionError)) and str(error) else 'Не разобрал часы. Пришли более чёткий график.'
+            text=vision.owner_note(message.from_user.id,error,text)
             await message.answer(html.escape(text),reply_markup=photo_buttons(draft,[('Отмена','cancel')]))
 
 
