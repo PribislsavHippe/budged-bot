@@ -44,7 +44,7 @@ class TelegramInbox:
         self.bot=bot;self.dispatcher=dispatcher
         secret=os.getenv('INBOX_ENCRYPTION_KEY') or bot.token
         self.key=hashlib.sha256(('budget-bot-inbox-v1:'+secret).encode()).digest()
-        self.wake=asyncio.Event();self.tasks=[]
+        self.idle=[];self.pending=False;self.tasks=[]
 
     def pack(self,raw):
         update=Update.model_validate(raw)
@@ -68,7 +68,16 @@ class TelegramInbox:
         number,actor,sealed,digest=self.pack(raw)
         await db._execute(db.supabase.rpc('store_telegram_update',{
             'update_no':number,'actor_name':actor,'sealed':sealed,'digest':digest}))
-        self.wake.set()
+        self.notify()
+
+    def notify(self):
+        """Будит одного свободного воркера, а не всех сразу: шестнадцать одновременных
+        запросов к базе на каждое сообщение занимали её соединения и сами ломались."""
+        for waiter in self.idle:
+            if not waiter.done():
+                waiter.set_result(None)
+                return
+        self.pending=True
 
     async def webhook(self,request):
         expected=request.app['webhook_secret']
@@ -88,7 +97,7 @@ class TelegramInbox:
         # can progress while another employee's photo or provider request waits.
         # Фото в очереди распознавания занимает воркер, поэтому их с запасом
         # больше, чем мест в очереди и в чтении вместе (2 + 10).
-        self.tasks=[asyncio.create_task(self.run()) for _ in range(int(os.getenv('INBOX_WORKERS','16')))]
+        self.tasks=[asyncio.create_task(self.run(i)) for i in range(int(os.getenv('INBOX_WORKERS','16')))]
 
     async def stop(self):
         for task in self.tasks:task.cancel()
@@ -135,7 +144,7 @@ class TelegramInbox:
     async def heartbeat(self,batch,token):
         while True:
             await asyncio.sleep(30)
-            await db._execute(db.supabase.rpc('renew_telegram_batch',{'batch':batch,'token':token}))
+            await db._execute(db.supabase.rpc('renew_telegram_batch',{'batch':batch,'token':token}),retries=2)
 
     def dialog_context(self,update):
         # A replay after restarting must keep the original meaning of a number
@@ -182,8 +191,18 @@ class TelegramInbox:
 
     async def process(self,rows):
         batch=str(rows[0]['batch_id'] or uuid4());token=str(uuid4())
-        claimed=(await db._execute(db.supabase.rpc('claim_telegram_batch',{
-            'ids':[r['update_id'] for r in rows],'batch':batch,'token':token}))).data
+        try:
+            claimed=(await db._execute(db.supabase.rpc('claim_telegram_batch',{
+                'ids':[r['update_id'] for r in rows],'batch':batch,'token':token}))).data
+        except BaseException:
+            # Ответ мог потеряться уже после захвата: без этого запись три минуты
+            # числится занятой и ждёт, пока истечёт аренда. Освобождение по тому же
+            # токену ничего не делает, если захвата не было.
+            try:
+                await asyncio.shield(db._execute(db.supabase.rpc('finish_telegram_batch',{
+                    'batch':batch,'token':token,'succeeded':False}),retries=2))
+            except Exception:pass
+            raise
         if not claimed:return
         claimed.sort(key=lambda r:r['update_id'])
         beat=asyncio.create_task(self.heartbeat(batch,token));succeeded=False
@@ -208,31 +227,38 @@ class TelegramInbox:
                 failure(error,area='telegram_inbox',stage='renew')
             # On a killed process the claim expires; retrying preserves source IDs.
             await asyncio.shield(db._execute(db.supabase.rpc('finish_telegram_batch',{
-                'batch':batch,'token':token,'succeeded':succeeded})))
+                'batch':batch,'token':token,'succeeded':succeeded}),retries=3))
 
     async def run_once(self):
-        rows=(await db._execute(db.supabase.rpc('ready_telegram_heads',{}))).data
+        rows=(await db._execute(db.supabase.rpc('ready_telegram_heads',{}),retries=2)).data
         chosen=await self.choose(rows)
         if chosen:await self.process(chosen)
         return bool(chosen)
 
-    async def run(self):
+    async def run(self,index=0):
         idle=.5
+        # Первые воркеры проверяют базу чаще; остальные нужны на случай ожидающих фото.
+        ceiling=10 if index<4 else 30
         while True:
-            # Clear before reading the database, so a receipt committed during
-            # that read wakes us immediately instead of waiting for the poll.
-            self.wake.clear()
+            # Reset before reading the database, so a receipt committed during
+            # that read makes us look again instead of waiting for the poll.
+            self.pending=False
             try:
                 if await self.run_once():
                     idle=.5
                     continue
             except Exception as error:
                 failure(error,area='telegram_inbox',stage='process')
+            if self.pending:continue
+            waiter=asyncio.get_running_loop().create_future()
+            self.idle.append(waiter)
             try:
-                await asyncio.wait_for(self.wake.wait(),timeout=idle)
+                await asyncio.wait_for(waiter,timeout=idle)
                 idle=.5
             except TimeoutError:
-                idle=min(10,idle*2)
+                idle=min(ceiling,idle*2)
+            finally:
+                if waiter in self.idle:self.idle.remove(waiter)
 
     async def prune_finished(self):
         cutoff=(datetime.now(timezone.utc)-timedelta(days=30)).isoformat()

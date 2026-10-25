@@ -113,7 +113,7 @@ class ReviewFixTests(unittest.IsolatedAsyncioTestCase):
         row = {'update_id': number, 'actor_key': actor, 'payload': sealed, 'batch_id': '00000000-0000-4000-8000-000000000001'}
         calls = []
 
-        async def execute(query):
+        async def execute(query, retries=None):
             calls.append(query)
             return NS(data=[row] if query.name == 'claim_telegram_batch' else None)
 
@@ -134,7 +134,7 @@ class ReviewFixTests(unittest.IsolatedAsyncioTestCase):
                'batch_id': '00000000-0000-4000-8000-000000000001'}
         calls = []
 
-        async def execute(query):
+        async def execute(query, retries=None):
             calls.append(query)
             return NS(data=[row] if query.name == 'claim_telegram_batch' else None)
 
@@ -314,7 +314,7 @@ class ReviewFixTests(unittest.IsolatedAsyncioTestCase):
             def select(self,*args):return self
             def eq(self,*args):return self
             def limit(self,*args):return self
-        async def execute(query):
+        async def execute(query, retries=None):
             nonlocal saved_actor,saved_execution
             if isinstance(query,Read):return NS(data=[{'payload':saved_actor}] if saved_actor else [])
             if query.name=='save_telegram_actor_state':

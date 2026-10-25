@@ -6,7 +6,8 @@
 import os
 import asyncio
 
-from httpx import TransportError
+from httpx import (ConnectError, ConnectTimeout, PoolTimeout, ReadError,
+                   RemoteProtocolError, TransportError, WriteError)
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
@@ -34,19 +35,35 @@ ACCOUNT_LABELS = {CASH: "Наличные", CARD: "Карта", PENDING: "Нач
 _db_slots = asyncio.BoundedSemaphore(8)
 
 
-async def _execute(query):
+# Сервер закрыл соединение, пока оно простаивало в пуле (HTTP/2 GOAWAY, Supabase,
+# Render): первый запрос по нему падает, а новое соединение работает.
+_STALE_CONNECTION = (RemoteProtocolError, ConnectError, ConnectTimeout, ReadError, WriteError, PoolTimeout)
+
+
+async def _execute(query, retries=None):
+    """Выполняет запрос. Чтение (GET) при обрыве соединения повторяется само;
+    запись повторяет только тот, кто знает, что она идемпотентна (retries=N)."""
+    if retries is None:
+        retries = 1 if getattr(query, 'http_method', '') == 'GET' else 0
     async with _db_slots:
-        task=asyncio.create_task(asyncio.to_thread(query.execute))
-        try:
-            return await asyncio.shield(task)
-        except TransportError as error:
-            # Static origin only: never attach the URL, credentials or payload.
-            error._diagnostic_provider = 'supabase'
-            raise
-        except asyncio.CancelledError:
-            # A cancelled waiter must not free a slot while its thread still runs.
-            try:await task
-            finally:raise
+        for attempt in range(retries + 1):
+            task=asyncio.create_task(asyncio.to_thread(query.execute))
+            try:
+                return await asyncio.shield(task)
+            except _STALE_CONNECTION as error:
+                if attempt < retries:
+                    await asyncio.sleep(.2 * (attempt + 1))
+                    continue
+                error._diagnostic_provider = 'supabase'
+                raise
+            except TransportError as error:
+                # Static origin only: never attach the URL, credentials or payload.
+                error._diagnostic_provider = 'supabase'
+                raise
+            except asyncio.CancelledError:
+                # A cancelled waiter must not free a slot while its thread still runs.
+                try:await task
+                finally:raise
 
 
 async def _pages(query_factory):
