@@ -198,6 +198,29 @@ class RateLimitTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):await task
         self.assertEqual(pacer.inflight,0);self.assertAlmostEqual(pacer.tokens,0,delta=1)
 
+    async def test_three_employees_queue_behind_each_other_without_a_single_429(self):
+        # Каждый проход — имена и строка (около 4000 токенов каждый); втроём это втрое больше минутного бюджета.
+        import recognition_queue as rq
+        queue=rq.RecognitionQueue();statuses=[NS(texts=[]) for _ in range(3)]
+        for st in statuses:
+            async def edit_text(text,st=st,**kwargs):st.texts.append(text)
+            st.edit_text=edit_text
+        client,calls=self.client(ok({'rows':[]}))
+        done=[]
+        async def employee(i):
+            async with queue.turn(statuses[i],'Читаю…'):
+                await REAL_SLEEP(0)
+                await vision.request_json(b'\xff\xd8\xfftest','p',1800)
+                await vision.request_json(b'\xff\xd8\xfftest','p',1800)
+            done.append(i)
+        async def yielding_sleep(seconds):
+            self.sleeps.append(seconds);self.now[0]+=seconds;await REAL_SLEEP(0)
+        with patch.object(vision.httpx,'AsyncClient',side_effect=client),patch.object(vision.asyncio,'sleep',new=yielding_sleep):
+            await asyncio.gather(*(employee(i) for i in range(3)))
+        self.assertEqual(sorted(done),[0,1,2]);self.assertEqual(len(calls),6)
+        self.assertEqual([st.texts for st in statuses[:2]],[[],[]])
+        self.assertEqual(statuses[2].texts[0],rq.QUEUED)
+
     async def test_schedule_steps_survive_one_429(self):
         import schedule_reader
         client,calls=self.client(quota(),ok({'rows':[{'name':'Алексей'}]}))
@@ -352,7 +375,7 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         client=httpx.AsyncClient(transport=httpx.MockTransport(
             lambda request:httpx.Response(429,headers={'retry-after':'60'},text='private provider details')))
         with patch.dict(os.environ,{'GROQ_API_KEY':'test','REPORT_VISION_ENABLED':'1'}),\
-             patch.object(vision.httpx,'AsyncClient',return_value=client),\
+             patch.object(vision.httpx,'AsyncClient',return_value=client),patch.object(vision.asyncio,'sleep',new=AsyncMock()),\
              patch.object(photo,'chat_write',new=AsyncMock()) as plans,\
              patch.object(photo,'save_report',new=AsyncMock()) as save:
             await photo.receive_photo(self.message)

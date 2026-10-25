@@ -86,7 +86,9 @@ class TelegramInbox:
     def start(self):
         # SQL claims keep each person's messages in order. Independent actors
         # can progress while another employee's photo or provider request waits.
-        self.tasks=[asyncio.create_task(self.run()) for _ in range(4)]
+        # Фото в очереди распознавания занимает воркер, поэтому их с запасом
+        # больше, чем мест в очереди и в чтении вместе (2 + 10).
+        self.tasks=[asyncio.create_task(self.run()) for _ in range(int(os.getenv('INBOX_WORKERS','16')))]
 
     async def stop(self):
         for task in self.tasks:task.cancel()

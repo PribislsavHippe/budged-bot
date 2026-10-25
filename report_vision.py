@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import contextvars
 import time
 import weakref
 from datetime import date
@@ -76,6 +77,14 @@ MAX_WAIT = 60      # сколько секунд один запрос може�
 MAX_RETRIES = 2    # повторов после 429 с известным «ждать N секунд»
 RETRY_TOKENS_CAP = 8000
 _clock = time.monotonic
+# Общий срок текущего задания (ставит recognition_queue): запросы внутри него ждут
+# места в лимите до этого срока, а не по минуте на каждый.
+job_deadline = contextvars.ContextVar('vision_job_deadline', default=None)
+
+
+def job_seconds_left(default):
+    deadline = job_deadline.get()
+    return default if deadline is None else max(1.0, deadline - _clock())
 
 
 def _number(value):
@@ -183,7 +192,7 @@ async def chat_json(make_body, prompt_tokens, max_tokens, timeout=60):
     обрезанный по длине. Запись в базу сюда не входит.
     """
     started = _clock()
-    deadline = started + MAX_WAIT
+    deadline = max(started + MAX_WAIT, job_deadline.get() or 0)
     retries = 0
     extended = False
     async with httpx.AsyncClient(timeout=timeout) as client:

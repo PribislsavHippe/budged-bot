@@ -10,7 +10,7 @@ from uuid import UUID,uuid4,uuid5,NAMESPACE_URL
 from aiogram import Router,F
 from aiogram.types import InlineKeyboardButton as Button,InlineKeyboardMarkup as Markup
 from postgrest.exceptions import APIError
-import db,categories,identity,report_vision as vision
+import db,categories,identity,recognition_queue,report_vision as vision
 from workday import op_today
 
 router=Router()
@@ -140,8 +140,7 @@ async def process_photo(message,draft):
     uid=message.chat.id
     status=await message.answer('Распознаю…')
     try:
-        if photo._recognition_slots.locked():raise categories.CategoryError('busy')
-        async with photo._recognition_slots:
+        async with photo.recognition_queue.turn(status,'Распознаю…'):
             file=await message.bot.get_file(draft.file_id)
             if (file.file_size or 0)>vision.MAX_BYTES:raise categories.CategoryError('image_size')
             target=photo.LimitedImage();await message.bot.download_file(file.file_path,destination=target)
@@ -170,7 +169,14 @@ async def process_photo(message,draft):
     except Exception as error:
         from diagnostics import failure
         failure(error,area='report_auto',stage='photo')
-        if isinstance(error,vision.VisionQuotaError) and draft.phase!='uncertain':
+        if isinstance(error,(recognition_queue.QueueFull,recognition_queue.QueueStalled)):
+            # Очередь — не сбой отчёта: без сообщения владельцу, фото просто пришлют позже.
+            photo.expire(uid,draft)
+            try:
+                await status.edit_text(str(error))
+            except Exception:
+                await message.answer(str(error))
+        elif isinstance(error,vision.VisionQuotaError) and draft.phase!='uncertain':
             photo.expire(uid,draft)
             text='У ИИ закончились токены — пока не могу прочитать отчёт. Ничего не записал. Попробуй позже или внеси данные вручную'
             try:

@@ -49,7 +49,7 @@ class Draft:
 
 
 drafts: dict[int, Draft] = {}
-_recognition_slots = asyncio.Semaphore(2)
+from recognition_queue import queue as recognition_queue
 
 
 def expire(uid, draft):
@@ -229,9 +229,7 @@ async def photo_callback(callback):
             await callback.message.edit_text('Распознаю…')
             cfg=None
             try:
-                if _recognition_slots.locked():
-                    raise vision.VisionError('Распознавание занято. Попробуй через минуту.')
-                async with _recognition_slots:
+                async with recognition_queue.turn(callback.message,'Распознаю…'):
                     file = await callback.bot.get_file(draft.file_id)
                     if (file.file_size or 0) > vision.MAX_BYTES:
                         raise vision.VisionError('Пришли фото размером до 8 МБ.')
@@ -386,10 +384,8 @@ async def select_row(message, draft, index):
         try:
             if not draft.image:
                 raise vision.VisionError('Фото больше недоступно. Пришли отчёт заново.')
-            if _recognition_slots.locked():
-                raise vision.VisionError('Сейчас читаю другие отчёты. Попробуй через минуту.')
-            await message.answer('Читаю твою строку…')
-            async with _recognition_slots:
+            status=await message.answer('Читаю твою строку…')
+            async with recognition_queue.turn(status,'Читаю твою строку…'):
                 row=await vision.recognize_row(draft.image,row['index'],row['name'],relaxed_grid=True) if draft.report.get('relaxed_grid') else await vision.recognize_row(draft.image,row['index'],row['name'])
             draft.report['percent']=row['percent']
             research.track(message.chat.id,'vision_completed')

@@ -93,7 +93,7 @@ async def set_reminder_settings(callback):
     await callback.answer('Напоминания сейчас приходят для каждой смены.',show_alert=True)
 
 async def start_photo(callback,draft,image_bytes=None):
-    from report_photo import LimitedImage,_recognition_slots
+    from report_photo import LimitedImage,recognition_queue
     if not schedule.enabled():
         await callback.message.answer('Импорт графика пока не подключён.');return
     research.track(callback.from_user.id,'schedule_import_started',screen='calendar')
@@ -101,8 +101,7 @@ async def start_photo(callback,draft,image_bytes=None):
     draft.phase='schedule_reading'
     await callback.message.edit_text('Читаю имена в графике…')
     try:
-        if _recognition_slots.locked():raise vision.VisionError('Сейчас читаю другие фото. Попробуй через минуту.')
-        async with _recognition_slots:
+        async with recognition_queue.turn(callback.message,'Читаю имена в графике…'):
             if image_bytes is None:
                 file=await callback.bot.get_file(draft.file_id)
                 if (file.file_size or 0)>vision.MAX_BYTES:raise vision.VisionError('Пришли файл до 8 МБ.')
@@ -130,7 +129,7 @@ async def start_photo(callback,draft,image_bytes=None):
 
 @router.callback_query(F.data.startswith('sch:'))
 async def photo_action(callback):
-    from report_photo import drafts,expire,_recognition_slots
+    from report_photo import drafts,expire
     parts=callback.data.split(':');draft=drafts.get(callback.from_user.id)
     if len(parts)!=3 or not draft or draft.nonce!=parts[1]:
         await callback.answer('Пришли график ещё раз.');return
@@ -194,7 +193,7 @@ def waiting_photo(message):
 
 @router.message(waiting_photo,F.text)
 async def photo_month(message):
-    from report_photo import drafts,_recognition_slots
+    from report_photo import drafts,recognition_queue
     draft=drafts[message.from_user.id]
     if draft.lock.locked():return
     async with draft.lock:
@@ -203,12 +202,11 @@ async def photo_month(message):
             month=schedule.month(message.text)
             whole=draft.report.get('image_mode')=='whole'
             if 'raw_cells' not in draft.report or (whole and draft.report.get('raw_month')!=month):
-                if _recognition_slots.locked():raise vision.VisionError('Сейчас читаю другое фото. Попробуй через минуту.')
-                await message.answer('Читаю твои смены…')
+                status=await message.answer('Читаю твои смены…')
                 import schedule_reader
                 attempted=True
                 research.track(message.from_user.id,'vision_started',screen='calendar')
-                async with _recognition_slots:
+                async with recognition_queue.turn(status,'Читаю твои смены…'):
                     cells=await schedule_reader.read_row(draft.image,draft.report['index'],
                         draft.report['name'],month,draft.report.get('image_mode','grid'))
                 # Keep the image until validation succeeds so a misread row can be retried.

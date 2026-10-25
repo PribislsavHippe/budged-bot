@@ -520,5 +520,5 @@ async def _recognize(image,cfg,expected,context_text=""):
 
 
 async def recognize(image,cfg,expected,context_text=""):
-    async with asyncio.timeout(180):
+    async with asyncio.timeout(vision.job_seconds_left(180)):
         return await _recognize(image,cfg,expected,context_text)

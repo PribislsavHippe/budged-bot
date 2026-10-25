@@ -51,6 +51,18 @@ class AutoTests(unittest.IsolatedAsyncioTestCase):
   m=message();m.answer.return_value=m;d=draft()
   with patch.object(auto,'person',new=AsyncMock(return_value=PROFILE)),patch.object(auto,'configuration',new=AsyncMock(return_value=cfg())),patch.object(groq,'recognize_person',new=AsyncMock(return_value={'document_kind':'schedule'})),patch('schedule_chat.start_photo',new=AsyncMock()) as schedule,patch.object(categories,'save',new=AsyncMock()) as save:
    await auto.process_photo(m,d);schedule.assert_awaited_once();save.assert_not_awaited()
+ async def test_long_or_stalled_queue_tells_the_sender_without_alerting_the_owner(self):
+  import recognition_queue as rq
+  for error in (rq.QueueFull(rq.TOO_LONG),rq.QueueStalled(rq.STALLED)):
+   photo.drafts.clear()
+   m=message();status=NS(edit_text=AsyncMock());m.answer.return_value=status;d=draft();photo.drafts[7]=d
+   class Refuse:
+    async def __aenter__(self):raise error
+    async def __aexit__(self,*args):return False
+   with patch.object(photo.recognition_queue,'turn',new=lambda *a,**k:Refuse()),patch.object(auto,'issue',new=AsyncMock()) as issue,patch.object(categories,'save',new=AsyncMock()) as save:
+    await auto.process_photo(m,d)
+    status.edit_text.assert_awaited_once_with(str(error));issue.assert_not_awaited();save.assert_not_awaited()
+    self.assertNotIn(7,photo.drafts)
  async def test_known_schedule_grid_skips_sales_pipeline_and_its_model_calls(self):
   # Раньше такой график сначала тратил 1–3 запроса продажного разбора и упирался в минутный лимит.
   m=message();m.answer.return_value=m;d=draft()
