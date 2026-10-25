@@ -60,4 +60,4 @@ REVOKE ALL ON users,entries,shifts FROM PUBLIC,anon,authenticated;
 GRANT ALL ON users,entries,shifts TO service_role;
 GRANT USAGE,SELECT ON SEQUENCE entries_id_seq,shifts_id_seq TO service_role;
 
--- Затем выполни migration_v7.sql ... migration_v26.sql по порядку.
+-- Затем выполни migration_v7.sql ... migration_v29.sql по порядку.
