@@ -43,6 +43,9 @@ def build_dispatcher() -> Dispatcher:
     dp.message.outer_middleware(ux_chat.ActivityMiddleware())
     dp.callback_query.outer_middleware(ux_chat.ActivityMiddleware())
     import category_chat
+    import roster_chat
+    # Прототип только для владельца: команда не должна попасть в чужие сценарии.
+    dp.include_router(roster_chat.router)
     dp.include_router(category_chat.router)
     dp.include_router(ux_chat.router)
     import report_auto
