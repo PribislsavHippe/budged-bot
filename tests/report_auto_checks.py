@@ -20,7 +20,10 @@ def raw(name='Тест Имя'):
  return {'kind':'sales','cutoff':'2026-10-14','categories':[{'name':'Гарниры','unit':'amount'}],'rows':[{'name':name,'totals':{'Гарниры':1500}}]}
 
 class AutoTests(unittest.IsolatedAsyncioTestCase):
- async def asyncSetUp(self):photo.drafts.clear();auto._alerted.clear()
+ async def asyncSetUp(self):
+  photo.drafts.clear();auto._alerted.clear()
+  # Отчёты в этих проверках октябрьские: без закреплённой даты они ломаются с началом нового месяца.
+  today=patch.object(auto,'op_today',return_value=date(2026,10,18));today.start();self.addCleanup(today.stop)
  async def test_no_model_call_before_one_time_consent(self):
   m=message()
   with patch.object(auto,'enabled',new=AsyncMock(return_value=True)),patch.object(auto.db,'_execute',new=AsyncMock(return_value=NS(data=[]))),patch.object(auto,'process_photo',new=AsyncMock()) as read:
