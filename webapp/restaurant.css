@@ -45,7 +45,14 @@
 .restaurant-pick small{display:block;font-size:12px;color:#52616b;margin-top:5px}
 #restaurant-panel .restaurant-pick[aria-pressed=true]{background:#fff}
 #restaurant-login p{margin:0 0 20px;color:#52616b;line-height:1.5}
-#restaurant-login-button{min-height:48px}
+.restaurant-login-row{display:flex;flex-wrap:wrap;align-items:flex-start;gap:24px 40px}
+.restaurant-login-row .btn{display:inline-block;width:auto;margin-top:0;padding:14px 28px;text-decoration:none}
+.restaurant-login-code{margin:14px 0 0!important;color:#52616b;font-size:14px}
+.restaurant-login-code b{font-size:20px;color:#172126;letter-spacing:.12em;margin-left:4px}
+.restaurant-login-qr{text-align:center}
+.restaurant-login-qr #restaurant-qr{display:inline-block;padding:10px;background:#fff;border:1px solid #dbe1e4;border-radius:10px;min-width:148px;min-height:148px}
+.restaurant-login-qr p{margin:8px 0 0!important;font-size:13px}
+@media(max-width:700px){.restaurant-login-qr{display:none}}
 @media(min-width:900px){
   .restaurant-page #restaurant-panel{max-width:1120px;padding:36px 40px 56px}
   .restaurant-page .btn{width:auto;display:inline-block;padding:12px 24px}

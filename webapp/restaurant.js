@@ -18,7 +18,7 @@
   const wide=matchMedia('(min-width: 900px)');
   panel.innerHTML=`<header class="restaurant-head"><h1 id="restaurant-title">Ресторан</h1><input type="month" id="restaurant-month" aria-label="Месяц продаж"></header>
     <div class="restaurant-switch"><select id="restaurant-select" aria-label="Ресторан" hidden></select><button id="restaurant-add" hidden>+ Добавить ресторан</button><button id="restaurant-logout" hidden>Выйти</button></div>
-    <section id="restaurant-login" hidden><p>Войди через Telegram, чтобы открыть кабинет ресторана.</p><div id="restaurant-login-button"></div></section>
+    <section id="restaurant-login" hidden><p>Войди через Telegram, чтобы открыть кабинет ресторана.</p><div id="restaurant-login-box"></div></section>
     <p id="restaurant-error" role="alert"></p><p id="restaurant-notice" role="status"></p>
     <button id="restaurant-retry" class="btn btn-ghost" hidden>Попробовать ещё раз</button>
     <form id="restaurant-create" hidden><label>Название ресторана<input id="restaurant-name" maxlength="80" minlength="2" required autocomplete="organization"></label><button class="btn">Создать ресторан</button><button type="button" id="restaurant-create-cancel">Отмена</button></form>
@@ -85,19 +85,46 @@
   function showLogin(){
     $('restaurant-title').textContent='Ресторан';$('restaurant-content').hidden=true;$('restaurant-create').hidden=true;
     $('restaurant-select').hidden=true;$('restaurant-add').hidden=true;$('restaurant-logout').hidden=true;$('restaurant-login').hidden=false;$('restaurant-month').hidden=true;
-    const bot=document.body.dataset.bot;
-    if(!bot){$('restaurant-error').textContent='Вход на сайт пока не настроен.';return;}
-    if($('restaurant-login-button').childElementCount)return;
-    const widget=document.createElement('script');widget.async=true;widget.src='https://telegram.org/js/telegram-widget.js?22';
-    widget.dataset.telegramLogin=bot;widget.dataset.size='large';widget.dataset.onauth='onTelegramAuth(user)';
-    $('restaurant-login-button').appendChild(widget);
+    if(!loginWait)startLogin();
   }
-  window.onTelegramAuth=async user=>{
-    $('restaurant-error').textContent='';
-    try{const r=await fetch('/api/site/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(user),signal:AbortSignal.timeout(20000)});
-      if(!r.ok)throw new Error();load();
-    }catch(_){$('restaurant-error').textContent='Не получилось войти. Попробуй ещё раз.';}
-  };
+  // Вход через бота: ссылка открывает Telegram на компьютере, QR-код — на телефоне; сайт ждёт подтверждения.
+  let loginWait=null;
+  const post=(path,body)=>fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(20000)});
+  function loginAgain(text){
+    clearTimeout(loginWait);loginWait=null;
+    $('restaurant-login-box').innerHTML=`<p>${esc(text)}</p><button type="button" class="btn btn-ghost" id="restaurant-login-again">Получить новый код</button>`;
+    $('restaurant-login-again').onclick=startLogin;
+  }
+  async function startLogin(){
+    clearTimeout(loginWait);loginWait=-1;$('restaurant-error').textContent='';
+    let data;
+    try{const r=await post('/api/site/login/start',{});data=await r.json();if(!r.ok)throw new Error(data.error||'');}
+    catch(e){loginWait=null;$('restaurant-error').textContent=e.message||'Вход сейчас недоступен. Попробуй через минуту.';
+      $('restaurant-login-box').innerHTML='<button type="button" class="btn btn-ghost" id="restaurant-login-again">Получить новый код</button>';
+      $('restaurant-login-again').onclick=startLogin;return;}
+    $('restaurant-login-box').innerHTML=`<div class="restaurant-login-row"><div><a class="btn" href="${esc(data.link)}" target="_blank" rel="noopener">Войти через Telegram</a>
+      <p class="restaurant-login-code">Откроется Telegram. Проверь, что код в боте совпадает: <b>${esc(data.code)}</b></p></div>
+      <div class="restaurant-login-qr"><div id="restaurant-qr" aria-hidden="true"></div><p>Или наведи камеру телефона</p></div></div>`;
+    drawQr(data.link);
+    const until=Date.now()+data.expires_in*1000;
+    const tick=async()=>{
+      if(Date.now()>until)return loginAgain('Время вышло.');
+      try{const state=(await (await post('/api/site/login/poll',{poll:data.poll})).json()).state;
+        if(state==='approved'){loginWait=null;load();return;}
+        if(state==='rejected')return loginAgain('Вход отменён в Telegram.');
+        if(state==='expired')return loginAgain('Время вышло.');
+      }catch(_){}
+      loginWait=setTimeout(tick,2000);
+    };
+    loginWait=setTimeout(tick,2000);
+  }
+  function drawQr(link){
+    const draw=()=>{try{$('restaurant-qr').innerHTML='';new window.QRCode($('restaurant-qr'),{text:link,width:148,height:148,colorDark:'#172126',colorLight:'#ffffff'});}catch(_){}};
+    if(window.QRCode)return draw();
+    const script=document.createElement('script');
+    script.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';script.onload=draw;
+    document.head.appendChild(script);
+  }
   $('restaurant-logout').onclick=async()=>{
     try{await fetch('/api/site/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',signal:AbortSignal.timeout(20000)});}catch(_){}
     location.reload();

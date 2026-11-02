@@ -1,5 +1,5 @@
 """Signed HTTP requests against a test-only database boundary."""
-import asyncio,hashlib,hmac,os,sys,time
+import asyncio,os,sys
 from unittest.mock import patch,AsyncMock
 sys.path.insert(0,os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sales_http_checks import Store,signed,TOKEN
@@ -45,19 +45,20 @@ async def main():
                 for path in ('/app/restaurant','/restaurant'):
                     page=await client.get(path);text=await page.text()
                     assert page.status==200 and '/app/restaurant.js' in text and 'gradient-canvas' not in text and 'background.js' not in text
-                    assert 'data-bot="testbot"' in text
                     assert (page.headers.get('Content-Security-Policy')=="frame-ancestors 'none'")==(path=='/restaurant')
                     assert page.headers.get('Cache-Control')=='no-store, no-cache, must-revalidate'
                 assert '/app/restaurant' in open(os.path.join(webapp_api.WEBAPP_DIR,'restaurant.js'),encoding='utf-8').read()
-                # Сайт: вход кнопкой Telegram даёт сессию только для кабинета ресторана.
-                def widget(uid,age=0):
-                    data={'id':uid,'first_name':'Тест','auth_date':int(time.time())-age}
-                    check='\n'.join(f'{k}={data[k]}' for k in sorted(data))
-                    data['hash']=hmac.new(hashlib.sha256(TOKEN.encode()).digest(),check.encode(),hashlib.sha256).hexdigest();return data
-                for bad in ({**widget(1),'first_name':'Чужой'},widget(1,age=2*86400),{**widget(1),'extra':'x'},[1],None):
-                    response=await client.post('/api/site/login',json=bad)
-                    assert response.status==401 and 'Set-Cookie' not in response.headers,bad
-                response=await client.post('/api/site/login',json=widget(1));assert response.status==200
+                # Сайт: вход через бота даёт сессию только для кабинета ресторана.
+                import site_auth
+                started=await (await client.post('/api/site/login/start',json={})).json()
+                assert started['link'].startswith('https://t.me/testbot?start=site_') and len(started['code'])==4
+                token=started['link'].split('start=site_')[1]
+                for poll in (started['poll'],token,'',None):
+                    response=await client.post('/api/site/login/poll',json={'poll':poll})
+                    assert (await response.json())['state'] in ('pending','expired') and 'Set-Cookie' not in response.headers,poll
+                assert site_auth.claim(token,1)==started['code'] and site_auth.decide(token,1,True)
+                response=await client.post('/api/site/login/poll',json={'poll':started['poll']})
+                assert (await response.json())['state']=='approved'
                 client.session.cookie_jar.clear()
                 cookie=response.headers['Set-Cookie']
                 assert all(flag in cookie for flag in ('HttpOnly','Secure','SameSite=Lax','Max-Age=604800','Path=/')),cookie

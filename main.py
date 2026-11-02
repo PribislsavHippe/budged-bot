@@ -46,6 +46,9 @@ def build_dispatcher() -> Dispatcher:
     import roster_chat
     # Прототип только для владельца: команда не должна попасть в чужие сценарии.
     dp.include_router(roster_chat.router)
+    import site_login_chat
+    # Ссылка входа на сайт ресторана: /start site_… не должен уйти в общий /start.
+    dp.include_router(site_login_chat.router)
     dp.include_router(category_chat.router)
     dp.include_router(ux_chat.router)
     import report_auto
