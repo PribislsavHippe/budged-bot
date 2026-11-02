@@ -21,8 +21,10 @@ def fortnight(off=None, **kwargs):
     return request
 
 
-def solved(request):
-    return roster.as_schedule(request, roster.build(request))
+def solved(request, full=False):
+    # Полный поиск нужен только проверкам качества; правилам хватает короткого, так CI укладывается во время.
+    table = roster.build(request) if full else roster.build(request, iterations=60000, restarts=1)
+    return roster.as_schedule(request, table)
 
 
 class SlotTests(unittest.TestCase):
@@ -50,7 +52,7 @@ class SlotTests(unittest.TestCase):
 class BuildTests(unittest.TestCase):
     def test_all_rules_hold_and_money_days_are_even(self):
         request = fortnight({NAMES[0]: [0, 1], NAMES[1]: [2, 3, 4], NAMES[2]: [5, 6], NAMES[3]: [9]})
-        schedule = solved(request)
+        schedule = solved(request, full=True)
         found = roster.audit(request, schedule)
         for problems in (found.shortages, found.closers, found.openers, found.rises, found.forced):
             self.assertEqual(problems, [])
