@@ -73,21 +73,130 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(sum(h >= 11 for h in working), 3)
         self.assertIn(day, [d for d in request.days if request.is_money(d)])
 
-    def test_shortage_is_reported_and_keeps_openers_and_closers(self):
-        everyone_else = {name: [0] for name in NAMES[4:]}
-        request = fortnight(everyone_else)
+    def test_count_is_filled_from_days_off_with_the_fewest_people_named(self):
+        request = fortnight({name: [0] for name in NAMES[4:]})
+        schedule = solved(request)
+        found = roster.audit(request, schedule)
+        self.assertEqual(found.shortages, [])
+        self.assertEqual(sorted(p[START] for p in schedule.values() if START in p), [9, 10, 11, 12, 14])
+        self.assertEqual(len(found.forced), 1)
+        self.assertIn(found.forced[0][0], NAMES[4:])
+        self.assertIn('вместо обязательного выходного: свободных только 4, нужно 5', roster.report(request, schedule, found))
+        self.assertIn(START, found.no_reserve)
+
+    def test_day_off_is_not_touched_while_free_people_are_enough(self):
+        request = fortnight({name: [0] for name in NAMES[5:]})
+        found = roster.audit(request, solved(request))
+        self.assertEqual((found.shortages, found.forced), ([], []))
+
+    def test_students_are_called_after_everyone_else(self):
+        request = fortnight({name: [0] for name in NAMES[4:]})
+        request.students = set(NAMES[4:-1])
+        found = roster.audit(request, solved(request))
+        self.assertEqual([name for name, _ in found.forced], [NAMES[-1]])
+
+    def test_students_are_called_when_nobody_else_is_left(self):
+        request = fortnight({name: [0] for name in NAMES[4:]})
+        request.students = set(NAMES[4:])
+        schedule = solved(request)
+        found = roster.audit(request, schedule)
+        self.assertEqual((len(found.forced), found.shortages), (1, []))
+        self.assertIn('(учёба): выход', roster.report(request, schedule, found))
+
+    def test_recalls_are_spread_across_people(self):
+        request = fortnight({name: [0, 7] for name in NAMES[4:]})
+        found = roster.audit(request, solved(request))
+        self.assertEqual(len(found.forced), 2)
+        self.assertNotEqual(found.forced[0][0], found.forced[1][0])
+
+    def test_person_on_vacation_is_never_called(self):
+        request = fortnight({NAMES[0]: list(range(14)), **{name: [0] for name in NAMES[4:]}})
+        found = roster.audit(request, solved(request))
+        self.assertEqual(found.people[NAMES[0]]['shifts'], 0)
+        self.assertEqual(found.shortages, [])
+
+    def test_shortage_remains_only_when_there_are_too_few_people(self):
+        names = NAMES[:4]
+        request = roster.Request(START, START + timedelta(days=13), names, {names[0]: {START}})
         schedule = solved(request)
         working = sorted(p[START] for p in schedule.values() if START in p)
         self.assertEqual(working, [9, 11, 12, 14])
         found = roster.audit(request, schedule)
         self.assertEqual(found.shortages[0][:3], (START, 4, 5))
-        self.assertEqual(found.shortages[0][3], NAMES[4:])
+        self.assertEqual(found.shortages[0][3], [])
         self.assertIn('не хватает людей, 4 из 5', roster.report(request, schedule, found))
-        self.assertIn(START, found.no_reserve)
 
     def test_nobody_available_does_not_crash(self):
         request = roster.Request(START, START, ['А'], {'А': {START}})
         self.assertEqual(roster.as_schedule(request, roster.build(request)), {'А': {}})
+
+
+class WishTests(unittest.TestCase):
+    OFF = {NAMES[i]: [i, (i + 5) % 14, (i + 9) % 14] for i in range(11)}
+
+    def test_wishes_are_met_when_possible_and_rules_still_hold(self):
+        request = fortnight(self.OFF)
+        request.wish_starts = {NAMES[0]: set(roster.MORNING_STARTS), NAMES[1]: {11, 12}}
+        request.wish_off = {NAMES[2]: {START + timedelta(days=12)}}
+        found = roster.audit(request, solved(request))
+        self.assertEqual((found.rises, found.shortages, found.closers, found.openers), ([], [], [], []))
+        self.assertEqual(found.missed_off, [])
+        self.assertEqual(found.missed_starts, [])
+        self.assertIn('Пожелания: выполнено', roster.report(request, solved(request)))
+
+    def test_wishes_never_beat_rules_or_mandatory_days_off(self):
+        request = fortnight(self.OFF)
+        request.wish_starts = {name: set(roster.MORNING_STARTS) for name in NAMES}
+        schedule = solved(request)
+        found = roster.audit(request, schedule)
+        self.assertEqual((found.closers, found.openers, found.forced, found.shortages), ([], [], [], []))
+        refusals = {}
+        for name, _, _ in found.missed_starts:
+            refusals[name] = refusals.get(name, 0) + 1
+        self.assertEqual(len(refusals), len(NAMES))
+        self.assertLessEqual(max(refusals.values()) - min(refusals.values()), 1)
+
+    def test_impossible_day_off_wish_is_explained(self):
+        saturday = START + timedelta(days=5)
+        request = fortnight(wish_off={name: {saturday} for name in NAMES})
+        schedule = solved(request)
+        found = roster.audit(request, schedule)
+        self.assertEqual(len(found.missed_off), roster.WEEKEND_COUNT)
+        self.assertIn('выходной просят 11, отпустить можно только 5', roster.report(request, schedule, found))
+
+    def test_more_than_three_mandatory_days_off_is_flagged(self):
+        request = fortnight({NAMES[0]: [0, 1, 2, 3]})
+        found = roster.audit(request, solved(request))
+        self.assertEqual(found.too_many_off, [(NAMES[0], 4)])
+
+    def test_limit_is_three_per_fifteen_days_and_students_may_have_more(self):
+        day = lambda n: START + timedelta(days=n)
+        self.assertEqual(roster.Request(START, day(14), []).mandatory_limit, 3)
+        self.assertEqual(roster.Request(START, day(29), []).mandatory_limit, 6)
+        self.assertEqual(roster.Request(START, day(30), []).mandatory_limit, 6)
+        request = fortnight({NAMES[0]: [0, 1, 2, 3, 4, 5], NAMES[1]: [0, 1, 2, 3]})
+        request.students = {NAMES[0]}
+        schedule = solved(request)
+        found = roster.audit(request, schedule)
+        self.assertEqual(found.too_many_off, [(NAMES[1], 4)])
+        self.assertIn('«; учёба»', roster.report(request, schedule, found))
+
+    def test_person_away_for_whole_period_does_not_distort_the_report(self):
+        request = fortnight({NAMES[0]: list(range(14))})
+        text = roster.report(request, solved(request))
+        self.assertNotIn('Смены: от 0', text)
+
+    def test_when_short_closing_is_kept_and_one_person_still_opens(self):
+        friday = START + timedelta(days=4)
+        self.assertEqual(sorted(roster.day_slots(friday, 6)[:4]), [9, 11, 12, 12])
+        self.assertEqual(roster.day_slots(friday, 1), [9])
+
+    def test_saturday_opener_after_friday_is_reported_as_unavoidable_rise(self):
+        # Все, кто свободен, работают и в пятницу с 9+, и в субботу: двое должны открыть в 8.
+        names = NAMES[:6]
+        request = roster.Request(START + timedelta(days=4), START + timedelta(days=5), names)
+        found = roster.audit(request, solved(request))
+        self.assertEqual(len(found.rises), 2)
 
 
 class AuditTests(unittest.TestCase):
@@ -101,7 +210,14 @@ class AuditTests(unittest.TestCase):
         self.assertEqual(found.streaks, [('А', day(0), 5)])
         text = roster.report(request, schedule, found)
         self.assertIn('приход в 9, а накануне в 11', text)
-        self.assertIn('в обязательный выходной', text)
+        self.assertIn('вместо обязательного выходного: свободных только 1, нужно 5', text)
+
+    def test_shift_on_a_day_off_without_need_is_a_plain_violation(self):
+        names = NAMES[:7]
+        request = roster.Request(START, START, names, {names[0]: {START}})
+        schedule = {name: {START: 9} for name in names}
+        text = roster.report(request, schedule)
+        self.assertIn(f'{names[0]}: смена 2 ноября в обязательный выходной.', text)
 
 
 class ParseTests(unittest.TestCase):
@@ -116,6 +232,23 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(request.counts, {date(2026, 11, 21): 7, date(2026, 11, 17): 6})
         self.assertEqual(request.holidays, {date(2026, 11, 21)})
 
+    def test_wishes_in_input(self):
+        request = roster.parse_request('16.11 30.11\nАня: 18 19 20; хочу 25, 26; утро\nМиша: ; приход 11, 12\nОля: 21; вечер\nНужно: 22', self.TODAY)
+        self.assertEqual(request.days_off['Аня'], {date(2026, 11, d) for d in (18, 19, 20)})
+        self.assertEqual(request.wish_off['Аня'], {date(2026, 11, 25), date(2026, 11, 26)})
+        self.assertEqual(request.wish_starts['Аня'], {8, 9, 10})
+        self.assertEqual(request.days_off['Миша'], set())
+        self.assertEqual(request.wish_starts['Миша'], {11, 12})
+        self.assertEqual(request.wish_starts['Оля'], {11, 12, 14})
+        self.assertIn('Нужно', request.people)
+        self.assertNotIn('Оля', request.wish_off)
+
+    def test_student_mark_in_input(self):
+        request = roster.parse_request('16.11 30.11\nАня: 18-23; учёба\nМиша: 20; студент; утро\nОля: 21', self.TODAY)
+        self.assertEqual(request.students, {'Аня', 'Миша'})
+        self.assertEqual(len(request.days_off['Аня']), 6)
+        self.assertEqual(request.wish_starts, {'Миша': {8, 9, 10}})
+
     def test_period_across_new_year(self):
         request = roster.parse_request('28.12 5.01\nАня: 2', date(2026, 12, 20))
         self.assertEqual(request.end, date(2027, 1, 5))
@@ -126,7 +259,8 @@ class ParseTests(unittest.TestCase):
                            ('32.11 30.11\nА', 'Такой даты нет'), ('16.11 30.11\nА: 5', 'нет в выбранном'),
                            ('16.11 30.11\nА\nа', 'дважды'), ('16.11 30.11\nА: 22-20', 'наоборот'),
                            ('1.01 1.06\nА', 'слишком длинный'), ('16.11 30.11\nА\nнужно 20.11', 'нужно 21.11 7'),
-                           ('1.11 15.12\nА: 5', 'дважды')):
+                           ('1.11 15.12\nА: 5', 'дважды'), ('16.11 30.11\nА: ; ночь', 'Не понял пожелание'),
+                           ('16.11 30.11\nА: ; приход', 'Не понял часы'), ('16.11 30.11\nА: ; приход 3', 'Не понял часы')):
             with self.assertRaises(roster.RosterInputError) as caught:
                 roster.parse_request(text, self.TODAY)
             self.assertIn(part, str(caught.exception), text)
@@ -139,6 +273,13 @@ class OutputTests(unittest.TestCase):
         self.assertNotIn('<b>Я</b>', page)
         self.assertIn('&lt;b&gt;Я&lt;/b&gt;', page)
         self.assertIn('class="off"', page)
+
+    def test_html_marks_met_and_missed_wishes(self):
+        request = roster.Request(START, START + timedelta(days=1), ['А'], wish_off={'А': {START}})
+        schedule = {'А': {START + timedelta(days=1): 9}}
+        self.assertIn('class="wish"', roster.render_html(request, schedule))
+        schedule = {'А': {START: 9}}
+        self.assertIn('class="miss"', roster.render_html(request, schedule))
 
 
 class ChatTests(unittest.IsolatedAsyncioTestCase):
