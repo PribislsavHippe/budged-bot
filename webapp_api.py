@@ -281,6 +281,10 @@ async def _auth(request: web.Request):
     if not isinstance(body, dict):
         return None, web.json_response({"error": "Не получилось прочитать запрос. Открой приложение ещё раз."}, status=400, headers=NO_CACHE)
     user_id = validate_init_data(body.get("initData", ""), request.app["bot_token"])
+    if user_id is None and request.path.startswith("/api/restaurant/"):
+        # Сайт ресторана в браузере: сессия после входа кнопкой Telegram, только для кабинета.
+        from site_auth import session_user
+        user_id = session_user(request)
     if user_id is None:
         return None, web.json_response({"error": "Открой приложение заново через бота."}, status=401, headers=NO_CACHE)
     request["verified_uid"] = user_id
@@ -818,8 +822,9 @@ def register_webapp_routes(app: web.Application, bot_token: str, bot_username: s
     from restaurant_api import register
     register(app)
     app.router.add_get("/app", serve_app)
-    # Дополнительная страница ресторана для компьютера; вкладка в мини-приложении остаётся.
-    app.router.add_get("/app/restaurant", lambda _: web.FileResponse(os.path.join(WEBAPP_DIR, "restaurant.html"), headers=NO_CACHE))
+    # Страница ресторана: сайт /restaurant и та же страница из мини-приложения; вкладка остаётся.
+    from site_auth import register as register_site
+    register_site(app)
     app.router.add_get("/app/private-finance.js", lambda _: web.FileResponse(os.path.join(WEBAPP_DIR, "private-finance.js"), headers=NO_CACHE))
     app.router.add_get("/app/sales.js", lambda _: web.FileResponse(os.path.join(WEBAPP_DIR, "sales.js"), headers=NO_CACHE))
     app.router.add_get("/app/sales.css", lambda _: web.FileResponse(os.path.join(WEBAPP_DIR, "sales.css"), headers=NO_CACHE))

@@ -13,9 +13,12 @@
   }
   // Та же вкладка живёт в мини-приложении и на отдельной странице для компьютера.
   const standalone=document.body.classList.contains('restaurant-page');
+  // Без подписи мини-приложения это сайт в браузере: вход кнопкой Telegram, сессия в cookie.
+  const site=standalone&&!tg?.initData;
   const wide=matchMedia('(min-width: 900px)');
   panel.innerHTML=`<header class="restaurant-head"><h1 id="restaurant-title">Ресторан</h1><input type="month" id="restaurant-month" aria-label="Месяц продаж"></header>
-    <div class="restaurant-switch"><select id="restaurant-select" aria-label="Ресторан" hidden></select><button id="restaurant-add" hidden>+ Добавить ресторан</button></div>
+    <div class="restaurant-switch"><select id="restaurant-select" aria-label="Ресторан" hidden></select><button id="restaurant-add" hidden>+ Добавить ресторан</button><button id="restaurant-logout" hidden>Выйти</button></div>
+    <section id="restaurant-login" hidden><p>Войди через Telegram, чтобы открыть кабинет ресторана.</p><div id="restaurant-login-button"></div></section>
     <p id="restaurant-error" role="alert"></p><p id="restaurant-notice" role="status"></p>
     <button id="restaurant-retry" class="btn btn-ghost" hidden>Попробовать ещё раз</button>
     <form id="restaurant-create" hidden><label>Название ресторана<input id="restaurant-name" maxlength="80" minlength="2" required autocomplete="organization"></label><button class="btn">Создать ресторан</button><button type="button" id="restaurant-create-cancel">Отмена</button></form>
@@ -62,7 +65,8 @@
   }
   async function load(){
     if(busy)return;busy=true;lock();$('restaurant-error').textContent='';$('restaurant-retry').hidden=true;$('restaurant-rows').hidden=true;
-    try{const access=await api('access');if(!access.available)throw new Error('Кабинет доступен администратору ресторана.');
+    try{const access=await api('access');$('restaurant-login').hidden=true;$('restaurant-month').hidden=false;$('restaurant-logout').hidden=!site;
+      if(!access.available)throw new Error('Кабинет доступен администратору ресторана.');
       restaurants=access.restaurants||[];canCreate=!!access.can_create;
       if(canCreate)window.showResearchTab?.();
       if(!restaurants.some(r=>r.id===selectedId))selectedId=restaurants[0]?.id||null;
@@ -74,9 +78,30 @@
       if(!restaurant){$('restaurant-create').hidden=!canCreate;$('restaurant-create-cancel').hidden=true;$('restaurant-content').hidden=true;return;}
       $('restaurant-create-cancel').hidden=false;
       render(await api('view',{month,page,status}));
-    }catch(e){if(!e.status)window.uxEvent?.('cabinet_load_error','restaurant',e.name==='TimeoutError'?'timeout':'network');$('restaurant-error').textContent=e.name==='TimeoutError'?'Ответ задерживается. Попробуй ещё раз.':e.message;$('restaurant-retry').hidden=false;}
+    }catch(e){if(site&&e.status===401){showLogin();return;}
+      if(!e.status)window.uxEvent?.('cabinet_load_error','restaurant',e.name==='TimeoutError'?'timeout':'network');$('restaurant-error').textContent=e.name==='TimeoutError'?'Ответ задерживается. Попробуй ещё раз.':e.message;$('restaurant-retry').hidden=false;}
     finally{busy=false;lock();}
   }
+  function showLogin(){
+    $('restaurant-title').textContent='Ресторан';$('restaurant-content').hidden=true;$('restaurant-create').hidden=true;
+    $('restaurant-select').hidden=true;$('restaurant-add').hidden=true;$('restaurant-logout').hidden=true;$('restaurant-login').hidden=false;$('restaurant-month').hidden=true;
+    const bot=document.body.dataset.bot;
+    if(!bot){$('restaurant-error').textContent='Вход на сайт пока не настроен.';return;}
+    if($('restaurant-login-button').childElementCount)return;
+    const widget=document.createElement('script');widget.async=true;widget.src='https://telegram.org/js/telegram-widget.js?22';
+    widget.dataset.telegramLogin=bot;widget.dataset.size='large';widget.dataset.onauth='onTelegramAuth(user)';
+    $('restaurant-login-button').appendChild(widget);
+  }
+  window.onTelegramAuth=async user=>{
+    $('restaurant-error').textContent='';
+    try{const r=await fetch('/api/site/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(user),signal:AbortSignal.timeout(20000)});
+      if(!r.ok)throw new Error();load();
+    }catch(_){$('restaurant-error').textContent='Не получилось войти. Попробуй ещё раз.';}
+  };
+  $('restaurant-logout').onclick=async()=>{
+    try{await fetch('/api/site/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',signal:AbortSignal.timeout(20000)});}catch(_){}
+    location.reload();
+  };
   async function change(action,body){
     if(busy)return;
     if(action==='revoke'&&!confirm('Отозвать доступ сотрудника к ресторану? Его личные записи останутся.'))return;
@@ -89,7 +114,8 @@
         if(action==='transfer'){selectedId=data.restaurant.id;page=0;status='approved';}
         $('restaurant-notice').textContent=action==='transfer'?'Сотрудник перенесён в «'+data.restaurant.name+'».':action==='approve'?'Сотрудник подтверждён.':action==='create'?'Кабинет готов.':'Готово.';
       }
-    }catch(e){failure=e.name==='TimeoutError'?'Ответ задерживается. Обнови список, прежде чем повторять действие.':e.message;$('restaurant-error').textContent=failure;$('restaurant-retry').hidden=false;}
+    }catch(e){if(site&&e.status===401){busy=false;lock();showLogin();return;}
+      failure=e.name==='TimeoutError'?'Ответ задерживается. Обнови список, прежде чем повторять действие.':e.message;$('restaurant-error').textContent=failure;$('restaurant-retry').hidden=false;}
     finally{busy=false;lock();}
     if(action!=='invite'&&!failure)await load();
     if(failure){$('restaurant-error').textContent=failure;$('restaurant-retry').hidden=false;}
@@ -115,6 +141,7 @@
   $('restaurant-copy').onclick=async()=>{try{await navigator.clipboard.writeText($('restaurant-url').value);$('restaurant-notice').textContent='Ссылка скопирована.';}catch(_){$('restaurant-url').select();$('restaurant-notice').textContent='Выделил ссылку — её можно скопировать.';}};
   $('restaurant-create').onsubmit=e=>{e.preventDefault();change('create',{name:$('restaurant-name').value});};
   if(standalone){
+    if(site){load();return;}
     const BACKGROUND='#f3f2ee';
     try{tg?.ready();tg?.expand();if(tg?.isVersionAtLeast?.('6.1')){tg.setHeaderColor(BACKGROUND);tg.setBackgroundColor(BACKGROUND);}}catch(_){}
     if(tg?.BackButton&&tg.isVersionAtLeast?.('6.1')){tg.BackButton.show();tg.BackButton.onClick(()=>{location.href='/app'+location.hash;});}

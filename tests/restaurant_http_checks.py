@@ -1,5 +1,5 @@
 """Signed HTTP requests against a test-only database boundary."""
-import asyncio,os,sys
+import asyncio,hashlib,hmac,os,sys,time
 from unittest.mock import patch,AsyncMock
 sys.path.insert(0,os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sales_http_checks import Store,signed,TOKEN
@@ -42,10 +42,37 @@ async def main():
                     with patch.object(identity,'action',new=AsyncMock()) as mutation:
                         await post('approve',uid,status=403,id=ids[0]);mutation.assert_not_awaited()
                 response=await client.post('/api/restaurant/view',json={'initData':'forged'});assert response.status==401
-                page=await client.get('/app/restaurant');text=await page.text()
-                assert page.status==200 and '/app/restaurant.js' in text and 'gradient-canvas' not in text and 'background.js' not in text
-                assert page.headers.get('Cache-Control')=='no-store, no-cache, must-revalidate'
+                for path in ('/app/restaurant','/restaurant'):
+                    page=await client.get(path);text=await page.text()
+                    assert page.status==200 and '/app/restaurant.js' in text and 'gradient-canvas' not in text and 'background.js' not in text
+                    assert 'data-bot="testbot"' in text
+                    assert (page.headers.get('Content-Security-Policy')=="frame-ancestors 'none'")==(path=='/restaurant')
+                    assert page.headers.get('Cache-Control')=='no-store, no-cache, must-revalidate'
                 assert '/app/restaurant' in open(os.path.join(webapp_api.WEBAPP_DIR,'restaurant.js'),encoding='utf-8').read()
+                # Сайт: вход кнопкой Telegram даёт сессию только для кабинета ресторана.
+                def widget(uid,age=0):
+                    data={'id':uid,'first_name':'Тест','auth_date':int(time.time())-age}
+                    check='\n'.join(f'{k}={data[k]}' for k in sorted(data))
+                    data['hash']=hmac.new(hashlib.sha256(TOKEN.encode()).digest(),check.encode(),hashlib.sha256).hexdigest();return data
+                for bad in ({**widget(1),'first_name':'Чужой'},widget(1,age=2*86400),{**widget(1),'extra':'x'},[1],None):
+                    response=await client.post('/api/site/login',json=bad)
+                    assert response.status==401 and 'Set-Cookie' not in response.headers,bad
+                response=await client.post('/api/site/login',json=widget(1));assert response.status==200
+                client.session.cookie_jar.clear()
+                cookie=response.headers['Set-Cookie']
+                assert all(flag in cookie for flag in ('HttpOnly','Secure','SameSite=Lax','Max-Age=604800','Path=/')),cookie
+                session={'Cookie':cookie.split(';')[0]}
+                response=await client.post('/api/restaurant/access',json={},headers=session)
+                assert response.status==200 and (await response.json())['available']
+                response=await client.post('/api/restaurant/view',json={'month':'2026-09'},headers=session)
+                assert response.status==200 and len((await response.json())['rows'])==1
+                for headers,data in (({'Cookie':'restaurant_session=1.9999999999.forged'},None),({**session,'Content-Type':'text/plain'},'{}')):
+                    response=await client.post('/api/restaurant/access',json=None if data else {},data=data,headers=headers)
+                    assert response.status==401,headers
+                for private in ('/api/stats','/api/entries','/api/month'):
+                    response=await client.post(private,json={},headers=session);assert response.status==401,private
+                response=await client.post('/api/site/logout',json={})
+                assert response.status==200 and 'restaurant_session=""' in response.headers['Set-Cookie']
                 data=await post('view');assert len(data['rows'])==1
                 assert data['rows'][0]['sales']['metrics']['wine']['total']==100
                 assert data['rows'][0]['sales']['metrics']['wine']['target']==1000

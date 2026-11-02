@@ -269,6 +269,7 @@ class Req(dict):
     def __init__(self, body):
         self.app = {"bot_token": TOKEN, "bot_username": "b"}
         self._body = body
+        self.path = "/api/test"
 
     async def json(self):
         if self._body is _BAD_JSON:
