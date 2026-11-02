@@ -42,6 +42,10 @@ async def main():
                     with patch.object(identity,'action',new=AsyncMock()) as mutation:
                         await post('approve',uid,status=403,id=ids[0]);mutation.assert_not_awaited()
                 response=await client.post('/api/restaurant/view',json={'initData':'forged'});assert response.status==401
+                page=await client.get('/app/restaurant');text=await page.text()
+                assert page.status==200 and '/app/restaurant.js' in text and 'gradient-canvas' not in text and 'background.js' not in text
+                assert page.headers.get('Cache-Control')=='no-store, no-cache, must-revalidate'
+                assert '/app/restaurant' in open(os.path.join(webapp_api.WEBAPP_DIR,'restaurant.js'),encoding='utf-8').read()
                 data=await post('view');assert len(data['rows'])==1
                 assert data['rows'][0]['sales']['metrics']['wine']['total']==100
                 assert data['rows'][0]['sales']['metrics']['wine']['target']==1000

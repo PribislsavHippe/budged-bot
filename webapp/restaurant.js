@@ -6,6 +6,14 @@
   const date=s=>s?new Date(s+'T12:00:00').toLocaleDateString('ru-RU',{day:'numeric',month:'short'}):'Нет отчёта';
   const names={wine:'Вино',cocktails:'Коктейли',desserts:'Десерты',turnover:'Оборот',postcards:'Открытки',dvd:'DVD'};
   let restaurant=null,selectedId=null,restaurants=[],canCreate=false, status='approved',page=0,busy=false,month=new Date().toLocaleDateString('sv-SE',{timeZone:'Europe/Moscow'}).slice(0,7);
+  let lastData=null,picked=null;
+  async function api(action,body={}){
+    const r=await fetch('/api/restaurant/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({restaurant_id:selectedId,...body,initData:tg?.initData||''}),signal:AbortSignal.timeout(20000)});
+    let data;try{data=await r.json();}catch(_){const e=new Error('Сервер не ответил. Попробуй ещё раз.');e.status=r.status;throw e;}if(!r.ok){const e=new Error(r.status===401?'Открой бота и зайди в приложение ещё раз.':data.error||'Кабинет пока недоступен.');e.status=r.status;throw e;}return data;
+  }
+  // Та же вкладка живёт в мини-приложении и на отдельной странице для компьютера.
+  const standalone=document.body.classList.contains('restaurant-page');
+  const wide=matchMedia('(min-width: 900px)');
   panel.innerHTML=`<header class="restaurant-head"><h1 id="restaurant-title">Ресторан</h1><input type="month" id="restaurant-month" aria-label="Месяц продаж"></header>
     <div class="restaurant-switch"><select id="restaurant-select" aria-label="Ресторан" hidden></select><button id="restaurant-add" hidden>+ Добавить ресторан</button></div>
     <p id="restaurant-error" role="alert"></p><p id="restaurant-notice" role="status"></p>
@@ -18,27 +26,37 @@
     <div id="restaurant-rows"></div><div class="restaurant-pages"><button id="restaurant-prev">← Назад</button><span id="restaurant-page"></span><button id="restaurant-next">Далее →</button></div>
     <details class="restaurant-invite"><summary>Пригласить сотрудника</summary><button id="restaurant-invite" class="btn btn-ghost">Создать ссылку</button><div id="restaurant-link" hidden><label>Приглашение на 7 дней<input readonly id="restaurant-url"></label><button id="restaurant-copy">Скопировать</button></div></details></div>`;
   $('restaurant-month').value=month;
-  async function api(action,body={}){
-    const r=await fetch('/api/restaurant/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({restaurant_id:selectedId,...body,initData:tg?.initData||''}),signal:AbortSignal.timeout(20000)});
-    let data;try{data=await r.json();}catch(_){const e=new Error('Сервер не ответил. Попробуй ещё раз.');e.status=r.status;throw e;}if(!r.ok){const e=new Error(r.status===401?'Открой бота и зайди в приложение ещё раз.':data.error||'Кабинет пока недоступен.');e.status=r.status;throw e;}return data;
-  }
   function lock(){panel.querySelectorAll('button,input,select').forEach(el=>el.disabled=busy);}
+  function member(row){
+    const states={pending:'Ждёт подтверждения',rejected:'Заявка отклонена',revoked:'Доступ закрыт'};
+    const sales=row.sales;const m=sales?.metrics,cutoffs=sales?.report_dates||[];
+    const canTransfer=row.status==='approved'&&restaurants.some(r=>r.id!==selectedId);
+    const controls=row.status==='pending'?`<button data-action="approve" data-id="${esc(row.id)}">Подтвердить</button><button data-action="reject" data-id="${esc(row.id)}">Отклонить</button>`:row.status==='approved'?`<button data-action="revoke" data-id="${esc(row.id)}">Отозвать доступ</button>${canTransfer?'<button data-action="transfer-open">Перенести</button>':''}`:'';
+    const transfer=canTransfer?`<div class="restaurant-transfer" hidden><label>В какой ресторан<select aria-label="Новый ресторан для ${esc(row.report_name)}">${restaurants.filter(r=>r.id!==selectedId).map(r=>`<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('')}</select></label><p>После переноса прежний ресторан перестанет видеть сотрудника. Новый увидит планы и продажи, записанные после переноса; прежние личные записи останутся у сотрудника.</p><div class="restaurant-actions"><button data-action="transfer-confirm" data-id="${esc(row.id)}">Перенести сотрудника</button><button data-action="transfer-cancel">Отмена</button></div></div>`:'';
+    const head=`<span><strong>${esc(row.report_name)}</strong><small>${sales?'Отчёт: '+date(cutoffs[0]):states[row.status]}</small></span>${m?`<span class="restaurant-turnover">${m.turnover.estimated?'≈ ':''}${num(m.turnover.total)}${m.turnover.total==null?'':' ₽'}<small>оборот</small></span>`:''}`;
+    const body=`<p class="restaurant-id">Telegram ID: ${esc(row.user_id)}</p>${m?`<table><thead><tr><th>Показатель</th><th>Сейчас</th><th>План</th></tr></thead><tbody>${Object.entries(names).filter(([k])=>!(sales.category_metrics||[]).some(c=>c.legacy_metric===k)).map(([k,label])=>`<tr><th>${label}, ${['cocktails','postcards','dvd'].includes(k)?'шт.':'₽'}${m[k].cutoff&&m[k].cutoff!==cutoffs[0]?`<small>Отчёт по ${date(m[k].cutoff)}</small>`:''}</th><td>${m[k].estimated?'≈ ':''}${num(m[k].total)}</td><td>${num(m[k].target)}</td></tr>`).join('')}${(sales.category_metrics||[]).map(c=>`<tr><th>${esc(c.name)}, ${c.unit==='count'?'шт.':c.unit==='amount'?'₽':''}${c.cutoff?`<small>Отчёт по ${date(c.cutoff)}</small>`:''}</th><td>${num(c.total)}</td><td>${num(c.target)}</td></tr>`).join('')}</tbody></table>`:''}`;
+    return {head,body,controls,transfer};
+  }
+  // На компьютере список слева, выбранный сотрудник справа; на телефоне прежние раскрывающиеся карточки.
+  function rowsHtml(rows){
+    if(standalone&&wide.matches){
+      if(!rows.some(row=>row.id===picked))picked=rows[0].id;
+      const parts=member(rows.find(row=>row.id===picked));
+      return `<div class="restaurant-desk"><div class="restaurant-list">${rows.map(row=>`<button class="restaurant-pick" data-pick="${esc(row.id)}" aria-pressed="${row.id===picked}">${member(row).head}</button>`).join('')}</div>
+        <article class="restaurant-member restaurant-detail"><div class="restaurant-detail-head">${parts.head}</div>${parts.body}<div class="restaurant-actions">${parts.controls}</div>${parts.transfer}</article></div>`;
+    }
+    return rows.map(row=>{const parts=member(row);
+      return `<article class="restaurant-member"><details><summary>${parts.head}</summary>${parts.body}<div class="restaurant-actions">${row.status==='pending'?'':parts.controls}</div>${parts.transfer}</details>${row.status==='pending'?`<div class="restaurant-actions">${parts.controls}</div>`:''}</article>`;
+    }).join('');
+  }
   function render(data){
+    lastData=data;
     restaurant=data.restaurant;$('restaurant-title').textContent=restaurant.name;
     $('restaurant-create').hidden=true;$('restaurant-content').hidden=false;
     const labels={approved:'Сотрудники',pending:'Заявки',rejected:'Отклонённые',revoked:'Без доступа'};
-    const states={pending:'Ждёт подтверждения',rejected:'Заявка отклонена',revoked:'Доступ закрыт'};
     panel.querySelectorAll('[data-status]').forEach(el=>{el.hidden=['rejected','revoked'].includes(el.dataset.status)&&!data.counts[el.dataset.status]&&status!==el.dataset.status;el.textContent=labels[el.dataset.status]+' '+data.counts[el.dataset.status];el.setAttribute('aria-pressed',String(el.dataset.status===status));});
     $('restaurant-rows').hidden=false;
-    $('restaurant-rows').innerHTML=data.rows.length?data.rows.map(row=>{
-      const sales=row.sales;const m=sales?.metrics,cutoffs=sales?.report_dates||[];
-      const canTransfer=row.status==='approved'&&restaurants.some(r=>r.id!==selectedId);
-      const controls=row.status==='pending'?`<button data-action="approve" data-id="${esc(row.id)}">Подтвердить</button><button data-action="reject" data-id="${esc(row.id)}">Отклонить</button>`:row.status==='approved'?`<button data-action="revoke" data-id="${esc(row.id)}">Отозвать доступ</button>${canTransfer?'<button data-action="transfer-open">Перенести</button>':''}`:'';
-      const transfer=canTransfer?`<div class="restaurant-transfer" hidden><label>В какой ресторан<select aria-label="Новый ресторан для ${esc(row.report_name)}">${restaurants.filter(r=>r.id!==selectedId).map(r=>`<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('')}</select></label><p>После переноса прежний ресторан перестанет видеть сотрудника. Новый увидит планы и продажи, записанные после переноса; прежние личные записи останутся у сотрудника.</p><div class="restaurant-actions"><button data-action="transfer-confirm" data-id="${esc(row.id)}">Перенести сотрудника</button><button data-action="transfer-cancel">Отмена</button></div></div>`:'';
-      return `<article class="restaurant-member"><details><summary><span><strong>${esc(row.report_name)}</strong><small>${sales?'Отчёт: '+date(cutoffs[0]):states[row.status]}</small></span>${m?`<span class="restaurant-turnover">${m.turnover.estimated?'≈ ':''}${num(m.turnover.total)}${m.turnover.total==null?'':' ₽'}<small>оборот</small></span>`:''}</summary>
-        <p class="restaurant-id">Telegram ID: ${esc(row.user_id)}</p>${m?`<table><thead><tr><th>Показатель</th><th>Сейчас</th><th>План</th></tr></thead><tbody>${Object.entries(names).filter(([k])=>!(sales.category_metrics||[]).some(c=>c.legacy_metric===k)).map(([k,label])=>`<tr><th>${label}, ${['cocktails','postcards','dvd'].includes(k)?'шт.':'₽'}${m[k].cutoff&&m[k].cutoff!==cutoffs[0]?`<small>Отчёт по ${date(m[k].cutoff)}</small>`:''}</th><td>${m[k].estimated?'≈ ':''}${num(m[k].total)}</td><td>${num(m[k].target)}</td></tr>`).join('')}${(sales.category_metrics||[]).map(c=>`<tr><th>${esc(c.name)}, ${c.unit==='count'?'шт.':c.unit==='amount'?'₽':''}${c.cutoff?`<small>Отчёт по ${date(c.cutoff)}</small>`:''}</th><td>${num(c.total)}</td><td>${num(c.target)}</td></tr>`).join('')}</tbody></table>`:''}
-        <div class="restaurant-actions">${row.status==='pending'?'':controls}</div>${transfer}</details>${row.status==='pending'?`<div class="restaurant-actions">${controls}</div>`:''}</article>`;
-    }).join(''):`<p class="restaurant-empty">${status==='pending'?'Новых заявок нет.':status==='approved'?'Здесь появятся сотрудники, которых ты подтвердил.':'Список пока пуст.'}</p>`;
+    $('restaurant-rows').innerHTML=data.rows.length?rowsHtml(data.rows):`<p class="restaurant-empty">${status==='pending'?'Новых заявок нет.':status==='approved'?'Здесь появятся сотрудники, которых ты подтвердил.':'Список пока пуст.'}</p>`;
     $('restaurant-prev').hidden=page===0;$('restaurant-next').hidden=!data.more;
     $('restaurant-page').textContent=page||data.more?'Страница '+(page+1):'';
   }
@@ -77,6 +95,7 @@
     if(failure){$('restaurant-error').textContent=failure;$('restaurant-retry').hidden=false;}
   }
   panel.addEventListener('click',e=>{const b=e.target.closest('button');if(!b||busy)return;
+    if(b.dataset.pick){picked=b.dataset.pick;render(lastData);return;}
     if(b.dataset.status){status=b.dataset.status;page=0;load();}
     if(b.dataset.action==='transfer-open'){b.closest('.restaurant-member').querySelector('.restaurant-transfer').hidden=false;return;}
     if(b.dataset.action==='transfer-cancel'){b.closest('.restaurant-transfer').hidden=true;return;}
@@ -86,6 +105,7 @@
     }
     if(b.dataset.action)change(b.dataset.action,{id:b.dataset.id});
   });
+  wide.addEventListener('change',()=>{if(lastData&&!busy)render(lastData);});
   $('restaurant-add').onclick=()=>{$('restaurant-create').hidden=false;$('restaurant-name').focus();};
   $('restaurant-create-cancel').onclick=()=>{$('restaurant-create').hidden=true;};
   $('restaurant-select').onchange=()=>{selectedId=$('restaurant-select').value;page=0;status='approved';$('restaurant-link').hidden=true;$('restaurant-url').value='';$('restaurant-notice').textContent='';load();};
@@ -94,6 +114,15 @@
   $('restaurant-retry').onclick=load;$('restaurant-invite').onclick=()=>change('invite',{});
   $('restaurant-copy').onclick=async()=>{try{await navigator.clipboard.writeText($('restaurant-url').value);$('restaurant-notice').textContent='Ссылка скопирована.';}catch(_){$('restaurant-url').select();$('restaurant-notice').textContent='Выделил ссылку — её можно скопировать.';}};
   $('restaurant-create').onsubmit=e=>{e.preventDefault();change('create',{name:$('restaurant-name').value});};
+  if(standalone){
+    const BACKGROUND='#f3f2ee';
+    try{tg?.ready();tg?.expand();if(tg?.isVersionAtLeast?.('6.1')){tg.setHeaderColor(BACKGROUND);tg.setBackgroundColor(BACKGROUND);}}catch(_){}
+    if(tg?.BackButton&&tg.isVersionAtLeast?.('6.1')){tg.BackButton.show();tg.BackButton.onClick(()=>{location.href='/app'+location.hash;});}
+    load();return;
+  }
   $('tab-restaurant').onclick=()=>{for(const key of ['earnings','sales','restaurant','research']){$(key+'-panel').hidden=key!=='restaurant';$('tab-'+key).setAttribute('aria-selected',String(key==='restaurant'));}window.uxEvent?.('cabinet_opened','restaurant');load();};
-  api('access').then(data=>{$('tab-restaurant').hidden=!data.available;if(data.can_create)window.showResearchTab?.();}).catch(e=>{if(e.status!==403&&e.status!==404&&e.status!==401){$('tab-restaurant').hidden=false;}});
+  // Дополнительная страница ресторана для компьютера; hash несёт подпись Telegram.
+  $('restaurant-desk-open').onclick=()=>{location.href='/app/restaurant'+location.hash;};
+  const showTabs=()=>{$('tab-restaurant').hidden=false;$('restaurant-desk-open').hidden=false;};
+  api('access').then(data=>{if(data.available)showTabs();if(data.can_create)window.showResearchTab?.();}).catch(e=>{if(e.status!==403&&e.status!==404&&e.status!==401)showTabs();});
 })();

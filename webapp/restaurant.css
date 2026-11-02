@@ -33,3 +33,25 @@
 .restaurant-switch{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:12px 0 20px;flex-wrap:wrap}
 .restaurant-switch select{font:inherit;max-width:100%;min-height:44px;border:1px solid #d8d4dd;border-radius:10px;background:rgba(255,255,255,.6);padding:8px 12px}
 .restaurant-switch button,#restaurant-create-cancel{font:inherit;border:0;background:none;color:#52616b;padding:10px 0;cursor:pointer;min-height:44px}
+
+/* Отдельная страница ресторана: ровный фон без анимированного градиента. */
+.restaurant-page{margin:0;background:#f3f2ee;font-variant-numeric:tabular-nums}
+.restaurant-page #restaurant-panel{display:block;max-width:480px;margin:0 auto;padding:26px 22px 40px;box-sizing:border-box}
+.restaurant-page .btn{display:block;width:100%;text-align:center;padding:14px;border-radius:10px;font-size:14px;border:none;cursor:pointer;font-family:inherit;background:#172126;color:#fff!important;margin-top:24px}
+.restaurant-page .btn-ghost{background:transparent;color:#172126!important;border:1px solid #cfcfcf;margin-top:10px}
+.restaurant-detail-head{display:flex;justify-content:space-between;align-items:center;gap:16px;padding-bottom:12px;border-bottom:1px solid #dbe1e4}
+.restaurant-pick{display:flex!important;justify-content:space-between;align-items:center;gap:12px;width:100%;text-align:left;padding:14px 12px!important;border-bottom:1px solid #dbe1e4!important}
+.restaurant-pick strong{font-size:15px;font-weight:400}
+.restaurant-pick small{display:block;font-size:12px;color:#52616b;margin-top:5px}
+#restaurant-panel .restaurant-pick[aria-pressed=true]{background:#fff}
+@media(min-width:900px){
+  .restaurant-page #restaurant-panel{max-width:1120px;padding:36px 40px 56px}
+  .restaurant-page .btn{width:auto;display:inline-block;padding:12px 24px}
+  .restaurant-page #restaurant-create{max-width:420px}
+  .restaurant-desk{display:grid;grid-template-columns:minmax(260px,340px) minmax(0,1fr);gap:32px;align-items:start;margin-top:8px}
+  .restaurant-list{border-top:1px solid #dbe1e4}
+  .restaurant-list .restaurant-turnover{font-size:16px}
+  .restaurant-detail{position:sticky;top:24px;background:#fff;border:1px solid #dbe1e4!important;border-radius:10px;padding:20px 24px!important}
+  .restaurant-detail-head strong{font-size:20px}
+  .restaurant-detail table{font-size:14px}
+}

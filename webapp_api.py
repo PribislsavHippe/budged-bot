@@ -818,6 +818,8 @@ def register_webapp_routes(app: web.Application, bot_token: str, bot_username: s
     from restaurant_api import register
     register(app)
     app.router.add_get("/app", serve_app)
+    # Дополнительная страница ресторана для компьютера; вкладка в мини-приложении остаётся.
+    app.router.add_get("/app/restaurant", lambda _: web.FileResponse(os.path.join(WEBAPP_DIR, "restaurant.html"), headers=NO_CACHE))
     app.router.add_get("/app/private-finance.js", lambda _: web.FileResponse(os.path.join(WEBAPP_DIR, "private-finance.js"), headers=NO_CACHE))
     app.router.add_get("/app/sales.js", lambda _: web.FileResponse(os.path.join(WEBAPP_DIR, "sales.js"), headers=NO_CACHE))
     app.router.add_get("/app/sales.css", lambda _: web.FileResponse(os.path.join(WEBAPP_DIR, "sales.css"), headers=NO_CACHE))
