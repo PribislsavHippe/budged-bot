@@ -139,7 +139,8 @@
     function collapse(){
       manual=false;dismissed=phoneLandscape();hide();
       try{if(tg?.unlockOrientation)tg.unlockOrientation();else screen.orientation?.unlock?.();}catch(_){}
-      try{if(tg?.isFullscreen)tg.exitFullscreen();}catch(_){}
+      // Если мини-приложение и так всегда во весь экран, сворачивание графика его не выключает.
+      try{if(tg?.isFullscreen&&!window.tgAlwaysFull)tg.exitFullscreen();}catch(_){}
       try{if(document.fullscreenElement)document.exitFullscreen();}catch(_){}
     }
     addEventListener('resize',layout);

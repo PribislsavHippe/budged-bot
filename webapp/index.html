@@ -48,6 +48,10 @@
     font-variant-numeric: tabular-nums;
     padding: 26px 22px 40px; max-width: 480px; margin: 0 auto;
   }
+  html.tg-full body {
+    padding-top: calc(26px + var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px));
+    padding-bottom: calc(40px + var(--tg-safe-area-inset-bottom, 0px));
+  }
   .head { font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 24px; }
   .hero-label { font-size: 13px; color: var(--ink-soft); }
   .hero { font-family: var(--font-mono); font-size: 40px; font-weight: 500; letter-spacing: -0.03em; line-height: 1.05; margin-bottom: 20px; white-space: nowrap; }
@@ -407,6 +411,15 @@
 <script>
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 if (tg) { tg.ready(); tg.expand(); }
+// На телефоне мини-приложение всегда во весь экран (Telegram 8.0+): шапка Telegram скрыта,
+// отступы сверху и снизу берутся из безопасных зон, которые сообщает Telegram.
+if (tg && ['ios', 'android'].includes(tg.platform) && tg.isVersionAtLeast && tg.isVersionAtLeast('8.0')) {
+  window.tgAlwaysFull = true;
+  const mark = () => document.documentElement.classList.toggle('tg-full', !!tg.isFullscreen);
+  tg.onEvent('fullscreenChanged', mark);
+  try { tg.requestFullscreen(); } catch (_) {}
+  mark();
+}
 
 let lastStats = null;
 

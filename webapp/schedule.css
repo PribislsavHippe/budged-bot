@@ -225,3 +225,5 @@
 @media(max-width:1100px){.re-guide{order:3;flex-basis:100%}}
 #restaurant-panel .re-delete{min-height:36px;padding:0 10px;border-radius:9px;color:var(--sg-off-ink);font-size:14px}
 .sg-head p:empty,.sg-head h1:empty{display:none}
+/* Во весь экран Telegram кладёт свои кнопки «закрыть» и «меню» поверх страницы — таблица ниже них. */
+html.tg-full .sg-land:not(.rotated) .sg-fit{padding-top:calc(var(--tg-safe-area-inset-top,0px) + var(--tg-content-safe-area-inset-top,0px))}
