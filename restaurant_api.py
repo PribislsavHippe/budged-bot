@@ -47,51 +47,54 @@ async def handle(request):
     stage='identity'
     try:
         if action=='access':
-            restaurants=await identity.owner_restaurants(uid)
-            # Менеджер графика видит только график; без migration_v30 такого права ещё нет.
-            from roster_api import schedulable,MISSING
-            try:schedule=await schedulable(uid)
-            except APIError as error:
-                if error.code not in MISSING:raise
-                schedule=[]
+            import roles
+            places=await roles.places(uid)
             from webapp_api import _calendar_base_url
             base=_calendar_base_url(request)
-            return response({'available':bool(restaurants or schedule or is_admin(uid)),
-                             'can_create':is_admin(uid),'restaurants':restaurants,'schedule':schedule,
+            return response({'available':bool(places or is_admin(uid)),
+                             'can_create':is_admin(uid),'restaurants':places,'schedule':places,
                              'site_url':base+'/restaurant' if base else None,
-                             'restaurant':restaurants[0] if len(restaurants)==1 else None})
+                             'restaurant':places[0] if len(places)==1 else None})
         if action=='create':
             # identity.create checks ADMIN_ID server-side.
             return response({'restaurant':await identity.create(uid,body.get('name',''))})
-        restaurant=await identity.owner_restaurant(uid,body.get('restaurant_id'))
+        import roles
+        restaurant=await roles.place(uid,body.get('restaurant_id'))
         if not restaurant:return response({'error':'Этот раздел доступен администратору ресторана.'},403)
         if action=='invite':
             username=request.app.get('bot_username')
             if not username:return response({'error':'Приглашение пока можно получить в боте: /invite.'},503)
             _,token=await identity.invite(uid,restaurant['id'])
             return response({'url':f'https://t.me/{username}?start=team_{token}'})
-        if action=='scheduler':
-            # Право составлять график даёт только владелец и только подтверждённому сотруднику.
+        if action=='role':
+            # Управляющего назначает владелец; менеджеров — владелец или управляющий.
             target=str(UUID(str(body.get('id',''))))
-            stage='scheduler'
+            wanted=body.get('role')
+            allowed=roles.APPOINT.get(restaurant['role'],set())
+            if wanted not in allowed:return response({'error':'Назначать эту роль может владелец ресторана.'},403)
+            stage='role'
             try:
-                changed=(await db._execute(db.supabase.table('employee_links').update({'can_schedule':body.get('value') is True})
+                rows=(await db._execute(db.supabase.table('employee_links').select('id,user_id,role')
                     .eq('id',target).eq('restaurant_id',restaurant['id']).eq('status','approved'))).data
+                if not rows:raise ValueError('Сотрудник изменился. Обнови список.')
+                if rows[0]['role'] not in allowed:return response({'error':'Менять роль управляющего может владелец ресторана.'},403)
+                changed=(await db._execute(db.supabase.table('employee_links').update({'role':wanted})
+                    .eq('id',target).eq('restaurant_id',restaurant['id']).eq('status','approved').eq('role',rows[0]['role']))).data
             except APIError as error:
-                from roster_api import MISSING,NOT_READY
-                if error.code in MISSING:return response({'error':NOT_READY},503)
+                if error.code in roles.MISSING:return response({'error':'Роли пока недоступны: владельцу нужно обновить базу (migration_v31.sql).'},503)
+                if error.code=='23505':raise ValueError('У ресторана уже есть управляющий. Сначала сделай прежнего менеджером.') from None
                 raise
             if not changed:raise ValueError('Сотрудник изменился. Обнови список.')
-            # Новому менеджеру графика — ссылка на сайт в бот, чтобы не искать, где составлять.
+            # Новой роли — сообщение в бот со ссылкой на сайт, чтобы не искать, где работать.
             bot=request.app.get('bot')
-            if body.get('value') is True and bot:
+            if wanted!='staff' and bot:
                 from webapp_api import _calendar_base_url
                 base=_calendar_base_url(request)
-                text=f'Тебе открыли составление графика в «{restaurant["name"]}».'+(f'\n{base}/restaurant' if base else '')
+                text=f'Ты теперь {roles.LABELS[wanted]} в «{restaurant["name"]}».'+(f'\n{base}/restaurant' if base else '')
                 try:await asyncio.wait_for(bot.send_message(changed[0]['user_id'],text,disable_web_page_preview=True),timeout=5)
                 except Exception as error:
                     from diagnostics import failure
-                    failure(error,area='restaurant',stage='scheduler_notice')
+                    failure(error,area='restaurant',stage='role_notice')
             return response({'ok':True})
         if action in ('approve','reject','revoke'):
             target=str(UUID(str(body.get('id',''))))
@@ -102,7 +105,7 @@ async def handle(request):
             target_id=str(UUID(str(body.get('target_restaurant_id',''))))
             if target_id==restaurant['id']:raise ValueError('Выбери другой ресторан.')
             destination=await identity.owner_restaurant(uid,target_id)
-            if not destination:return response({'error':'Переносить можно только между своими ресторанами.'},403)
+            if restaurant['role']!='owner' or not destination:return response({'error':'Переносить можно только между своими ресторанами.'},403)
             stage='transfer'
             await identity.transfer(uid,link_id,restaurant['id'],target_id)
             return response({'ok':True,'restaurant':destination})
@@ -117,21 +120,22 @@ async def handle(request):
             return db._pages(lambda:db.supabase.table('employee_links')
                 .select(fields).eq('restaurant_id',restaurant['id']).order('requested_at').order('id'))
         fields='id,user_id,restaurant_id,report_name,status,requested_at'
-        try:roster=await links(fields+',can_schedule')
+        try:roster=await links(fields+',role')
         except APIError as error:
             if error.code not in ('42703','PGRST204'):raise
             roster=await links(fields)
         counts={key:sum(r['status']==key for r in roster) for key in identity.STATUSES}
         selected=[r for r in roster if r['status']==status]
         rows=selected[page*10:page*10+10]
-        if status=='approved':
+        # Продажи каждого видят владелец и управляющий; менеджеру — только список сотрудников.
+        if status=='approved' and restaurant['role'] in roles.SALES:
             stage='sales'
             results=await asyncio.gather(*(member_sales(row,month) for row in rows))
             for row,data in zip(rows,results):row['sales']=data
         # Recheck membership/ownership after reads so a concurrent revoke cannot
         # deliver newly fetched financial data to an owner who lost access.
         stage='access_recheck'
-        if await identity.owner_restaurant(uid,restaurant['id'])!=restaurant:return response({'error':'Доступ изменился. Открой приложение заново.'},403)
+        if await roles.place(uid,restaurant['id'])!=restaurant:return response({'error':'Доступ изменился. Открой приложение заново.'},403)
         active=await db._pages(lambda:db.supabase.table('employee_links').select('id,status')
                 .eq('restaurant_id',restaurant['id']).order('id'))
         allowed={(r['id'],r['status']) for r in active}

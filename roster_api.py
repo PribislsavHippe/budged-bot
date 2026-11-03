@@ -192,16 +192,9 @@ def build_cells(draft, start, end, iterations=250000, restarts=3):
 
 
 async def schedulable(uid):
-    """Рестораны, где человек составляет график: свои и те, где владелец дал ему это право."""
-    owned = await identity.owner_restaurants(uid)
-    rows = (await db._execute(db.supabase.table('employee_links').select('restaurant_id,status,can_schedule')
-                              .eq('user_id', uid))).data
-    mine = {r['id'] for r in owned}
-    extra = [r['restaurant_id'] for r in rows if r['status'] == 'approved' and r.get('can_schedule')
-             and r['restaurant_id'] not in mine]
-    if extra:
-        owned = owned + (await db._execute(db.supabase.table('restaurants').select('id,name').in_('id', extra))).data
-    return owned
+    """Рестораны, где человек составляет график: владелец, управляющий и менеджеры."""
+    import roles
+    return await roles.places(uid)
 
 
 async def carry_over(restaurant_id, start, members):

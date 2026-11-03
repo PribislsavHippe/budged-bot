@@ -42,10 +42,20 @@
   function member(row){
     const states={pending:'Ждёт подтверждения',rejected:'Заявка отклонена',revoked:'Доступ закрыт'};
     const sales=row.sales;const m=sales?.metrics,cutoffs=sales?.report_dates||[];
-    const canTransfer=row.status==='approved'&&restaurants.some(r=>r.id!==selectedId);
-    const controls=row.status==='pending'?`<button data-action="approve" data-id="${esc(row.id)}">Подтвердить</button><button data-action="reject" data-id="${esc(row.id)}">Отклонить</button>`:row.status==='approved'?`${'can_schedule' in row?`<button data-action="scheduler" data-id="${esc(row.id)}" data-value="${!row.can_schedule}" aria-pressed="${!!row.can_schedule}">${row.can_schedule?'Составляет график ✓':'Может составлять график'}</button>`:''}<button data-action="revoke" data-id="${esc(row.id)}">Отозвать доступ</button>${canTransfer?'<button data-action="transfer-open">Перенести</button>':''}`:'';
+    // Роли: управляющего назначает владелец, менеджеров — владелец и управляющий.
+    // Менеджер не трогает руководителей; переносить между ресторанами может только владелец.
+    const me=restaurant?.role||'owner',role=row.role||'staff';
+    const canTransfer=me==='owner'&&row.status==='approved'&&restaurants.filter(r=>r.role==='owner').some(r=>r.id!==selectedId);
+    const roleButton=(to,label)=>`<button data-action="role" data-id="${esc(row.id)}" data-role="${to}">${label}</button>`;
+    const roleControls=!('role' in row)||row.status!=='approved'?'':me==='owner'
+      ?(role!=='director'?roleButton('director','Сделать управляющим'):'')+(role==='manager'?roleButton('staff','Снять роль менеджера'):role==='director'?roleButton('manager','Сделать менеджером'):roleButton('manager','Сделать менеджером'))
+      :me==='director'&&role!=='director'?(role==='manager'?roleButton('staff','Снять роль менеджера'):roleButton('manager','Сделать менеджером')):'';
+    const canRevoke=role==='staff'||me==='owner'||(me==='director'&&role==='manager');
+    const controls=row.status==='pending'?`<button data-action="approve" data-id="${esc(row.id)}">Подтвердить</button><button data-action="reject" data-id="${esc(row.id)}">Отклонить</button>`:row.status==='approved'?`${roleControls}${canRevoke?`<button data-action="revoke" data-id="${esc(row.id)}">Отозвать доступ</button>`:''}${canTransfer?'<button data-action="transfer-open">Перенести</button>':''}`:'';
     const transfer=canTransfer?`<div class="restaurant-transfer" hidden><label>В какой ресторан<select aria-label="Новый ресторан для ${esc(row.report_name)}">${restaurants.filter(r=>r.id!==selectedId).map(r=>`<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('')}</select></label><p>После переноса прежний ресторан перестанет видеть сотрудника. Новый увидит планы и продажи, записанные после переноса; прежние личные записи останутся у сотрудника.</p><div class="restaurant-actions"><button data-action="transfer-confirm" data-id="${esc(row.id)}">Перенести сотрудника</button><button data-action="transfer-cancel">Отмена</button></div></div>`:'';
-    const head=`<span><strong>${esc(row.report_name)}</strong><small>${sales?'Отчёт: '+date(cutoffs[0]):states[row.status]}</small></span>${m?`<span class="restaurant-turnover">${m.turnover.estimated?'≈ ':''}${num(m.turnover.total)}${m.turnover.total==null?'':' ₽'}<small>оборот</small></span>`:''}`;
+    const label={manager:'менеджер',director:'управляющий'}[row.role]||'';
+    const note=[label,sales?'Отчёт: '+date(cutoffs[0]):states[row.status]].filter(Boolean).join(' · ');
+    const head=`<span><strong>${esc(row.report_name)}</strong>${note?`<small>${note}</small>`:''}</span>${m?`<span class="restaurant-turnover">${m.turnover.estimated?'≈ ':''}${num(m.turnover.total)}${m.turnover.total==null?'':' ₽'}<small>оборот</small></span>`:''}`;
     const body=`<p class="restaurant-id">Telegram ID: ${esc(row.user_id)}</p>${m?`<table><thead><tr><th>Показатель</th><th>Сейчас</th><th>План</th></tr></thead><tbody>${Object.entries(names).filter(([k])=>!(sales.category_metrics||[]).some(c=>c.legacy_metric===k)).map(([k,label])=>`<tr><th>${label}, ${['cocktails','postcards','dvd'].includes(k)?'шт.':'₽'}${m[k].cutoff&&m[k].cutoff!==cutoffs[0]?`<small>Отчёт по ${date(m[k].cutoff)}</small>`:''}</th><td>${m[k].estimated?'≈ ':''}${num(m[k].total)}</td><td>${num(m[k].target)}</td></tr>`).join('')}${(sales.category_metrics||[]).map(c=>`<tr><th>${esc(c.name)}, ${c.unit==='count'?'шт.':c.unit==='amount'?'₽':''}${c.cutoff?`<small>Отчёт по ${date(c.cutoff)}</small>`:''}</th><td>${num(c.total)}</td><td>${num(c.target)}</td></tr>`).join('')}</tbody></table>`:''}`;
     return {head,body,controls,transfer};
   }
@@ -64,6 +74,8 @@
   function render(data){
     lastData=data;
     restaurant=data.restaurant;$('restaurant-title').textContent=restaurant.name;
+    // Месяц продаж нужен только тем, кто видит продажи: владельцу и управляющему.
+    $('restaurant-month').hidden=!['owner','director'].includes(restaurant.role||'owner');
     $('restaurant-create').hidden=true;$('restaurant-content').hidden=false;
     const labels={approved:'Сотрудники',pending:'Заявки',rejected:'Отклонённые',revoked:'Без доступа'};
     panel.querySelectorAll('[data-status]').forEach(el=>{el.hidden=['rejected','revoked'].includes(el.dataset.status)&&!data.counts[el.dataset.status]&&status!==el.dataset.status;el.textContent=labels[el.dataset.status]+' '+data.counts[el.dataset.status];el.setAttribute('aria-pressed',String(el.dataset.status===status));});
@@ -168,7 +180,7 @@
       if(action==='invite'){$('restaurant-url').value=data.url;$('restaurant-link').hidden=false;}
       else{
         if(action==='transfer'){selectedId=data.restaurant.id;page=0;status='approved';}
-        $('restaurant-notice').textContent=action==='transfer'?'Сотрудник перенесён в «'+data.restaurant.name+'».':action==='approve'?'Сотрудник подтверждён.':action==='scheduler'?'Готово.':action==='create'?'Кабинет готов.':'Готово.';
+        $('restaurant-notice').textContent=action==='transfer'?'Сотрудник перенесён в «'+data.restaurant.name+'».':action==='approve'?'Сотрудник подтверждён.':action==='role'?'Готово.':action==='create'?'Кабинет готов.':'Готово.';
       }
     }catch(e){if(site&&e.status===401){busy=false;lock();showLogin();return;}
       failure=e.name==='TimeoutError'?'Ответ задерживается. Обнови список, прежде чем повторять действие.':e.message;$('restaurant-error').textContent=failure;$('restaurant-retry').hidden=false;}
@@ -179,7 +191,9 @@
   panel.addEventListener('click',e=>{const b=e.target.closest('button');if(!b||busy)return;
     if(b.dataset.pick){picked=b.dataset.pick;render(lastData);return;}
     if(b.dataset.section){if(b.dataset.section==='schedule')showSchedule();else showTeam();return;}
-    if(b.dataset.action==='scheduler'){change('scheduler',{id:b.dataset.id,value:b.dataset.value==='true'});return;}
+    if(b.dataset.action==='role'){
+      if(b.dataset.role==='director'&&!confirm('Назначить управляющим? Он увидит продажи каждого и сможет ставить план.'))return;
+      change('role',{id:b.dataset.id,role:b.dataset.role});return;}
     if(b.dataset.status){status=b.dataset.status;page=0;load();}
     if(b.dataset.action==='transfer-open'){b.closest('.restaurant-member').querySelector('.restaurant-transfer').hidden=false;return;}
     if(b.dataset.action==='transfer-cancel'){b.closest('.restaurant-transfer').hidden=true;return;}

@@ -1,5 +1,6 @@
 """Administrator-only forwarded manager message → restaurant/month → confirmation."""
 import asyncio
+import time
 import html
 import re
 from uuid import uuid4,uuid5,NAMESPACE_URL
@@ -17,9 +18,21 @@ router.callback_query.filter(F.message.chat.type=='private')
 _drafts={}
 
 
-def permitted(uid):
+_planners={}
+
+
+async def permitted(uid):
+    """План настраивает администратор бота и управляющий ресторана. Ответ кэшируется на минуту:
+    фильтр пересланных сообщений спрашивает об этом на каждое сообщение."""
     from admin import is_admin
-    return is_admin(uid)
+    if is_admin(uid):return True
+    now=time.monotonic()
+    cached=_planners.get(uid)
+    if cached and cached[0]>now:return cached[1]
+    try:allowed=bool(await categories.planners(uid))
+    except Exception:allowed=False
+    _planners[uid]=(now+60,allowed)
+    return allowed
 
 
 def markup(draft,options):
@@ -59,11 +72,11 @@ async def parse(message,draft,text):
 
 async def begin(message,text=None):
     uid=message.from_user.id
-    if not permitted(uid):return UNHANDLED
+    if not await permitted(uid):return UNHANDLED
     old=_drafts.get(uid)
     if old and (old['lock'].locked() or old['phase']=='uncertain'):
         await message.answer('Сначала заверши сохранение категорий.');return
-    restaurants=await identity.owner_restaurants(uid)
+    restaurants=await categories.planners(uid)
     if not restaurants:
         await message.answer('Сначала создай ресторан в миниаппе.');return
     draft={'nonce':uuid4().hex[:12],'lock':asyncio.Lock(),'restaurants':restaurants,
@@ -94,7 +107,7 @@ async def ask_or_parse(message,draft):
 
 @router.message(Command('cancel','start','delete','reset'))
 async def cancel_command(message):
-    if not permitted(message.from_user.id):return UNHANDLED
+    if not await permitted(message.from_user.id):return UNHANDLED
     draft=_drafts.get(message.from_user.id)
     if not draft:return UNHANDLED
     if draft['lock'].locked() or draft['phase']=='uncertain':
@@ -110,17 +123,21 @@ async def command(message):
     return await begin(message)
 
 
-@router.message(lambda m:permitted(m.from_user.id) and bool(getattr(m,'forward_origin',None)) and
-                bool(m.text and re.search(r'категори|план|акцент',m.text,re.I)))
+async def forwarded_plan(m):
+    return (bool(getattr(m,'forward_origin',None)) and bool(m.text and re.search(r'категори|план|акцент',m.text,re.I))
+            and await permitted(m.from_user.id))
+
+
+@router.message(forwarded_plan)
 async def forwarded(message):
     draft=_drafts.get(message.from_user.id)
     if draft and draft['phase'] in ('body','edit'):return await body(message)
     return await begin(message,message.text)
 
 
-def waiting(message):
+async def waiting(message):
     draft=_drafts.get(message.from_user.id)
-    return permitted(message.from_user.id) and bool(draft and draft['phase'] in ('body','edit') and message.text and not message.text.startswith('/'))
+    return bool(draft and draft['phase'] in ('body','edit') and message.text and not message.text.startswith('/')) and await permitted(message.from_user.id)
 
 
 def manual(text):
@@ -141,7 +158,7 @@ def manual(text):
 
 @router.message(waiting,F.text)
 async def body(message):
-    if not permitted(message.from_user.id):return UNHANDLED
+    if not await permitted(message.from_user.id):return UNHANDLED
     draft=_drafts.get(message.from_user.id)
     if not draft or draft['lock'].locked():return
     async with draft['lock']:
@@ -162,7 +179,7 @@ async def body(message):
 
 @router.callback_query(F.data.startswith('cat:'))
 async def callback(query):
-    if not permitted(query.from_user.id):await query.answer();return
+    if not await permitted(query.from_user.id):await query.answer();return
     parts=query.data.split(':');draft=_drafts.get(query.from_user.id)
     if len(parts)!=3 or not draft or parts[1]!=draft['nonce']:
         await query.answer('Настройка уже закрыта.');return

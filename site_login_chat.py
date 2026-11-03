@@ -19,22 +19,14 @@ EXPIRED = 'Ссылка для входа устарела. Открой сай�
 
 
 async def has_cabinet(user_id):
-    import identity
     from admin import is_admin
     from identity_chat import enabled
     if not enabled():
         return False
-    if is_admin(user_id) or await identity.owner_restaurants(user_id):
+    if is_admin(user_id):
         return True
-    # Менеджер графика входит на сайт ради графика; до migration_v30 такого права нет.
-    from postgrest.exceptions import APIError
-    from roster_api import schedulable, MISSING
-    try:
-        return bool(await schedulable(user_id))
-    except APIError as error:
-        if error.code not in MISSING:
-            raise
-        return False
+    import roles
+    return bool(await roles.places(user_id))
 
 
 @router.message(CommandStart(deep_link=True))

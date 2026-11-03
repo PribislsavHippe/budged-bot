@@ -27,13 +27,17 @@ class CategoryTests(unittest.IsolatedAsyncioTestCase):
   self.assertEqual({v['name'] for v in summary},{'Хлеб','Гарниры'})
   self.assertEqual(next(v['total'] for v in summary if v['name']=='Хлеб'),100)
 
- async def test_only_admin_can_configure_even_owner(self):
-  with patch('admin.is_admin',return_value=False),patch.object(categories.db,'_execute',new=AsyncMock()) as write:
+ async def test_only_admin_owner_or_director_configures(self):
+  with patch('admin.is_admin',return_value=False),patch.object(categories,'planners',new=AsyncMock(return_value=[])),patch.object(categories.db,'_execute',new=AsyncMock()) as write:
    with self.assertRaises(PermissionError):await categories.configure(42,R,RAW,0,str(uuid4()))
    write.assert_not_awaited()
-  with patch('admin.is_admin',return_value=True),patch('identity.owner_restaurant',new=AsyncMock(return_value=None)),patch.object(categories.db,'_execute',new=AsyncMock()) as write:
+  with patch('admin.is_admin',return_value=True),patch.object(categories,'planners',new=AsyncMock(return_value=[])),patch.object(categories.db,'_execute',new=AsyncMock()) as write:
    with self.assertRaises(PermissionError):await categories.configure(42,R,RAW,0,str(uuid4()))
    write.assert_not_awaited()
+  # Управляющий ресторана ставит план без ADMIN_ID.
+  with patch('admin.is_admin',return_value=False),patch.object(categories,'planners',new=AsyncMock(return_value=[{'id':R,'name':'Тест','role':'director'}])),patch.object(categories.db,'_execute',new=AsyncMock()) as write:
+   await categories.configure(42,R,RAW,0,str(uuid4()))
+   write.assert_awaited_once()
 
  def test_named_csv_blocks_and_decimal_counts(self):
   configuration=cfg();rows=[['Официант','ХЛЕБ','Продажи 1-7','Осталось до плана','Продажи 1-14'],
@@ -71,7 +75,7 @@ class CategoryTests(unittest.IsolatedAsyncioTestCase):
  async def test_admin_callback_confirmation_no_bypass_and_retry(self):
   chat._drafts.clear();uid=42
   message=NS(from_user=NS(id=uid),chat=NS(id=uid),message_id=9,bot=NS(id=10),answer=AsyncMock(),edit_text=AsyncMock())
-  with patch.object(chat,'permitted',side_effect=lambda uid:uid==42),patch('identity.owner_restaurants',new=AsyncMock(return_value=[{'id':R,'name':'Тест ресторан'}])),patch.object(categories,'config',new=AsyncMock(return_value=None)),patch.object(category_groq,'parse_message',new=AsyncMock(return_value=copy.deepcopy(RAW))),patch.object(categories,'configure',new=AsyncMock(return_value={})) as save:
+  with patch.object(chat,'permitted',new=AsyncMock(side_effect=lambda uid:uid==42)),patch.object(categories,'planners',new=AsyncMock(return_value=[{'id':R,'name':'Тест ресторан'}])),patch.object(categories,'config',new=AsyncMock(return_value=None)),patch.object(category_groq,'parse_message',new=AsyncMock(return_value=copy.deepcopy(RAW))),patch.object(categories,'configure',new=AsyncMock(return_value={})) as save:
    await chat.begin(message,'Менеджерский план на октябрь 2026')
    draft=chat._drafts[uid];save.assert_not_awaited()
    q=NS(data=f"cat:{draft['nonce']}:save",from_user=NS(id=43),message=message,answer=AsyncMock())
@@ -126,7 +130,7 @@ class CategoryTests(unittest.IsolatedAsyncioTestCase):
   previous=copy.deepcopy(RAW);updated=copy.deepcopy(RAW);updated['categories'][0]['target']=60000
   draft={'nonce':'n','lock':asyncio.Lock(),'phase':'edit','raw':previous,'restaurant':{'id':R,'name':'Тест'}}
   chat._drafts[42]=draft
-  with patch.object(chat,'permitted',return_value=True),patch.object(category_groq,'parse_setup_edit',new=AsyncMock(return_value=updated)) as edit,patch.object(categories,'config',new=AsyncMock(return_value=None)),patch.object(categories,'configure',new=AsyncMock()) as save:
+  with patch.object(chat,'permitted',new=AsyncMock(return_value=True)),patch.object(category_groq,'parse_setup_edit',new=AsyncMock(return_value=updated)) as edit,patch.object(categories,'config',new=AsyncMock(return_value=None)),patch.object(categories,'configure',new=AsyncMock()) as save:
    await chat.body(message)
    edit.assert_awaited_once_with('хлеба цель 60000',previous)
    self.assertEqual(len(draft['raw']['categories']),2);save.assert_not_awaited()

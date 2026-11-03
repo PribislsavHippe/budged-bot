@@ -48,11 +48,8 @@ def clean(raw, restaurant=None):
 
 
 async def configure(uid, restaurant, raw, expected, operation):
-    from admin import is_admin
-    import identity
-    if not is_admin(uid):raise PermissionError('category_forbidden')
     restaurant=str(UUID(str(restaurant)))
-    if not await identity.owner_restaurant(uid,restaurant):raise PermissionError('category_forbidden')
+    if not any(r['id']==restaurant for r in await planners(uid)):raise PermissionError('category_forbidden')
     data=clean(raw,restaurant)
     if data['month'] is None or any(not i['unit'] for i in data['categories']):
         raise CategoryError('missing_month_or_unit')
@@ -164,13 +161,18 @@ async def view(uid, month):
         raise
 
 
+async def planners(uid):
+    """Где человек ставит план: владелец (только с ADMIN_ID) и управляющий ресторана."""
+    from admin import is_admin
+    import roles
+    return [r for r in await roles.places(uid)
+            if r['role']=='director' or (r['role']=='owner' and is_admin(uid))]
+
+
 async def options(uid,month):
     if not await ready():return []
-    from admin import is_admin
-    if not is_admin(uid):return []
-    import identity
     result=[]
-    for restaurant in (await identity.owner_restaurants(uid))[:70]:
+    for restaurant in (await planners(uid))[:70]:
         configured=await config(restaurant['id'],month) or empty_context(restaurant['id'],month,uid)
         result.append({'name':restaurant['name'],'config':configured})
     return result

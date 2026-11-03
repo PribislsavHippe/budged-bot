@@ -212,11 +212,11 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
                             {'id': OTHER, 'name': 'Чужой', 'owner_id': 77, 'created_at': '2'}],
             'employee_links': [
                 {'id': 'cccccccc-0000-0000-0000-000000000001', 'restaurant_id': PLACE, 'user_id': MANAGER,
-                 'report_name': 'Менеджер', 'status': 'approved', 'can_schedule': True, 'requested_at': '1'},
+                 'report_name': 'Менеджер', 'status': 'approved', 'role': 'manager', 'requested_at': '1'},
                 {'id': 'cccccccc-0000-0000-0000-000000000002', 'restaurant_id': PLACE, 'user_id': WAITER,
-                 'report_name': 'Аня', 'status': 'approved', 'can_schedule': False, 'requested_at': '2'},
+                 'report_name': 'Аня', 'status': 'approved', 'role': 'staff', 'requested_at': '2'},
                 {'id': 'cccccccc-0000-0000-0000-000000000003', 'restaurant_id': OTHER, 'user_id': STRANGER,
-                 'report_name': 'Чужая', 'status': 'approved', 'can_schedule': True, 'requested_at': '3'}]}
+                 'report_name': 'Чужая', 'status': 'approved', 'role': 'manager', 'requested_at': '3'}]}
         self.env = patch.dict(os.environ, {'SUPABASE_URL': 'https://example.invalid', 'SUPABASE_KEY': 'test',
                                            'IDENTITY_ENABLED': '1', 'WEBHOOK_HOST': 'https://bot.example.test'})
         self.env.start()
@@ -289,7 +289,7 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         await self.roster('save', OWNER, id=made['id'], revision=1, draft=draft)
         self.fake.rows['employee_links'][0]['status'] = 'revoked'
         self.fake.rows['employee_links'].append({'id': 'cccccccc-0000-0000-0000-000000000009', 'restaurant_id': PLACE,
-                                                 'user_id': 44, 'report_name': 'Новенький', 'status': 'approved', 'requested_at': '9'})
+                                                 'user_id': 44, 'report_name': 'Новенький', 'status': 'approved', 'role': 'staff', 'requested_at': '9'})
         later = await self.roster('create', OWNER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-30')
         people = later['draft']['people']
         self.assertEqual([p['name'] for p in people], ['Аня', 'Гость', 'Новенький'])
@@ -328,7 +328,7 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         draft = dict(made['draft'], people=made['draft']['people'] + [{'name': 'Вика'}], cells={'Вика': {'2026-11-02': '9'}})
         saved = await self.roster('save', OWNER, id=made['id'], revision=1, draft=draft)
         self.fake.rows['employee_links'].append({'id': 'cccccccc-0000-0000-0000-000000000008', 'restaurant_id': PLACE,
-                                                 'user_id': 48, 'report_name': 'Вика', 'status': 'approved', 'requested_at': '8'})
+                                                 'user_id': 48, 'report_name': 'Вика', 'status': 'approved', 'role': 'staff', 'requested_at': '8'})
         sent = []
 
         class Bot:
@@ -344,16 +344,16 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(names.count(('Вика', 'cccccccc-0000-0000-0000-000000000008')), 1)
         self.assertEqual(len(names), 3)
 
-    async def test_new_schedule_manager_gets_the_site_link(self):
+    async def test_new_manager_gets_the_site_link(self):
         sent = []
 
         class Bot:
             async def send_message(self, chat, text, **_):
                 sent.append((chat, text))
         self.client.server.app['bot'] = Bot()
-        await self.post('/api/restaurant/scheduler', OWNER, id='cccccccc-0000-0000-0000-000000000002', value=True, restaurant_id=PLACE)
-        self.assertEqual(sent, [(WAITER, 'Тебе открыли составление графика в «Ресторан».\nhttps://bot.example.test/restaurant')])
-        await self.post('/api/restaurant/scheduler', OWNER, id='cccccccc-0000-0000-0000-000000000002', value=False, restaurant_id=PLACE)
+        await self.post('/api/restaurant/role', OWNER, id='cccccccc-0000-0000-0000-000000000002', role='manager', restaurant_id=PLACE)
+        self.assertEqual(sent, [(WAITER, 'Ты теперь менеджер в «Ресторан».\nhttps://bot.example.test/restaurant')])
+        await self.post('/api/restaurant/role', OWNER, id='cccccccc-0000-0000-0000-000000000002', role='staff', restaurant_id=PLACE)
         self.assertEqual(len(sent), 1)
 
     async def test_only_owner_and_schedule_manager_build(self):
@@ -367,20 +367,28 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse((await self.post('/api/schedule/view', 555))['available'])
         await self.post('/api/schedule/view', STRANGER, 403, restaurant_id=PLACE)
 
-    async def test_owner_grants_and_removes_the_schedule_right(self):
-        access = await self.post('/api/restaurant/access', WAITER)
-        self.assertFalse(access['available'])
-        link = 'cccccccc-0000-0000-0000-000000000002'
-        await self.post('/api/restaurant/scheduler', MANAGER, 403, id=link, value=True)
-        await self.post('/api/restaurant/scheduler', OWNER, id=link, value=True, restaurant_id=PLACE)
-        access = await self.post('/api/restaurant/access', WAITER)
-        self.assertTrue(access['available'])
-        self.assertEqual([r['id'] for r in access['schedule']], [PLACE])
-        self.assertEqual(access['restaurants'], [])
-        await self.post('/api/restaurant/view', WAITER, 403, restaurant_id=PLACE)
-        await self.post('/api/restaurant/scheduler', OWNER, id=link, value=False, restaurant_id=PLACE)
+    async def test_roles_open_exactly_their_part_of_the_cabinet(self):
+        waiter = 'cccccccc-0000-0000-0000-000000000002'
+        manager = 'cccccccc-0000-0000-0000-000000000001'
         self.assertFalse((await self.post('/api/restaurant/access', WAITER))['available'])
-
+        # Менеджер не назначает роли; владелец назначает любые.
+        await self.post('/api/restaurant/role', MANAGER, 403, id=waiter, role='manager', restaurant_id=PLACE)
+        await self.post('/api/restaurant/role', OWNER, id=waiter, role='director', restaurant_id=PLACE)
+        access = await self.post('/api/restaurant/access', WAITER)
+        self.assertEqual([(r['id'], r['role']) for r in access['restaurants']], [(PLACE, 'director')])
+        # Управляющий видит продажи и назначает менеджеров, но не управляющих.
+        with patch('restaurant_api.member_sales', return_value={'metrics': {}}):
+            director_view = await self.post('/api/restaurant/view', WAITER, restaurant_id=PLACE, month='2026-11')
+            manager_view = await self.post('/api/restaurant/view', MANAGER, restaurant_id=PLACE, month='2026-11')
+        self.assertTrue(all('sales' in r for r in director_view['rows']))
+        self.assertFalse(any('sales' in r for r in manager_view['rows']))
+        await self.post('/api/restaurant/role', WAITER, id=manager, role='staff', restaurant_id=PLACE)
+        await self.post('/api/restaurant/role', WAITER, 403, id=manager, role='director', restaurant_id=PLACE)
+        self.assertFalse((await self.post('/api/restaurant/access', MANAGER))['available'])
+        # Переносить между ресторанами может только владелец.
+        await self.post('/api/restaurant/transfer', WAITER, 403, id=manager, restaurant_id=PLACE, target_restaurant_id=OTHER)
+        await self.post('/api/restaurant/role', OWNER, id=waiter, role='staff', restaurant_id=PLACE)
+        self.assertFalse((await self.post('/api/restaurant/access', WAITER))['available'])
 
 if __name__ == '__main__':
     unittest.main()
