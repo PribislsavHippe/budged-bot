@@ -60,7 +60,7 @@
   }
   async function load(start){
     if(busy)return;busy=true;$('sg-error').textContent='';
-    try{data=await api(start?{start,restaurant_id:data?.restaurant_id}:{});tab.hidden=!data.available||(!data.periods.length&&!data.can_edit);if(tab.hidden)return;render();}
+    try{data=await api(start?{start,restaurant_id:data?.restaurant_id}:{});tab.hidden=!data.available||(!data.periods.length&&!data.can_edit);if(tab.hidden)return;render();window.dispatchEvent(new Event('schedule-tab-ready'));}
     catch(e){$('sg-error').textContent=e.name==='TimeoutError'?'Ответ задерживается. Попробуй ещё раз.':e.message;}
     finally{busy=false;}
   }
@@ -80,6 +80,6 @@
   const land=G.landscape(()=>!panel.hidden&&data?.period?options():null);
   $('sg-expand').onclick=()=>land.expand();
   $('sg-site').onclick=()=>{try{tg?.openLink?tg.openLink(data.site_url):window.open(data.site_url,'_blank','noopener');}catch(_){location.href=data.site_url;}};
-  tab.onclick=()=>{window.selectTab('schedule');if(data?.period){render();land.refresh();}else load();};
+  tab.onclick=()=>{tab.dataset.opened='1';window.selectTab('schedule');if(data?.period){render();land.refresh();}else load();};
   load();
 })();

@@ -223,5 +223,15 @@
   }
   $('tab-restaurant').onclick=()=>{window.selectTab('restaurant');window.uxEvent?.('cabinet_opened','restaurant');load();};
   const showTabs=()=>{$('tab-restaurant').hidden=false;};
-  api('access').then(data=>{if(data.restaurants?.length||data.can_create)showTabs();if(data.can_create)window.showResearchTab?.();}).catch(e=>{if(e.status!==403&&e.status!==404&&e.status!==401)showTabs();});
+  // Менеджерам и управляющему чаевые не нужны: у них только «График», «План» и «Ресторан».
+  // Владелец бота и владелец ресторана видят всё.
+  const staffOnly=data=>!data.can_create&&data.restaurants?.length&&data.restaurants.every(r=>r.role==='manager'||r.role==='director');
+  function managerHome(){
+    $('tab-earnings').hidden=true;
+    if($('tab-earnings').getAttribute('aria-selected')!=='true')return;
+    const schedule=$('tab-schedule');
+    (schedule&&!schedule.hidden?schedule:$('tab-restaurant')).click();
+  }
+  window.addEventListener('schedule-tab-ready',()=>{if($('tab-earnings').hidden&&$('tab-restaurant').getAttribute('aria-selected')==='true'&&!$('tab-schedule').dataset.opened)$('tab-schedule').click();});
+  api('access').then(data=>{if(data.restaurants?.length||data.can_create)showTabs();if(data.can_create)window.showResearchTab?.();if(staffOnly(data))managerHome();}).catch(e=>{if(e.status!==403&&e.status!==404&&e.status!==401)showTabs();});
 })();
