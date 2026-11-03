@@ -6,7 +6,7 @@
   const date=s=>s?new Date(s+'T12:00:00').toLocaleDateString('ru-RU',{day:'numeric',month:'short'}):'Нет отчёта';
   const names={wine:'Вино',cocktails:'Коктейли',desserts:'Десерты',turnover:'Оборот',postcards:'Открытки',dvd:'DVD'};
   let restaurant=null,selectedId=null,restaurants=[],canCreate=false, status='approved',page=0,busy=false,month=new Date().toLocaleDateString('sv-SE',{timeZone:'Europe/Moscow'}).slice(0,7);
-  let lastData=null,picked=null;
+  let lastData=null,picked=null,schedulePlaces=[],siteUrl=null,section='team';
   async function api(action,body={}){
     const r=await fetch('/api/restaurant/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({restaurant_id:selectedId,...body,initData:tg?.initData||''}),signal:AbortSignal.timeout(20000)});
     let data;try{data=await r.json();}catch(_){const e=new Error('Сервер не ответил. Попробуй ещё раз.');e.status=r.status;throw e;}if(!r.ok){const e=new Error(r.status===401?'Открой бота и зайди в приложение ещё раз.':data.error||'Кабинет пока недоступен.');e.status=r.status;throw e;}return data;
@@ -16,25 +16,34 @@
   // Без подписи мини-приложения это сайт в браузере: вход кнопкой Telegram, сессия в cookie.
   const site=standalone&&!tg?.initData;
   const wide=matchMedia('(min-width: 900px)');
-  panel.innerHTML=`<header class="restaurant-head"><h1 id="restaurant-title">Ресторан</h1><input type="month" id="restaurant-month" aria-label="Месяц продаж"></header>
-    <div class="restaurant-switch"><select id="restaurant-select" aria-label="Ресторан" hidden></select><button id="restaurant-add" hidden>+ Добавить ресторан</button><button id="restaurant-logout" hidden>Выйти</button></div>
-    <section id="restaurant-login" hidden><p>Войди через Telegram, чтобы открыть кабинет ресторана.</p><div id="restaurant-login-box"></div></section>
-    <p id="restaurant-error" role="alert"></p><p id="restaurant-notice" role="status"></p>
-    <button id="restaurant-retry" class="btn btn-ghost" hidden>Попробовать ещё раз</button>
-    <form id="restaurant-create" hidden><label>Название ресторана<input id="restaurant-name" maxlength="80" minlength="2" required autocomplete="organization"></label><button class="btn">Создать ресторан</button><button type="button" id="restaurant-create-cancel">Отмена</button></form>
-    <div id="restaurant-content" hidden><div class="restaurant-filters" aria-label="Сотрудники">
-      <button data-status="approved" aria-pressed="true">Сотрудники</button><button data-status="pending" aria-pressed="false">Заявки</button>
-      <button data-status="rejected" aria-pressed="false">Отклонённые</button><button data-status="revoked" aria-pressed="false">Без доступа</button></div>
-    <p class="restaurant-scope">Планы и продажи после присоединения к ресторану</p>
-    <div id="restaurant-rows"></div><div class="restaurant-pages"><button id="restaurant-prev">← Назад</button><span id="restaurant-page"></span><button id="restaurant-next">Далее →</button></div>
-    <details class="restaurant-invite"><summary>Пригласить сотрудника</summary><button id="restaurant-invite" class="btn btn-ghost">Создать ссылку</button><div id="restaurant-link" hidden><label>Приглашение на 7 дней<input readonly id="restaurant-url"></label><button id="restaurant-copy">Скопировать</button></div></details></div>`;
+  const parts={
+    month:'<input type="month" id="restaurant-month" aria-label="Месяц продаж">',
+    select:'<select id="restaurant-select" aria-label="Ресторан" hidden></select>',
+    tools:'<button id="restaurant-add" hidden>+ Добавить ресторан</button><button id="restaurant-site" hidden>Сайт ресторана</button><button id="restaurant-logout" hidden>Выйти</button>',
+    sections:'<nav class="restaurant-sections" id="restaurant-sections" hidden aria-label="Разделы кабинета"><button data-section="team" aria-pressed="true">Сотрудники</button><button data-section="schedule" aria-pressed="false">График</button></nav>',
+    status:'<section id="restaurant-login" hidden><h2>Кабинет ресторана</h2><div id="restaurant-login-box"></div></section><p id="restaurant-error" role="alert"></p><p id="restaurant-notice" role="status"></p><button id="restaurant-retry" class="btn btn-ghost" hidden>Попробовать ещё раз</button><form id="restaurant-create" hidden><label>Название ресторана<input id="restaurant-name" maxlength="80" minlength="2" required autocomplete="organization"></label><button class="btn">Создать ресторан</button><button type="button" id="restaurant-create-cancel">Отмена</button></form>',
+    filters:'<div class="restaurant-filters" aria-label="Сотрудники"><button data-status="approved" aria-pressed="true">Сотрудники</button><button data-status="pending" aria-pressed="false">Заявки</button><button data-status="rejected" aria-pressed="false">Отклонённые</button><button data-status="revoked" aria-pressed="false">Без доступа</button></div>',
+    rows:'<div id="restaurant-rows"></div><div class="restaurant-pages"><button id="restaurant-prev">← Назад</button><span id="restaurant-page"></span><button id="restaurant-next">Далее →</button></div>',
+    invite:'<details class="restaurant-invite"><summary>Пригласить сотрудника</summary><button id="restaurant-invite" class="btn btn-ghost">Создать ссылку</button><div id="restaurant-link" hidden><label>Приглашение на 7 дней<input readonly id="restaurant-url"></label><button id="restaurant-copy">Скопировать</button></div></details>',
+  };
+  // На сайте — шапка с рестораном и разделами-заголовками, как вкладки мини-приложения;
+  // в мини-приложении — прежняя вкладка без изменений.
+  panel.innerHTML=standalone?`<header class="site-bar"><div class="site-place"><strong id="restaurant-title">Ресторан</strong>${parts.select}</div><div class="site-tools">${parts.tools}</div></header>
+    ${parts.sections}${parts.status}
+    <div id="restaurant-content" hidden><div class="site-toolbar">${parts.filters}<div class="site-toolbar-end">${parts.month}${parts.invite}</div></div>
+      ${parts.rows}</div>
+    <section id="restaurant-schedule" hidden></section>`
+  :`<header class="restaurant-head"><h1 id="restaurant-title">Ресторан</h1>${parts.month}</header>
+    <div class="restaurant-switch">${parts.select}${parts.tools}</div>${parts.sections}${parts.status}
+    <div id="restaurant-content" hidden>${parts.filters}<p class="restaurant-scope">Планы и продажи после присоединения к ресторану</p>${parts.rows}${parts.invite}</div>
+    <section id="restaurant-schedule" hidden></section>`;
   $('restaurant-month').value=month;
   function lock(){panel.querySelectorAll('button,input,select').forEach(el=>el.disabled=busy);}
   function member(row){
     const states={pending:'Ждёт подтверждения',rejected:'Заявка отклонена',revoked:'Доступ закрыт'};
     const sales=row.sales;const m=sales?.metrics,cutoffs=sales?.report_dates||[];
     const canTransfer=row.status==='approved'&&restaurants.some(r=>r.id!==selectedId);
-    const controls=row.status==='pending'?`<button data-action="approve" data-id="${esc(row.id)}">Подтвердить</button><button data-action="reject" data-id="${esc(row.id)}">Отклонить</button>`:row.status==='approved'?`<button data-action="revoke" data-id="${esc(row.id)}">Отозвать доступ</button>${canTransfer?'<button data-action="transfer-open">Перенести</button>':''}`:'';
+    const controls=row.status==='pending'?`<button data-action="approve" data-id="${esc(row.id)}">Подтвердить</button><button data-action="reject" data-id="${esc(row.id)}">Отклонить</button>`:row.status==='approved'?`${'can_schedule' in row?`<button data-action="scheduler" data-id="${esc(row.id)}" data-value="${!row.can_schedule}" aria-pressed="${!!row.can_schedule}">${row.can_schedule?'Составляет график ✓':'Может составлять график'}</button>`:''}<button data-action="revoke" data-id="${esc(row.id)}">Отозвать доступ</button>${canTransfer?'<button data-action="transfer-open">Перенести</button>':''}`:'';
     const transfer=canTransfer?`<div class="restaurant-transfer" hidden><label>В какой ресторан<select aria-label="Новый ресторан для ${esc(row.report_name)}">${restaurants.filter(r=>r.id!==selectedId).map(r=>`<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('')}</select></label><p>После переноса прежний ресторан перестанет видеть сотрудника. Новый увидит планы и продажи, записанные после переноса; прежние личные записи останутся у сотрудника.</p><div class="restaurant-actions"><button data-action="transfer-confirm" data-id="${esc(row.id)}">Перенести сотрудника</button><button data-action="transfer-cancel">Отмена</button></div></div>`:'';
     const head=`<span><strong>${esc(row.report_name)}</strong><small>${sales?'Отчёт: '+date(cutoffs[0]):states[row.status]}</small></span>${m?`<span class="restaurant-turnover">${m.turnover.estimated?'≈ ':''}${num(m.turnover.total)}${m.turnover.total==null?'':' ₽'}<small>оборот</small></span>`:''}`;
     const body=`<p class="restaurant-id">Telegram ID: ${esc(row.user_id)}</p>${m?`<table><thead><tr><th>Показатель</th><th>Сейчас</th><th>План</th></tr></thead><tbody>${Object.entries(names).filter(([k])=>!(sales.category_metrics||[]).some(c=>c.legacy_metric===k)).map(([k,label])=>`<tr><th>${label}, ${['cocktails','postcards','dvd'].includes(k)?'шт.':'₽'}${m[k].cutoff&&m[k].cutoff!==cutoffs[0]?`<small>Отчёт по ${date(m[k].cutoff)}</small>`:''}</th><td>${m[k].estimated?'≈ ':''}${num(m[k].total)}</td><td>${num(m[k].target)}</td></tr>`).join('')}${(sales.category_metrics||[]).map(c=>`<tr><th>${esc(c.name)}, ${c.unit==='count'?'шт.':c.unit==='amount'?'₽':''}${c.cutoff?`<small>Отчёт по ${date(c.cutoff)}</small>`:''}</th><td>${num(c.total)}</td><td>${num(c.target)}</td></tr>`).join('')}</tbody></table>`:''}`;
@@ -67,7 +76,14 @@
     if(busy)return;busy=true;lock();$('restaurant-error').textContent='';$('restaurant-retry').hidden=true;$('restaurant-rows').hidden=true;
     try{const access=await api('access');$('restaurant-login').hidden=true;$('restaurant-month').hidden=false;$('restaurant-logout').hidden=!site;
       if(!access.available)throw new Error('Кабинет доступен администратору ресторана.');
-      restaurants=access.restaurants||[];canCreate=!!access.can_create;
+      restaurants=access.restaurants||[];canCreate=!!access.can_create;schedulePlaces=access.schedule||[];siteUrl=access.site_url||null;
+      $('restaurant-site').hidden=standalone||!siteUrl;
+      // На сайте график — второй раздел кабинета; у менеджера графика он единственный.
+      $('restaurant-sections').hidden=!standalone||!schedulePlaces.length;
+      panel.querySelector('[data-section=team]').hidden=!restaurants.length;
+      if(standalone&&schedulePlaces.length&&(section==='schedule'||!restaurants.length)){showSchedule();return;}
+      if(!restaurants.length&&schedulePlaces.length&&!canCreate){$('restaurant-title').textContent='График';$('restaurant-content').hidden=true;$('restaurant-create').hidden=true;
+        $('restaurant-notice').textContent='График — на сайте ресторана.';return;}
       if(canCreate)window.showResearchTab?.();
       if(!restaurants.some(r=>r.id===selectedId))selectedId=restaurants[0]?.id||null;
       restaurant=restaurants.find(r=>r.id===selectedId)||null;
@@ -76,15 +92,28 @@
       $('restaurant-select').innerHTML=restaurants.map(r=>`<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('');
       $('restaurant-select').value=selectedId||'';
       if(!restaurant){$('restaurant-create').hidden=!canCreate;$('restaurant-create-cancel').hidden=true;$('restaurant-content').hidden=true;return;}
-      $('restaurant-create-cancel').hidden=false;
+      $('restaurant-create-cancel').hidden=false;$('restaurant-schedule').hidden=true;$('restaurant-month').hidden=false;
       render(await api('view',{month,page,status}));
     }catch(e){if(site&&e.status===401){showLogin();return;}
       if(!e.status)window.uxEvent?.('cabinet_load_error','restaurant',e.name==='TimeoutError'?'timeout':'network');$('restaurant-error').textContent=e.name==='TimeoutError'?'Ответ задерживается. Попробуй ещё раз.':e.message;$('restaurant-retry').hidden=false;}
     finally{busy=false;lock();}
   }
+  function showSchedule(){
+    section='schedule';
+    panel.querySelectorAll('[data-section]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.section==='schedule')));
+    $('restaurant-title').textContent=(restaurant||schedulePlaces[0])?.name||'График смен';$('restaurant-content').hidden=true;$('restaurant-create').hidden=true;
+    $('restaurant-month').hidden=true;$('restaurant-select').hidden=true;$('restaurant-add').hidden=true;$('restaurant-schedule').hidden=false;
+    window.RosterEditor?.open($('restaurant-schedule'),{places:schedulePlaces,initData:tg?.initData||'',onAuth:()=>{if(site)showLogin();}});
+  }
+  function showTeam(){
+    section='team';$('restaurant-schedule').hidden=true;
+    panel.querySelectorAll('[data-section]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.section==='team')));
+    load();
+  }
   function showLogin(){
     $('restaurant-title').textContent='Ресторан';$('restaurant-content').hidden=true;$('restaurant-create').hidden=true;
     $('restaurant-select').hidden=true;$('restaurant-add').hidden=true;$('restaurant-logout').hidden=true;$('restaurant-login').hidden=false;$('restaurant-month').hidden=true;
+    $('restaurant-sections').hidden=true;$('restaurant-schedule').hidden=true;
     if(!loginWait)startLogin();
   }
   // Вход через бота: ссылка открывает Telegram на компьютере, QR-код — на телефоне; сайт ждёт подтверждения.
@@ -139,7 +168,7 @@
       if(action==='invite'){$('restaurant-url').value=data.url;$('restaurant-link').hidden=false;}
       else{
         if(action==='transfer'){selectedId=data.restaurant.id;page=0;status='approved';}
-        $('restaurant-notice').textContent=action==='transfer'?'Сотрудник перенесён в «'+data.restaurant.name+'».':action==='approve'?'Сотрудник подтверждён.':action==='create'?'Кабинет готов.':'Готово.';
+        $('restaurant-notice').textContent=action==='transfer'?'Сотрудник перенесён в «'+data.restaurant.name+'».':action==='approve'?'Сотрудник подтверждён.':action==='scheduler'?'Готово.':action==='create'?'Кабинет готов.':'Готово.';
       }
     }catch(e){if(site&&e.status===401){busy=false;lock();showLogin();return;}
       failure=e.name==='TimeoutError'?'Ответ задерживается. Обнови список, прежде чем повторять действие.':e.message;$('restaurant-error').textContent=failure;$('restaurant-retry').hidden=false;}
@@ -149,6 +178,8 @@
   }
   panel.addEventListener('click',e=>{const b=e.target.closest('button');if(!b||busy)return;
     if(b.dataset.pick){picked=b.dataset.pick;render(lastData);return;}
+    if(b.dataset.section){if(b.dataset.section==='schedule')showSchedule();else showTeam();return;}
+    if(b.dataset.action==='scheduler'){change('scheduler',{id:b.dataset.id,value:b.dataset.value==='true'});return;}
     if(b.dataset.status){status=b.dataset.status;page=0;load();}
     if(b.dataset.action==='transfer-open'){b.closest('.restaurant-member').querySelector('.restaurant-transfer').hidden=false;return;}
     if(b.dataset.action==='transfer-cancel'){b.closest('.restaurant-transfer').hidden=true;return;}
@@ -159,6 +190,8 @@
     if(b.dataset.action)change(b.dataset.action,{id:b.dataset.id});
   });
   wide.addEventListener('change',()=>{if(lastData&&!busy)render(lastData);});
+  $('restaurant-site').onclick=()=>{try{tg?.openLink?tg.openLink(siteUrl):window.open(siteUrl,'_blank','noopener');}catch(_){location.href=siteUrl;}};
+  if(standalone&&location.hash==='#schedule')section='schedule';
   $('restaurant-add').onclick=()=>{$('restaurant-create').hidden=false;$('restaurant-name').focus();};
   $('restaurant-create-cancel').onclick=()=>{$('restaurant-create').hidden=true;};
   $('restaurant-select').onchange=()=>{selectedId=$('restaurant-select').value;page=0;status='approved';$('restaurant-link').hidden=true;$('restaurant-url').value='';$('restaurant-notice').textContent='';load();};
@@ -174,9 +207,7 @@
     if(tg?.BackButton&&tg.isVersionAtLeast?.('6.1')){tg.BackButton.show();tg.BackButton.onClick(()=>{location.href='/app'+location.hash;});}
     load();return;
   }
-  $('tab-restaurant').onclick=()=>{for(const key of ['earnings','sales','restaurant','research']){$(key+'-panel').hidden=key!=='restaurant';$('tab-'+key).setAttribute('aria-selected',String(key==='restaurant'));}window.uxEvent?.('cabinet_opened','restaurant');load();};
-  // Дополнительная страница ресторана для компьютера; hash несёт подпись Telegram.
-  $('restaurant-desk-open').onclick=()=>{location.href='/app/restaurant'+location.hash;};
-  const showTabs=()=>{$('tab-restaurant').hidden=false;$('restaurant-desk-open').hidden=false;};
-  api('access').then(data=>{if(data.available)showTabs();if(data.can_create)window.showResearchTab?.();}).catch(e=>{if(e.status!==403&&e.status!==404&&e.status!==401)showTabs();});
+  $('tab-restaurant').onclick=()=>{window.selectTab('restaurant');window.uxEvent?.('cabinet_opened','restaurant');load();};
+  const showTabs=()=>{$('tab-restaurant').hidden=false;};
+  api('access').then(data=>{if(data.restaurants?.length||data.can_create)showTabs();if(data.can_create)window.showResearchTab?.();}).catch(e=>{if(e.status!==403&&e.status!==404&&e.status!==401)showTabs();});
 })();

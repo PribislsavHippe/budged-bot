@@ -112,5 +112,5 @@
     }finally{button.disabled=false;}
   };
   $('research-feedback-load').onclick=async()=>{const button=$('research-feedback-load');button.disabled=true;try{const d=await api('feedback');$('research-feedback').innerHTML=d.rows.map(r=>`<article class="research-feedback"><button data-subject="${esc(r.subject_id)}" data-label="${esc(r.label)}">${esc(r.label)}</button><small>${time(r.created_at)} · ${esc({broken:'Сбой',confusing:'Непонятно',idea:'Идея'}[r.category])}</small><p>${esc(r.body)}</p></article>`).join('')||'<p>Обращений пока нет.</p>';}catch(e){error(e);}finally{button.disabled=false;}};
-  $('tab-research').onclick=()=>{for(const key of ['earnings','sales','restaurant','research']){$(key+'-panel').hidden=key!=='research';$('tab-'+key).setAttribute('aria-selected',String(key==='research'));}load();};
+  $('tab-research').onclick=()=>{window.selectTab('research');load();};
 })();

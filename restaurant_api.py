@@ -3,6 +3,7 @@ import asyncio
 import logging
 from uuid import UUID
 from aiohttp import web
+from postgrest.exceptions import APIError
 import db
 import identity
 from sales import compute_sales, month_key
@@ -47,8 +48,17 @@ async def handle(request):
     try:
         if action=='access':
             restaurants=await identity.owner_restaurants(uid)
-            return response({'available':bool(restaurants or is_admin(uid)),
-                             'can_create':is_admin(uid),'restaurants':restaurants,
+            # Менеджер графика видит только график; без migration_v30 такого права ещё нет.
+            from roster_api import schedulable,MISSING
+            try:schedule=await schedulable(uid)
+            except APIError as error:
+                if error.code not in MISSING:raise
+                schedule=[]
+            from webapp_api import _calendar_base_url
+            base=_calendar_base_url(request)
+            return response({'available':bool(restaurants or schedule or is_admin(uid)),
+                             'can_create':is_admin(uid),'restaurants':restaurants,'schedule':schedule,
+                             'site_url':base+'/restaurant' if base else None,
                              'restaurant':restaurants[0] if len(restaurants)==1 else None})
         if action=='create':
             # identity.create checks ADMIN_ID server-side.
@@ -60,6 +70,29 @@ async def handle(request):
             if not username:return response({'error':'Приглашение пока можно получить в боте: /invite.'},503)
             _,token=await identity.invite(uid,restaurant['id'])
             return response({'url':f'https://t.me/{username}?start=team_{token}'})
+        if action=='scheduler':
+            # Право составлять график даёт только владелец и только подтверждённому сотруднику.
+            target=str(UUID(str(body.get('id',''))))
+            stage='scheduler'
+            try:
+                changed=(await db._execute(db.supabase.table('employee_links').update({'can_schedule':body.get('value') is True})
+                    .eq('id',target).eq('restaurant_id',restaurant['id']).eq('status','approved'))).data
+            except APIError as error:
+                from roster_api import MISSING,NOT_READY
+                if error.code in MISSING:return response({'error':NOT_READY},503)
+                raise
+            if not changed:raise ValueError('Сотрудник изменился. Обнови список.')
+            # Новому менеджеру графика — ссылка на сайт в бот, чтобы не искать, где составлять.
+            bot=request.app.get('bot')
+            if body.get('value') is True and bot:
+                from webapp_api import _calendar_base_url
+                base=_calendar_base_url(request)
+                text=f'Тебе открыли составление графика в «{restaurant["name"]}».'+(f'\n{base}/restaurant' if base else '')
+                try:await asyncio.wait_for(bot.send_message(changed[0]['user_id'],text,disable_web_page_preview=True),timeout=5)
+                except Exception as error:
+                    from diagnostics import failure
+                    failure(error,area='restaurant',stage='scheduler_notice')
+            return response({'ok':True})
         if action in ('approve','reject','revoke'):
             target=str(UUID(str(body.get('id',''))))
             await identity.action(uid,action,{'id':target,'restaurant_id':restaurant['id']})
@@ -80,9 +113,14 @@ async def handle(request):
         status=body.get('status','approved')
         if status not in identity.STATUSES:raise ValueError('Выбери раздел со списком сотрудников.')
         stage='roster'
-        roster=await db._pages(lambda:db.supabase.table('employee_links')
-            .select('id,user_id,restaurant_id,report_name,status,requested_at').eq('restaurant_id',restaurant['id'])
-            .order('requested_at').order('id'))
+        def links(fields):
+            return db._pages(lambda:db.supabase.table('employee_links')
+                .select(fields).eq('restaurant_id',restaurant['id']).order('requested_at').order('id'))
+        fields='id,user_id,restaurant_id,report_name,status,requested_at'
+        try:roster=await links(fields+',can_schedule')
+        except APIError as error:
+            if error.code not in ('42703','PGRST204'):raise
+            roster=await links(fields)
         counts={key:sum(r['status']==key for r in roster) for key in identity.STATUSES}
         selected=[r for r in roster if r['status']==status]
         rows=selected[page*10:page*10+10]

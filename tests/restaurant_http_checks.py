@@ -47,7 +47,7 @@ async def main():
                     assert page.status==200 and '/app/restaurant.js' in text and 'gradient-canvas' not in text and 'background.js' not in text
                     assert (page.headers.get('Content-Security-Policy')=="frame-ancestors 'none'")==(path=='/restaurant')
                     assert page.headers.get('Cache-Control')=='no-store, no-cache, must-revalidate'
-                assert '/app/restaurant' in open(os.path.join(webapp_api.WEBAPP_DIR,'restaurant.js'),encoding='utf-8').read()
+                assert 'restaurant-site' in open(os.path.join(webapp_api.WEBAPP_DIR,'restaurant.js'),encoding='utf-8').read()
                 # Сайт: вход через бота даёт сессию только для кабинета ресторана.
                 import site_auth
                 started=await (await client.post('/api/site/login/start',json={})).json()

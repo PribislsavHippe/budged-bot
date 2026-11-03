@@ -821,6 +821,8 @@ def register_webapp_routes(app: web.Application, bot_token: str, bot_username: s
     app.middlewares.append(api_errors)
     from restaurant_api import register
     register(app)
+    import roster_api
+    roster_api.register(app)
     app.router.add_get("/app", serve_app)
     # Страница ресторана: сайт /restaurant и та же страница из мини-приложения; вкладка остаётся.
     from site_auth import register as register_site
@@ -831,7 +833,8 @@ def register_webapp_routes(app: web.Application, bot_token: str, bot_username: s
     app.router.add_post("/api/stats", api_stats)
     app.router.add_post("/api/tips_compare", api_tips_compare)
     app.router.add_post("/api/tips_range", api_tips_range)
-    for asset in ("background.js", "tips.js", "tips.css", "private.js", "restaurant.js", "restaurant.css", "ux.js", "research.js", "research.css"):
+    for asset in ("background.js", "tips.js", "tips.css", "private.js", "restaurant.js", "restaurant.css", "ux.js", "research.js", "research.css",
+                  "schedule.css", "schedule-grid.js", "schedule.js", "roster-editor.js"):
         async def serve_asset(request, asset=asset):
             return web.FileResponse(os.path.join(WEBAPP_DIR, asset), headers=NO_CACHE)
         app.router.add_get("/app/" + asset, serve_asset)

@@ -69,6 +69,9 @@ class Request:
     wish_starts: dict[str, set[int]] = field(default_factory=dict)
     # У студентов обязательных выходных может быть больше нормы из-за учёбы.
     students: set[str] = field(default_factory=set)
+    # Менеджер может поменять на дату, сколько закрывают и сколько открывают.
+    closers: dict[date, int] = field(default_factory=dict)
+    openers: dict[date, int] = field(default_factory=dict)
 
     @property
     def days(self):
@@ -93,8 +96,25 @@ class Request:
             return self.counts[day]
         return WEEKEND_COUNT if self.is_money(day) else WEEKDAY_COUNT
 
+    def closing(self, day):
+        return self.closers.get(day, CLOSERS)
+
+    def opening(self, day):
+        return self.openers.get(day, openers_needed(day, day in self.holidays))
+
+
+def start_of(value):
+    """Смена в графике — час прихода или (приход, уход), если интервал необычный."""
+    return value[0] if isinstance(value, tuple) else value
+
+
+def end_of(value):
+    return value[1] if isinstance(value, tuple) else min(value + SHIFT_HOURS, CLOSE_HOUR)
+
 
 def shift_hours(start):
+    if isinstance(start, tuple):
+        return max(0, start[1] - start[0])
     return min(SHIFT_HOURS, CLOSE_HOUR - start)
 
 
@@ -106,12 +126,14 @@ def openers_needed(day, holiday=False):
     return 2 if holiday or day.weekday() in MONEY_WEEKDAYS else 1
 
 
-def day_slots(day, count, holiday=False):
+def day_slots(day, count, holiday=False, closing=CLOSERS, opening=None):
     """Приходы на день, самые важные первыми. Если людей не хватит, пустует середина смены,
     затем второй на открытие: закрывают всегда трое, но кто-то должен и открыть."""
     first = open_hour(day, holiday)
-    closers = [11, 12, 12] if day.weekday() == 4 and not holiday else [11, 12, 14]
-    important = [first] + closers + [first] * (openers_needed(day, holiday) - 1)
+    pattern = [11, 12, 12] if day.weekday() == 4 and not holiday else [11, 12, 14]
+    closers = (pattern + [12] * closing)[:closing]
+    opening = openers_needed(day, holiday) if opening is None else opening
+    important = [first] * min(1, opening) + closers + [first] * max(0, opening - 1)
     if count <= len(important):
         return important[:count]
     between = list(range(first + 1, LAST_CLOSER_START))
@@ -201,7 +223,7 @@ def _search(request, iterations, seed):
     for d, day in enumerate(days):
         # Число людей обязательно: если свободных мало, выходят из обязательного выходного.
         pool.append(available[d] if len(available[d]) >= request.count(day) else present)
-        full = day_slots(day, request.count(day), day in request.holidays)
+        full = day_slots(day, request.count(day), day in request.holidays, request.closing(day), request.opening(day))
         slots.append(full[:len(pool[d])])
 
     total_shifts = sum(len(s) for s in slots)
@@ -269,7 +291,7 @@ def as_schedule(request, table):
 @dataclass
 class Audit:
     shortages: list = field(default_factory=list)   # (день, работают, нужно, кто остался в обязательном выходном)
-    closers: list = field(default_factory=list)     # (день, сколько закрывают)
+    closers: list = field(default_factory=list)     # (день, сколько закрывают, нужно)
     openers: list = field(default_factory=list)     # (день, сколько открывают, нужно)
     rises: list = field(default_factory=list)       # (имя, день, приход накануне, приход)
     forced: list = field(default_factory=list)      # (имя, день): смена в обязательный выходной
@@ -292,13 +314,14 @@ def audit(request, schedule):
         off = [name for name in request.people if request.is_off(name, day)]
         if len(working) < need:
             result.shortages.append((day, len(working), need, [name for name in off if name not in working]))
-        closing = sum(schedule[name][day] >= LAST_CLOSER_START for name in working)
-        if closing != CLOSERS:
-            result.closers.append((day, closing))
+        shifts = [schedule[name][day] for name in working]
+        closing = sum(start_of(s) >= LAST_CLOSER_START and end_of(s) >= CLOSE_HOUR for s in shifts)
+        if closing != request.closing(day):
+            result.closers.append((day, closing, request.closing(day)))
         holiday = day in request.holidays
-        opening = sum(schedule[name][day] == open_hour(day, holiday) for name in working)
-        if opening != openers_needed(day, holiday):
-            result.openers.append((day, opening, openers_needed(day, holiday)))
+        opening = sum(start_of(s) == open_hour(day, holiday) for s in shifts)
+        if opening != request.opening(day):
+            result.openers.append((day, opening, request.opening(day)))
         if len(request.people) - len(off) - len(working) <= 0:
             result.no_reserve.append(day)
     for name in request.people:
@@ -311,7 +334,7 @@ def audit(request, schedule):
         result.wish_total += len(wanted_off) + (len(own) if wanted else 0)
         result.missed_off += [(name, day) for day in days if day in wanted_off and day in own]
         if wanted:
-            result.missed_starts += [(name, day, own[day]) for day in days if day in own and own[day] not in wanted]
+            result.missed_starts += [(name, day, start_of(own[day])) for day in days if day in own and start_of(own[day]) not in wanted]
         streak_start = None
         length = 0
         for index, day in enumerate(days + [None]):
@@ -322,8 +345,8 @@ def audit(request, schedule):
                 if request.is_off(name, day):
                     result.forced.append((name, day))
                 previous = days[index - 1] if index else None
-                if previous in own and own[day] < own[previous]:
-                    result.rises.append((name, day, own[previous], own[day]))
+                if previous in own and start_of(own[day]) < start_of(own[previous]):
+                    result.rises.append((name, day, start_of(own[previous]), start_of(own[day])))
             else:
                 if length > MAX_STREAK:
                     result.streaks.append((name, streak_start, length))
@@ -366,8 +389,8 @@ def report(request, schedule, findings=None):
             problems.append(f'{name}: смена {_day(day)} в обязательный выходной.')
     for name, day, before, after in found.rises:
         problems.append(f'{name}: {_day(day)} приход в {after}, а накануне в {before}. Нельзя приходить раньше, чем накануне.')
-    for day, closing in found.closers:
-        problems.append(f'{_day(day)}: в закрытии {closing}, нужно {CLOSERS}.')
+    for day, closing, need in found.closers:
+        problems.append(f'{_day(day)}: в закрытии {closing}, нужно {need}.')
     for day, opening, need in found.openers:
         problems.append(f'{_day(day)}: открывают {opening}, нужно {need}.')
     for name, first, length in found.streaks:

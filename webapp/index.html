@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="/app/sales.css">
 <link rel="stylesheet" href="/app/tips.css">
 <link rel="stylesheet" href="/app/restaurant.css">
+<link rel="stylesheet" href="/app/schedule.css">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="/app/ux.js"></script>
 <link rel="stylesheet" href="/app/research.css">
@@ -249,13 +250,14 @@
   <div id="bg" aria-hidden="true"><canvas id="gradient-canvas"></canvas></div>
   <nav class="app-tabs" role="tablist" aria-label="Разделы">
     <button id="tab-earnings" role="tab" aria-selected="true" aria-controls="earnings-panel">Чаевые</button>
+    <button id="tab-schedule" role="tab" aria-selected="false" aria-controls="schedule-panel" hidden>График</button>
     <button id="tab-sales" role="tab" aria-selected="false" aria-controls="sales-panel">План</button>
     <button id="tab-restaurant" role="tab" aria-selected="false" aria-controls="restaurant-panel" hidden>Ресторан</button>
-    <button id="restaurant-desk-open" type="button" hidden>Ресторан на компьютере</button>
     <button id="tab-research" role="tab" aria-selected="false" aria-controls="research-panel" hidden>UX Research</button>
   </nav>
   <section id="research-panel" role="tabpanel" aria-labelledby="tab-research" hidden></section>
   <section id="restaurant-panel" role="tabpanel" aria-labelledby="tab-restaurant" hidden></section>
+  <section id="schedule-panel" role="tabpanel" aria-labelledby="tab-schedule" hidden></section>
   <section id="sales-panel" role="tabpanel" aria-labelledby="tab-sales" hidden></section>
   <section id="earnings-panel" role="tabpanel" aria-labelledby="tab-earnings">
   <section id="tips-dashboard" aria-label="Чаевые и расходы" aria-busy="true"></section>
@@ -1326,9 +1328,18 @@ document.addEventListener("visibilitychange", async function () {
   load();iphoneCalendarRefresh();
 });
 </script>
+<script>
+  // Одна вкладка видна, остальные скрыты: общий переключатель для всех разделов.
+  window.selectTab=key=>{
+    document.querySelectorAll('.app-tabs [role=tab]').forEach(t=>t.setAttribute('aria-selected',String(t.id==='tab-'+key)));
+    document.querySelectorAll('body>[role=tabpanel]').forEach(p=>{p.hidden=p.id!==key+'-panel';});
+  };
+</script>
 <script src="/app/sales.js"></script>
 <script src="/app/tips.js"></script>
 <script src="/app/restaurant.js"></script>
+<script src="/app/schedule-grid.js"></script>
+<script src="/app/schedule.js"></script>
 <script src="/app/research.js"></script>
 </body>
 </html>

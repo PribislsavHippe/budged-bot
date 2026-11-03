@@ -92,6 +92,6 @@
   $('sales-reload').onclick=load;$('sales-retry').onclick=()=>{if(pending)mutate(pending.action,pending.body);};
   $('service-charge-reload').onclick=loadService;
   window.addEventListener('private-money-ready',()=>{if(!$('sales-panel').hidden)loadService();});
-  for(const tab of document.querySelectorAll('#tab-sales,#tab-earnings'))tab.onclick=()=>{document.getElementById('research-panel').hidden=true;document.getElementById('tab-research').setAttribute('aria-selected','false');document.getElementById('restaurant-panel').hidden=true;document.getElementById('tab-restaurant').setAttribute('aria-selected','false');const plan=tab.id==='tab-sales';$('sales-panel').hidden=!plan;$('earnings-panel').hidden=plan;$('tab-sales').setAttribute('aria-selected',String(plan));$('tab-earnings').setAttribute('aria-selected',String(!plan));if(plan)load();else window.dispatchEvent(new Event('earnings-updated'));};
+  for(const tab of document.querySelectorAll('#tab-sales,#tab-earnings'))tab.onclick=()=>{const plan=tab.id==='tab-sales';window.selectTab(plan?'sales':'earnings');if(plan)load();else window.dispatchEvent(new Event('earnings-updated'));};
   if(pending?.body?.month)$('sales-month').value=pending.body.month;lock();
 })();
