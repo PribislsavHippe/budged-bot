@@ -149,9 +149,24 @@
       // Шапка с событием дня выше остальных строк: отнимаем лишнее у всех строк поровну.
       for(let pass=0;pass<4&&full.offsetHeight>room;pass++){rh-=Math.max(1,Math.ceil((full.offsetHeight-room)/(rows-1)));land.style.setProperty('--rh',rh+'px');}
       full.style.setProperty('--tail','0px');full.style.setProperty('--tw',ls.clientWidth+'px');
+      widen();
       const names=full.querySelector('thead .sg-name').offsetWidth,heads=full.querySelectorAll('thead th.sg-day');
       const tail=Math.max(0,ls.clientWidth-names-heads[heads.length-1].offsetWidth);
       full.style.setProperty('--tail',tail+'px');full.style.setProperty('--tw',(ls.clientWidth+tail)+'px');ls.style.scrollPaddingLeft=names+'px';
+    }
+    // Правило внутреннего и внешнего: колонка с необычным временем (9–17) шире остальных, чтобы вокруг плашки
+    // осталось поле больше её внутреннего отступа. Остальные колонки делят то, что осталось.
+    function widen(){
+      const cols=[...full.querySelectorAll('colgroup col:not(.sg-n):not(.sg-g):not(.sg-tail)')];
+      cols.forEach(c=>{c.style.width='';});
+      const names=full.querySelector('thead .sg-name').offsetWidth,room=ls.clientWidth-names;
+      const need=options.days.map(day=>{let w=0;
+        full.querySelectorAll(`td.sg-c[data-day="${day}"] .sg-s.rng b`).forEach(b=>{w=Math.max(w,b.offsetWidth+2*4+2*5+2);});return w;});
+      const wide=need.filter(Boolean),plain=need.length-wide.length;
+      if(!wide.length||cols.length!==need.length)return;
+      const base=plain?Math.floor((room-wide.reduce((a,b)=>a+b,0))/plain):0;
+      if(plain&&base<28)return;
+      cols.forEach((c,i)=>{c.style.width=Math.max(need[i],base)+'px';});
     }
     function hide(){land.hidden=true;document.body.style.overflow='';land.classList.remove('rotated');land.style.width=land.style.height='';}
     function layout(){

@@ -26,7 +26,7 @@
     if(!r.ok)throw new Error(json.error||'График пока недоступен.');
     return json;
   }
-  const options=()=>({days:data.period.days,people:data.period.people,events:data.period.events,holidays:data.period.holidays,today:data.today});
+  const options=()=>({days:data.period.days,people:data.period.people,events:data.period.events,holidays:data.period.holidays,today:data.today,weekGap:false});
   function render(){
     const p=data.period,list=data.periods,index=p?list.findIndex(x=>x.start===p.start):-1;
     const place=data.restaurants.find(r=>r.id===data.restaurant_id);
@@ -42,9 +42,23 @@
     grid.className=near?'sg-near':'';
     grid.innerHTML=G.table({...options(),near,scrolls:true});
     $('sg-expand').hidden=!near;
+    fitRows();
     scroll.size();
     picked=p.days.includes(data.today)?data.today:p.days[0];
     scroll.go(picked,false);
+  }
+  // Весь список людей на первом экране: высота строк подбирается под окно (36–48 px).
+  function fitRows(){
+    grid.style.setProperty('--rh','48px');
+    if(!grid.classList.contains('sg-near'))return;
+    const top=grid.getBoundingClientRect().top+scrollY,room=innerHeight-top-84,rows=Math.max(1,data.period.people.length);
+    let rh=48;
+    for(let pass=0;pass<4&&rh>36;pass++){
+      grid.style.setProperty('--rh',rh+'px');
+      const over=grid.offsetHeight-room;if(over<=0)break;
+      rh=Math.max(36,rh-Math.ceil(over/(rows+1)));
+    }
+    grid.style.setProperty('--rh',rh+'px');
   }
   // Свои ближайшие смены над таблицей: искать себя глазами не нужно.
   function renderMine(p){
@@ -75,7 +89,7 @@
   });
   grid.addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.closest('th.sg-day,td.sg-c')){e.preventDefault();e.target.click();}});
   G.hover(grid);
-  addEventListener('resize',()=>{if(data?.period&&!panel.hidden){scroll.size();scroll.go(picked,false);}});
+  addEventListener('resize',()=>{if(data?.period&&!panel.hidden){fitRows();scroll.size();scroll.go(picked,false);}});
   phone.addEventListener('change',()=>{if(data?.period)render();});
   const land=G.landscape(()=>!panel.hidden&&data?.period?options():null);
   $('sg-expand').onclick=()=>land.expand();

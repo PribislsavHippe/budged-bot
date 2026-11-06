@@ -98,7 +98,7 @@
 .sg-land .sg-name{min-width:0;padding:0 6px;font-size:12px;overflow:hidden;text-overflow:ellipsis}
 .sg-land .sg-s,.sg-land .sg-e{width:calc(100% - 4px);min-width:0;padding:0 var(--dg) 0 0;height:calc(var(--rh) - 4px);border-radius:5px;vertical-align:middle}
 .sg-land .sg-s.off{padding:0;font-size:9px}
-.sg-land .sg-s.rng{margin:0;justify-content:flex-end}
+.sg-land .sg-s.rng{--pi:4px;--m:5px;width:auto;margin:0 var(--m);padding:0 var(--pi);justify-content:center}
 .sg-land .sg-s b{font-size:12px}
 .sg-land tfoot th,.sg-land tfoot td{font-size:11px;padding:0 calc(var(--pr) + var(--dg)) 0 0}
 .sg-land tfoot .sg-name{padding:0 6px}
@@ -301,3 +301,16 @@ html.tg-full .sg-land:not(.rotated) .sg-fit{padding-top:calc(var(--tg-safe-area-
 .sg-edit td.sg-c{height:var(--rh,40px)}
 .sg-edit .sg-s,.sg-edit .sg-e{height:min(30px,calc(var(--rh,40px) - 8px))}
 .sg-edit tfoot th,.sg-edit tfoot td{height:min(40px,var(--rh,40px))}
+
+/* Мини-приложение: график лежит прямо на фоне, как на сайте, без белой плашки; имена по левому краю. */
+#schedule-panel .sg-sheet{background:none;box-shadow:none;border-radius:0;overflow:visible;padding-bottom:0}
+#schedule-panel .sg-name{background:transparent;padding-left:0}
+#schedule-panel .sg-scrolled .sg-name{background:rgba(255,255,255,.86)}
+#schedule-panel .sg-detail{border-top:0;padding:10px 0}
+#schedule-panel .sg-expand{background:rgba(255,255,255,.7);border:0;border-radius:14px;margin-top:12px}
+#schedule-panel table.sg-near td.sg-c{height:var(--rh,48px)}
+#schedule-panel table.sg-near .sg-s,#schedule-panel table.sg-near .sg-e{height:min(34px,calc(var(--rh,48px) - 10px))}
+#schedule-panel table.sg-near tfoot td,#schedule-panel table.sg-near tfoot th{height:min(40px,var(--rh,48px))}
+/* Полосы прокрутки под графиком нет: листать можно и без подсказки. */
+#schedule-panel .sg-scroll{scrollbar-width:none}
+#schedule-panel .sg-scroll::-webkit-scrollbar{display:none}
