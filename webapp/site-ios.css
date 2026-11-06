@@ -263,6 +263,5 @@
    закреплённая колонка получает фон только когда таблицу листают, иначе цифры наезжали бы на имена. */
 .restaurant-page .re-sheet{background:none;box-shadow:none;border-radius:0;overflow:visible;padding-bottom:0}
 .restaurant-page .re-sheet .sg-name{background:transparent;padding-left:0}
-.restaurant-page .re-sheet .sg-scrolled .sg-name{background:var(--glass-strong)}
 .restaurant-page .re-sheet .sg-s.note:not(.off){background:color-mix(in srgb,var(--t) 60%,transparent);box-shadow:0 0 6px 3px color-mix(in srgb,var(--t) 40%,transparent)}
 .restaurant-page .re-sheet .re-history{left:0;top:6px}

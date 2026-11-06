@@ -31,13 +31,12 @@
 .sg thead th.sg-day:hover b{text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px}
 .sg .sg-name{position:sticky;left:0;z-index:2;background:var(--sg-surface);text-align:left;padding:0 16px 0 18px;font-weight:400;white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis}
 .sg tr.sg-me .sg-name{font-weight:600}
-.sg tr.sg-hl .sg-name{background:var(--sg-soft)}
+.sg tr.sg-hl .sg-name{background:color-mix(in srgb,var(--sg-ink) 6%,transparent)}
 .sg td.sg-c{height:40px;width:48px;min-width:48px;position:relative;padding:0 var(--pr) 0 0;text-align:right}
 .sg-edit td.sg-c,.sg-edit tbody .sg-name{cursor:pointer}
 .sg .sg-gap{width:14px;min-width:14px;border:0!important;background:none!important;box-shadow:none!important}
 .sg .sg-tail{width:var(--tail,0px);min-width:var(--tail,0px);padding:0;border:0!important}
-.sg .sg-scrolled .sg-name{box-shadow:6px 0 6px -6px color-mix(in srgb,var(--sg-ink) 30%,transparent)}
-.sg th.sg-pick,.sg td.sg-pick{background:color-mix(in srgb,var(--sg-ink) 4%,var(--sg-surface))}
+.sg th.sg-pick,.sg td.sg-pick{background:color-mix(in srgb,var(--sg-ink) 5%,transparent)}
 /* Клетка: число прижато вправо одним и тем же отступом, поэтому единицы и десятки стоят в столбик. */
 .sg-s{display:inline-flex;align-items:center;justify-content:flex-end;min-width:40px;height:30px;padding:0 var(--dg) 0 6px;box-sizing:border-box;border-radius:7px;line-height:1;white-space:nowrap;
   --t:transparent;background:color-mix(in srgb,var(--t) 50%,var(--sg-surface));box-shadow:0 0 5px 2px color-mix(in srgb,var(--t) 50%,var(--sg-surface))}
@@ -52,7 +51,7 @@
   background:color-mix(in srgb,var(--t) 26%,transparent);box-shadow:0 0 12px 6px color-mix(in srgb,var(--t) 26%,transparent)}
 .sg-s.note{--t:var(--sg-note);color:var(--sg-note-ink)}
 .sg-e{display:inline-block;width:40px;height:30px;border-radius:7px}
-.sg tr.sg-hl td,.sg tr.sg-hl th{background-color:var(--sg-soft)}
+.sg tr.sg-hl td,.sg tr.sg-hl th{background-color:color-mix(in srgb,var(--sg-ink) 6%,transparent)}
 .sg td.sg-col{box-shadow:inset 0 0 0 999px color-mix(in srgb,var(--sg-ink) 5%,transparent)}
 .sg td.sg-sel .sg-s,.sg td.sg-sel .sg-e{outline:2px solid var(--sg-ink);outline-offset:0}
 .sg tfoot th,.sg tfoot td{font-size:13px;height:40px;padding:0 calc(var(--pr) + var(--dg)) 0 0}
@@ -305,7 +304,8 @@ html.tg-full .sg-land:not(.rotated) .sg-fit{padding-top:calc(var(--tg-safe-area-
 /* Мини-приложение: график лежит прямо на фоне, как на сайте, без белой плашки; имена по левому краю. */
 #schedule-panel .sg-sheet{background:none;box-shadow:none;border-radius:0;overflow:visible;padding-bottom:0}
 #schedule-panel .sg-name{background:transparent;padding-left:0}
-#schedule-panel .sg-scrolled .sg-name{background:rgba(255,255,255,.86)}
+/* Дни, ушедшие под колонку имён, обрезаются по её краю (см. scroller в schedule-grid.js): заливки у имён нет. */
+.sg thead th.sg-day,.sg td.sg-c,.sg tfoot td:not(.sg-tail){clip-path:inset(-24px -24px -24px clamp(-24px,calc(var(--edge,0px) - var(--x,99999px)),240px))}
 #schedule-panel .sg-detail{border-top:0;padding:10px 0}
 #schedule-panel .sg-expand{background:rgba(255,255,255,.7);border:0;border-radius:14px;margin-top:12px}
 #schedule-panel table.sg-near td.sg-c{height:var(--rh,48px)}
@@ -314,3 +314,10 @@ html.tg-full .sg-land:not(.rotated) .sg-fit{padding-top:calc(var(--tg-safe-area-
 /* Полосы прокрутки под графиком нет: листать можно и без подсказки. */
 #schedule-panel .sg-scroll{scrollbar-width:none}
 #schedule-panel .sg-scroll::-webkit-scrollbar{display:none}
+
+/* «Твои смены» и повёрнутый график — тоже без плашек: текст и таблица лежат прямо на фоне страницы. */
+#schedule-panel .sg-mine{background:none;padding:0;margin-bottom:20px}
+.sg-land{background:transparent}
+.sg-land .sg-name{background:transparent}
+/* Пока график открыт на весь экран, остальная страница скрыта, а фон (#bg) остаётся виден. */
+html.sg-land-open body>*:not(.sg-land):not(#bg){visibility:hidden}

@@ -84,7 +84,13 @@
   function scroller(t,sc,opts={}){
     const names=()=>t.querySelector('thead .sg-name')?.offsetWidth||0;
     let fits=false;
-    function size(){
+    // Дни, ушедшие под закреплённую колонку имён, обрезаются по её краю: без заливки и без просвечивания.
+    // x каждой ячейки считается при раскладке, край — при каждой прокрутке (одно свойство на таблицу).
+    const cells=()=>t.querySelectorAll('thead th.sg-day,td.sg-c,tfoot td:not(.sg-tail)');
+    const setEdge=()=>t.style.setProperty('--edge',(sc.scrollLeft+names())+'px');
+    function mark(){cells().forEach(c=>c.style.setProperty('--x',c.offsetLeft+'px'));setEdge();}
+    function size(){size_();mark();}
+    function size_(){
       t.style.setProperty('--tail','0px');fits=false;
       if(opts.sheet)opts.sheet.style.width='';
       if(t.classList.contains('sg-near'))t.style.setProperty('--dw',Math.floor((sc.clientWidth-names())/3)+'px');
@@ -105,8 +111,8 @@
       const head=t.querySelector(`thead th[data-day="${iso}"]`);
       if(head&&!fits)sc.scrollTo({left:head.offsetLeft-names(),behavior:smooth?'smooth':'auto'});
     }
-    sc.addEventListener('scroll',()=>t.classList.toggle('sg-scrolled',sc.scrollLeft>2),{passive:true});
-    return {size,go};
+    sc.addEventListener('scroll',()=>{t.classList.toggle('sg-scrolled',sc.scrollLeft>2);setEdge();},{passive:true});
+    return {size,go,mark};
   }
 
   // Наведение на компьютере подсвечивает строку и день.
@@ -153,6 +159,7 @@
       const names=full.querySelector('thead .sg-name').offsetWidth,heads=full.querySelectorAll('thead th.sg-day');
       const tail=Math.max(0,ls.clientWidth-names-heads[heads.length-1].offsetWidth);
       full.style.setProperty('--tail',tail+'px');full.style.setProperty('--tw',(ls.clientWidth+tail)+'px');ls.style.scrollPaddingLeft=names+'px';
+      sc.mark();
     }
     // Правило внутреннего и внешнего: колонка с необычным временем (9–17) шире остальных, чтобы вокруг плашки
     // осталось поле больше её внутреннего отступа. Остальные колонки делят то, что осталось.
@@ -168,14 +175,14 @@
       if(plain&&base<28)return;
       cols.forEach((c,i)=>{c.style.width=Math.max(need[i],base)+'px';});
     }
-    function hide(){land.hidden=true;document.body.style.overflow='';land.classList.remove('rotated');land.style.width=land.style.height='';}
+    function hide(){land.hidden=true;document.body.style.overflow='';document.documentElement.classList.remove('sg-land-open');land.classList.remove('rotated');land.style.width=land.style.height='';}
     function layout(){
       options=getOptions();
       if(!options){hide();return;}
       if(phoneLandscape()){manual=false;if(dismissed)return hide();}
       else{dismissed=false;if(!manual)return hide();}
       full.innerHTML=table({...options,near:false,scrolls:true,corner:'<button type="button" class="sg-fold">Свернуть</button>'});
-      land.hidden=false;document.body.style.overflow='hidden';fit();
+      land.hidden=false;document.body.style.overflow='hidden';document.documentElement.classList.add('sg-land-open');fit();
       // В Telegram полный экран прячет и его шапку; в браузере — Fullscreen API, где он есть.
       try{if(tg?.requestFullscreen&&!tg.isFullscreen)tg.requestFullscreen();}catch(_){}
     }
