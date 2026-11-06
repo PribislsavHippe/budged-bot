@@ -66,7 +66,9 @@
     o.people.forEach((p,r)=>{
       html+=`<tr class="${p.me?'sg-me':''}"><th class="sg-name" scope="row" data-r="${r}" ${o.edit?'tabindex="0"':''}>${esc(p.name)}${o.edit?`<button type="button" class="sg-x" data-remove="${r}" aria-label="Убрать из графика: ${esc(p.name)}" title="Убрать из графика">×</button>`:''}</th>`;
       days.forEach((iso,k)=>{
-        html+=(gap(iso,k)?g('td'):'')+`<td class="sg-c" data-r="${r}" data-day="${iso}" tabindex="0">${shift(p,iso)}</td>`;});
+        // В редакторе смену можно взять и перетащить в другую клетку.
+        const drag=o.edit&&works(parse(p.cells?.[iso]))?' draggable="true"':'';
+        html+=(gap(iso,k)?g('td'):'')+`<td class="sg-c" data-r="${r}" data-day="${iso}" tabindex="0"${drag}>${shift(p,iso)}</td>`;});
       html+=tail('td')+'</tr>';
     });
     // Итог: число людей в смене. Когда людей столько, сколько нужно, число бледное;

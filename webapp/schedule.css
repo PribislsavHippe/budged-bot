@@ -42,8 +42,10 @@
 .sg-s{display:inline-flex;align-items:center;justify-content:flex-end;min-width:40px;height:30px;padding:0 var(--dg) 0 6px;box-sizing:border-box;border-radius:7px;line-height:1;white-space:nowrap;
   --t:transparent;background:color-mix(in srgb,var(--t) 50%,var(--sg-surface));box-shadow:0 0 5px 2px color-mix(in srgb,var(--t) 50%,var(--sg-surface))}
 .sg-s b{font-weight:600;font-size:14px}
-.sg-s.rng b{font-size:12.5px;letter-spacing:-.2px}
-.sg-s.rng{padding-left:2px}
+/* Правило внутреннего и внешнего (Бюро Горбунова): отступ текста от края плашки меньше, чем расстояние
+   от плашки до соседей. Плашка интервала — равные поля внутри и поле побольше снаружи; колонку с ней
+   редактор расширяет настолько, чтобы внешнее поле поместилось. */
+.sg-s.rng{--pi:7px;--m:10px;justify-content:center;min-width:0;padding:0 var(--pi);margin:0 var(--m)}
 .sg-s:not(.off):not(.note){background:none;box-shadow:none}
 /* Обязательный выходной — спокойное бледное пятно с размытым краем, без резкой границы. */
 .sg-s.off{--t:var(--sg-off);color:color-mix(in srgb,var(--sg-off-ink) 72%,var(--sg-surface));font-size:12px;font-weight:400;justify-content:center;padding:0 6px;
@@ -96,6 +98,7 @@
 .sg-land .sg-name{min-width:0;padding:0 6px;font-size:12px;overflow:hidden;text-overflow:ellipsis}
 .sg-land .sg-s,.sg-land .sg-e{width:calc(100% - 4px);min-width:0;padding:0 var(--dg) 0 0;height:calc(var(--rh) - 4px);border-radius:5px;vertical-align:middle}
 .sg-land .sg-s.off{padding:0;font-size:9px}
+.sg-land .sg-s.rng{margin:0;justify-content:flex-end}
 .sg-land .sg-s b{font-size:12px}
 .sg-land tfoot th,.sg-land tfoot td{font-size:11px;padding:0 calc(var(--pr) + var(--dg)) 0 0}
 .sg-land tfoot .sg-name{padding:0 6px}
@@ -212,7 +215,6 @@
 #restaurant-panel .re-guide button{min-height:36px;padding:0 16px;border-radius:9px;background:var(--sg-ink);color:#fff;font-size:14px;white-space:nowrap}
 @media(max-width:1100px){.re-guide{grid-template-columns:1fr}.re-guide button{justify-self:start}}
 /* Режимы нажатия и отмена — над таблицей. */
-.re-tools{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;width:100%}
 #restaurant-panel .re-history button{min-height:32px;min-width:32px;padding:0;border-radius:8px;font-size:18px;color:var(--sg-ink)}
 #restaurant-panel .re-history button:disabled{opacity:.3}
 /* Нарушения — кнопки: нажал — открылся день и клетка. */
@@ -248,6 +250,7 @@ html.tg-full .sg-land:not(.rotated) .sg-fit{padding-top:calc(var(--tg-safe-area-
 .sg-var td.sg-c{height:30px;width:42px;min-width:42px}
 .sg-var .sg-s{height:22px;min-width:34px;padding:0 7px 0 4px;border-radius:5px}
 .sg-var .sg-s b{font-size:12.5px}
+.sg-var .sg-s.rng{padding:0 5px;margin:0 6px}
 .sg-var .sg-e{height:22px;width:34px}
 .sg-var tfoot th,.sg-var tfoot td{height:32px}
 .sg-var .sg-name{padding:0 12px 0 14px}
@@ -276,7 +279,25 @@ html.tg-full .sg-land:not(.rotated) .sg-fit{padding-top:calc(var(--tg-safe-area-
 .re-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:50;max-width:calc(100vw - 32px);padding:10px 18px;border-radius:999px;background:var(--sg-ink);color:#fff;font-size:14px;box-shadow:0 6px 24px rgba(0,0,0,.2)}
 
 /* Редактор на сайте: колонки одной ширины, подобранной так, чтобы весь период стоял на экране; ползунка нет. */
-.sg-edit thead th.sg-day,.sg-edit td.sg-c,.sg-edit tfoot td{width:var(--cw,48px);min-width:var(--cw,48px);box-sizing:border-box}
+.sg-edit td.sg-c:focus-visible{outline:none}
 .sg-edit .sg-name{max-width:150px}
 .re-sheet .sg-scroll{scrollbar-width:none;scroll-snap-type:none}
 .re-sheet .sg-scroll::-webkit-scrollbar{display:none}
+
+/* Перетаскивание смены: взять и перенести в другую клетку. */
+.sg-edit td.sg-c[draggable=true]{cursor:grab}
+.sg-edit td.sg-c[draggable=true]:active{cursor:grabbing}
+.sg-edit td.sg-drag{opacity:.35}
+.sg-edit td.sg-drop{background:color-mix(in srgb,#0088ff 12%,transparent);border-radius:10px}
+.re-error:empty{display:none}
+.re-panel-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.re-panel-head h3{flex:1;min-width:0}
+#restaurant-panel .re-close{min-width:28px;min-height:28px;padding:0;border-radius:50%;font-size:18px;line-height:1;color:var(--sg-muted)}
+/* Строка событий над датами ниже: пустая она занимала лишнее место. */
+.sg-edit thead tr.sg-hv th{height:16px;padding-top:4px}
+.sg-edit thead th.sg-ev i{top:4px}
+
+/* Высота строк редактора подбирается под окно, чтобы весь график был на первом экране. */
+.sg-edit td.sg-c{height:var(--rh,40px)}
+.sg-edit .sg-s,.sg-edit .sg-e{height:min(30px,calc(var(--rh,40px) - 8px))}
+.sg-edit tfoot th,.sg-edit tfoot td{height:min(40px,var(--rh,40px))}

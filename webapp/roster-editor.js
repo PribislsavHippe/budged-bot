@@ -34,28 +34,27 @@
       <div class="re-head">
         <div class="re-period">
           <button type="button" class="re-step" data-step="-1" aria-label="Предыдущий график">‹</button>
-          <strong class="re-title"></strong>
+          <button type="button" class="re-title" title="Изменить даты"></button>
           <button type="button" class="re-step" data-step="1" aria-label="Следующий график">›</button>
           <select class="re-jump" aria-label="Все графики" hidden></select>
           <button type="button" class="re-new">+ График</button>
-          <button type="button" class="re-dates">Другие даты</button>
+          <button type="button" class="re-all" hidden>Все варианты</button>
           <button type="button" class="re-delete is-off">Удалить черновик</button>
         </div>
         <div class="re-actions"><button type="button" class="re-ask" disabled>Запросить выходные</button><button type="button" class="re-build" disabled>Собрать заново</button><button type="button" class="btn re-publish" disabled>Опубликовать</button></div>
       </div>
-      <form class="re-create" hidden><strong>Другие даты</strong><label>с <input type="date" name="start" required></label><label>по <input type="date" name="end" required></label>
-        <button class="btn">Создать</button><button type="button" class="re-cancel">Отмена</button></form>
+      <form class="re-create" hidden><strong>Даты графика</strong><label>с <input type="date" name="start" required></label><label>по <input type="date" name="end" required></label>
+        <button class="btn">Сохранить</button><button type="button" class="re-cancel">Отмена</button></form>
       <p class="re-error" role="alert"></p>
       <p class="re-empty" hidden>Графиков пока нет.</p>
       <div class="re-editor" hidden>
         <div class="re-pickview" hidden></div>
         <div class="re-editview">
           <div class="re-main">
-            <div class="re-tools" hidden><button type="button" class="re-all">Все варианты</button></div>
             <section class="sg-sheet re-sheet"><div class="re-history" hidden><button type="button" class="re-undo" title="Отменить (Ctrl+Z)" aria-label="Отменить" disabled>↶</button><button type="button" class="re-redo" title="Вернуть (Ctrl+Shift+Z)" aria-label="Вернуть" disabled>↷</button></div><div class="sg-scroll"><table class="sg-edit"></table></div></section>
             <details class="re-adder" hidden><summary>+ Добавить сотрудника</summary><div class="re-chips"></div></details></div>
           <aside class="re-aside">
-            <section class="re-card re-panel" aria-live="polite"><h3 class="re-who"></h3>
+            <section class="re-card re-panel" aria-live="polite" hidden><header class="re-panel-head"><h3 class="re-who"></h3><button type="button" class="re-close" aria-label="Закрыть" title="Закрыть (Esc)">×</button></header>
               <div class="re-block re-person"></div><div class="re-block re-cell"></div><div class="re-block re-day"></div></section>
             <section class="re-card re-check" aria-label="Проверка правил"><h3>Проверка <span class="re-badge"></span></h3><div class="re-report"></div></section>
           </aside>
@@ -96,7 +95,8 @@
       root.querySelectorAll('.re-step').forEach(b=>{b.hidden=list.length<2;b.disabled=i<0||!list[i+(+b.dataset.step)];});
       q('.re-empty').hidden=!!periods.length;
       const next=suggested();q('.re-new').title=G.period(next[0],next[1]);
-      if(!cur)q('.re-title').textContent='';
+      if(!cur){q('.re-title').textContent='';q('.re-all').hidden=true;}
+      q('.re-title').disabled=!cur||!!cur.published_at;q('.re-title').title=cur?.published_at?'':'Изменить даты';
       q('.re-ask').disabled=q('.re-build').disabled=q('.re-publish').disabled=!cur;
       q('.re-delete').classList.toggle('is-off',!cur||!!cur.published_at);
     }
@@ -206,11 +206,38 @@
     }
     // Весь график помещается на экране: ширина колонок подбирается под место, а не наоборот.
     // Совсем узкое окно прокручивается, но без ползунка.
+    // Колонка с необычным временем (9–17) шире остальных: вокруг плашки остаётся внешнее поле, которое
+    // больше её внутреннего отступа. Остальные колонки делят то, что осталось.
     function sizeGrid(){
-      const names=grid.querySelector('thead .sg-name')?.offsetWidth||0,room=sheet.parentElement.clientWidth;
-      const width=Math.floor((room-names-2)/Math.max(1,cur.days.length));
-      grid.style.setProperty('--cw',Math.min(60,Math.max(44,width))+'px');
+      const cols=grid.querySelectorAll('colgroup col'),head=grid.querySelector('thead .sg-name');
+      if(!head||cols.length<cur.days.length+1)return;
+      grid.style.tableLayout='';grid.style.width='';cols.forEach(c=>{c.style.width='';});
+      const names=head.offsetWidth,room=sheet.parentElement.clientWidth-2,MIN=44,MAX=60,PR=3;
+      const gap=parseFloat(getComputedStyle(grid.querySelector('.sg-s.rng')||grid).getPropertyValue('--m'))||10;
+      const need=cur.days.map(day=>{let w=0;
+        grid.querySelectorAll(`td.sg-c[data-day="${day}"] .sg-s.rng`).forEach(p=>{w=Math.max(w,p.offsetWidth+2*gap+PR);});return w;});
+      const wide=need.filter(Boolean),plain=cur.days.length-wide.length;
+      const base=plain?Math.min(MAX,Math.max(MIN,Math.floor((room-names-wide.reduce((a,b)=>a+b,0))/plain))):MAX;
+      const widths=need.map(w=>Math.max(w,base));
+      cols[0].style.width=names+'px';widths.forEach((w,i)=>{cols[i+1].style.width=w+'px';});
+      grid.style.tableLayout='fixed';grid.style.width=names+widths.reduce((a,b)=>a+b,0)+'px';
+      fitRows();
       scroll.size();
+      // Не поместилось — таблица листается; хвост даёт довести до последнего дня.
+      const tail=parseFloat(grid.style.getPropertyValue('--tail'))||0;
+      if(tail)grid.style.width=names+widths.reduce((a,b)=>a+b,0)+tail+'px';
+    }
+    // График целиком на первом экране: высота строк подбирается под окно (30–40 px), а не наоборот.
+    function fitRows(){
+      grid.style.setProperty('--rh','40px');
+      const top=grid.getBoundingClientRect().top+scrollY,room=innerHeight-top-20,rows=Math.max(1,D().people.length);
+      let rh=40;
+      for(let pass=0;pass<4;pass++){
+        grid.style.setProperty('--rh',rh+'px');
+        const over=grid.offsetHeight-room;
+        if(over<=0||rh<=30)break;
+        rh=Math.max(30,rh-Math.ceil(over/(rows+1)));
+      }
     }
     function renderGrid(){
       const left=sc.scrollLeft;
@@ -281,7 +308,7 @@
     function applyView(){
       const pickMode=showPick();
       q('.re-pickview').hidden=!pickMode;q('.re-editview').hidden=pickMode;
-      q('.re-tools').hidden=!pickMode&&!(D().variants||[]).length;q('.re-all').hidden=!(D().variants||[]).length;
+      q('.re-all').hidden=!(D().variants||[]).length||pickMode;
       if(pickMode)renderPick();else{renderGrid();renderCell();renderSide();}
       renderState();
     }
@@ -300,7 +327,9 @@
     }
     function renderPanel(){
       if(!cur)return;
-      if(!side){const today=iso(new Date());side={kind:'day',day:cur.days.includes(today)?today:cur.days[0]};}
+      // Пока ничего не выбрано, вместо пустой карточки справа стоит проверка правил.
+      q('.re-panel').hidden=!sel&&!side;
+      if(!sel&&!side)return;
       const f=focusOf(),p=f.r!=null?person(f.r):null;
       q('.re-who').innerHTML=`${p?esc(p.name):f.day?esc(G.dayName(f.day)):'Смена'}<small>${p&&f.day?esc(G.dayName(f.day)):''}</small>`;
       blockPerson(p);blockCell(f,p);blockDay(f);blockAdd();
@@ -344,6 +373,7 @@
       box.hidden=!addable.length;
       q('.re-chips').innerHTML=addable.map(t=>`<button type="button" data-add="${esc(t.id)}">${esc(t.report_name)}</button>`).join('');
     }
+    q('.re-close').onclick=()=>{sel=null;side=null;clearSel();renderPanel();};
     q('.re-chips').addEventListener('click',e=>{
       const b=e.target.closest('[data-add]');if(!b)return;
       const t=team.find(x=>x.id===b.dataset.add);
@@ -407,8 +437,37 @@
         return;
       }
       if(e.key==='Enter'){e.preventDefault();if(typed){applyCell(typed);typed='';}else q('.re-cell button')?.focus();}
-      if(e.key==='Escape'){sel=null;clearSel();renderPanel();}
+      if(e.key==='Escape'){sel=null;side=null;clearSel();renderPanel();}
     });
+    // Смену можно взять и перетащить на другую клетку: в пустую — переезжает, в занятую — меняются местами.
+    // В обязательный выходной человека смена не переносится.
+    let drag=null;
+    const mark=cell=>{grid.querySelectorAll('.sg-drop').forEach(x=>x.classList.remove('sg-drop'));cell?.classList.add('sg-drop');};
+    grid.addEventListener('dragstart',e=>{
+      const c=e.target.closest('td.sg-c');if(!c)return;
+      drag={r:+c.dataset.r,day:c.dataset.day};e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain','Смена');
+      requestAnimationFrame(()=>c.classList.add('sg-drag'));
+    });
+    grid.addEventListener('dragover',e=>{
+      const c=e.target.closest('td.sg-c');if(!drag||!c)return;
+      e.preventDefault();e.dataTransfer.dropEffect='move';mark(c);
+    });
+    grid.addEventListener('dragend',()=>{drag=null;grid.querySelectorAll('.sg-drag,.sg-drop').forEach(x=>x.classList.remove('sg-drag','sg-drop'));});
+    grid.addEventListener('drop',e=>{
+      const c=e.target.closest('td.sg-c');if(!drag||!c)return;
+      e.preventDefault();const from=drag,to={r:+c.dataset.r,day:c.dataset.day};drag=null;mark(null);moveShift(from,to);
+    });
+    function moveShift(from,to){
+      const a=person(from.r),b=person(to.r);
+      if(!a||!b||(from.r===to.r&&from.day===to.day))return;
+      const at=(p,day)=>D().cells[p.name]?.[day]||'',off=(p,day)=>(D().off[p.name]||[]).includes(day);
+      const mine=at(a,from.day),theirs=at(b,to.day);
+      if(off(b,to.day))return toast(`${b.name}: в этот день обязательный выходной`);
+      if(theirs&&off(a,from.day))return toast(`${a.name}: в этот день обязательный выходной`);
+      setCell(b.name,to.day,mine);setCell(a.name,from.day,theirs);
+      changed();select(to.r,to.day,false);
+      toast(theirs?`${a.name} и ${b.name} поменялись сменами`:from.r===to.r?`Смена ${a.name} перенесена`:`Смена ${a.name} → ${b.name}`);
+    }
     grid.addEventListener('click',e=>{
       const x=e.target.closest('.sg-x');if(x){e.stopPropagation();return removePerson(+x.dataset.remove);}
       const cell=e.target.closest('td.sg-c');if(cell)return select(+cell.dataset.r,cell.dataset.day);
@@ -491,16 +550,30 @@
     };
     async function createPeriod(start,end,done){
       if(!(await flush()))return;
-      const buttons=[q('.re-new'),q('.re-dates')];buttons.forEach(b=>b.disabled=true);
+      const buttons=[q('.re-new')];buttons.forEach(b=>b.disabled=true);
       toast('Собираю варианты…',true);
       try{const data=await api('create',{restaurant_id:placeId,start,end},120000);team=[];done?.();await list(data.id);toast('');}
       catch(err){failed(err);toast('');}finally{buttons.forEach(b=>b.disabled=false);}
     }
     // Один клик: следующий период по порядку, даты вводить не нужно. «Другие даты» — на всякий случай.
     q('.re-new').onclick=()=>{const [a,b]=suggested();createPeriod(a,b);};
-    q('.re-dates').onclick=()=>{const [a,b]=suggested();const f=q('.re-create');f.start.value=a;f.end.value=b;f.hidden=false;f.start.focus();};
+    // Даты графика — сама дата в заголовке: нажал, поменял, сохранил. Черновик остаётся, лишние дни отбрасываются.
+    q('.re-title').onclick=()=>{
+      if(!cur||cur.published_at)return;
+      const f=q('.re-create');f.start.value=cur.start;f.end.value=cur.end;f.hidden=!f.hidden;if(!f.hidden)f.start.focus();
+    };
     q('.re-cancel').onclick=()=>{q('.re-create').hidden=true;};
-    q('.re-create').onsubmit=e=>{e.preventDefault();const f=e.target;createPeriod(f.start.value,f.end.value,()=>{f.hidden=true;});};
+    q('.re-create').onsubmit=async e=>{
+      e.preventDefault();const f=e.target;
+      if(!cur||(f.start.value===cur.start&&f.end.value===cur.end)){f.hidden=true;return;}
+      const lost=cur.days.filter(d=>d<f.start.value||d>f.end.value).length;
+      if(lost&&Object.keys(D().cells).length&&!confirm(`Дней вне новых дат: ${lost}. Их смены пропадут, варианты придётся собрать заново. Продолжить?`))return;
+      if(!(await flush()))return;
+      busy=true;renderState();error('');
+      try{const data=await api('dates',{id:cur.id,revision:cur.revision,start:f.start.value,end:f.end.value});
+        accept(data,true);sel=null;side=null;forcePick=false;f.hidden=true;renderAll();refreshOffs();}
+      catch(err){failed(err);}finally{busy=false;renderState();}
+    };
     // Ресторан выбирает заголовок страницы (только у владельца нескольких ресторанов).
     async function setPlace(id){
       if(!id||id===placeId||!(await flush()))return;

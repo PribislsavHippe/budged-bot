@@ -415,6 +415,9 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([p['name'] for p in made['draft']['people']], ['Аня', *NAMES[1:7]])
         draft = made['draft']
         self.assertEqual(len(draft['variants']), 3)
+        # Порядок совпадает с написанным: у лучшего минусов не больше, чем плюсов, чем у следующего.
+        balance = [len(v['cons']) - len(v['pros']) for v in draft['variants']]
+        self.assertEqual(balance, sorted(balance))
         self.assertEqual(draft['variant'], draft['variants'][0]['id'])
         self.assertFalse(draft['picked'])
         self.assertTrue(draft['cells'] and draft['off_auto'])
@@ -604,6 +607,29 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         next(p for p in draft['people'] if p['name'] == 'Аня')['student'] = True
         await self.roster('save', MANAGER, id=made['id'], revision=opened['revision'], draft=draft)
         self.assertIn('Записал выходные: 17, 18, 19, 20, 21 ноября', (await self.said('17-21')).args[0])
+
+    async def test_dates_of_a_draft_change_in_place_and_extra_days_are_dropped(self):
+        made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
+        draft = made['draft']
+        draft['events'] = {'2026-11-22': 'Генуборка', '2026-11-17': 'Собрание'}
+        saved = await self.roster('save', MANAGER, id=made['id'], revision=made['revision'], draft=draft)
+        shorter = await self.roster('dates', MANAGER, id=made['id'], revision=saved['revision'], start='2026-11-16', end='2026-11-20')
+        self.assertEqual((shorter['start'], shorter['end']), ('2026-11-16', '2026-11-20'))
+        self.assertEqual(shorter['draft']['events'], {'2026-11-17': 'Собрание'})
+        self.assertTrue(all(day <= '2026-11-20' for row in shorter['draft']['cells'].values() for day in row))
+        self.assertEqual(shorter['draft']['variants'], [])
+        # Дальше период можно сдвинуть; пересечение с другим графиком запрещено.
+        other = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-25', end='2026-11-30')
+        clash = await self.roster('dates', MANAGER, 400, id=other['id'], revision=other['revision'], start='2026-11-19', end='2026-11-30')
+        self.assertIn('пересекаются', clash['error'])
+        moved = await self.roster('dates', MANAGER, id=shorter['id'], revision=shorter['revision'], start='2026-11-14', end='2026-11-24')
+        self.assertEqual(len(moved['draft']['events']), 1)
+        await self.roster('dates', MANAGER, 400, id=moved['id'], revision=moved['revision'], start='2026-11-24', end='2026-11-16')
+        await self.roster('dates', MANAGER, 409, id=moved['id'], revision=1, start='2026-11-14', end='2026-11-22')
+        # У опубликованного графика даты не меняются.
+        published = await self.roster('publish', MANAGER, id=moved['id'], revision=moved['revision'])
+        refused = await self.roster('dates', MANAGER, 400, id=moved['id'], revision=published['revision'], start='2026-11-14', end='2026-11-23')
+        self.assertIn('не меняются', refused['error'])
 
     async def test_periods_do_not_overlap_and_drafts_can_be_deleted(self):
         made = await self.roster('create', OWNER, restaurant_id=PLACE, start='2026-11-01', end='2026-11-15')

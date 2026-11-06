@@ -136,6 +136,21 @@ def normalize(draft, start, end):
     return result
 
 
+def trim(draft, start, end):
+    """Оставляет в черновике только дни нового периода. Варианты считались на прежние даты, поэтому сбрасываются."""
+    inside = {date.fromordinal(start.toordinal() + i).isoformat() for i in range((end - start).days + 1)}
+    out = dict(draft)
+    for key in ('off', 'off_auto', 'off_requested', 'wish_off'):
+        kept = {n: [d for d in days if d in inside] for n, days in (draft.get(key) or {}).items()}
+        out[key] = {n: days for n, days in kept.items() if days}
+    out['days'] = {d: s for d, s in (draft.get('days') or {}).items() if d in inside}
+    out['events'] = {d: s for d, s in (draft.get('events') or {}).items() if d in inside}
+    cells = {n: {d: v for d, v in row.items() if d in inside} for n, row in (draft.get('cells') or {}).items()}
+    out['cells'] = {n: row for n, row in cells.items() if row}
+    out['variants'], out['variant'], out['picked'] = [], None, True
+    return out
+
+
 def clean_variants(raw, names, in_period):
     """Варианты графика, собранные программой: смены, автоматические выходные и описание."""
     out = []
@@ -446,6 +461,24 @@ async def handle(request):
                     await asyncio.to_thread(build_all, draft, start, end, asked)
             stage = 'save'
             return response(_opened(await _save(row, uid, revision, {'draft': draft})))
+        if action == 'dates':
+            # Даты черновика меняются на месте: лишние дни отбрасываются, новые остаются пустыми.
+            if row.get('published_at'):
+                raise ValueError('У опубликованного графика даты не меняются.')
+            new_start, new_end = _day(body.get('start')), _day(body.get('end'))
+            if new_end < new_start or (new_end - new_start).days >= roster.MAX_DAYS:
+                raise ValueError(f'Период — от одного до {roster.MAX_DAYS} дней.')
+            stage = 'dates'
+            others = (await db._execute(db.supabase.table('rosters').select('id,start_date,end_date')
+                                        .eq('restaurant_id', row['restaurant_id']).lte('start_date', new_end.isoformat())
+                                        .gte('end_date', new_start.isoformat()).limit(5))).data
+            clash = [c for c in others if c['id'] != row['id']]
+            if clash:
+                a, b = date.fromisoformat(clash[0]['start_date']), date.fromisoformat(clash[0]['end_date'])
+                raise ValueError(f'Даты пересекаются с графиком {a.day}.{a.month:02d}–{b.day}.{b.month:02d}.')
+            draft = normalize(trim(row['draft'], new_start, new_end), new_start, new_end)
+            return response(_opened(await _save(row, uid, revision, {
+                'start_date': new_start.isoformat(), 'end_date': new_end.isoformat(), 'draft': draft})))
         if action == 'publish':
             if revision != row['revision']:
                 raise Stale()

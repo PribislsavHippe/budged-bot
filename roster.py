@@ -437,7 +437,9 @@ def build_variants(request, iterations=120000, restarts=2):
         results.append({'id': variant['id'], 'title': variant['title'], 'schedule': schedule,
                         'off': auto, 'metrics': metrics(trial, found, schedule)})
     describe(results)
-    results.sort(key=lambda r: (r['metrics']['problems'], r['metrics']['hours'] + r['metrics']['money'] + r['metrics']['shifts']))
+    # Порядок совпадает с тем, что читает менеджер: меньше нарушений, затем минусов больше плюсов, затем разброс.
+    results.sort(key=lambda r: (r['metrics']['problems'], len(r['cons']) - len(r['pros']),
+                                r['metrics']['hours'] + r['metrics']['money'] + r['metrics']['shifts']))
     # Названия нейтральные: чем вариант хорош, говорят его плюсы и минусы, посчитанные по цифрам.
     for letter, result in zip('АБВГД', results):
         result['title'] = f'Вариант {letter}'

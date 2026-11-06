@@ -152,7 +152,6 @@
   .restaurant-page .re-title{flex:1 0 60%;text-align:left}
   .restaurant-page .re-steps{flex-wrap:wrap;gap:6px 10px}
   .restaurant-page .re-steps li+li::after{display:none}
-  .restaurant-page .re-tools{gap:8px}
   .restaurant-page .re-modes{max-width:100%}
   .restaurant-page #restaurant-panel .re-modes button{padding:0 10px;font-size:13px;gap:6px}
   .restaurant-page .re-modes i{display:none}
@@ -164,9 +163,9 @@
    Ничего не появляется и не исчезает, сдвигая соседей: место под него занято всегда. */
 .restaurant-page{--sp1:4px;--sp2:8px;--sp3:12px;--sp4:16px;--sp5:24px;--ctl:36px}
 @media(max-width:700px){.restaurant-page{--ctl:44px}}
-.restaurant-page .site-bar{min-height:76px;padding-bottom:0;margin-bottom:var(--sp2)}
+.restaurant-page .site-bar{min-height:64px;padding-bottom:0;margin-bottom:0}
 .restaurant-page #restaurant-title{min-height:41px}
-.restaurant-page .restaurant-sections{margin:0 0 var(--sp5)}
+.restaurant-page .restaurant-sections{margin:0 0 var(--sp4)}
 .restaurant-page #restaurant-panel #restaurant-sections[hidden]{display:inline-flex!important;visibility:hidden}
 .restaurant-page #restaurant-error,.restaurant-page #restaurant-notice{margin:0 0 var(--sp4)}
 .restaurant-page .site-toolbar{margin:0 0 var(--sp4);min-height:var(--ctl)}
@@ -201,7 +200,6 @@
 .restaurant-page .re-fields{gap:var(--sp2)}
 .restaurant-page .re-row{gap:var(--sp2);margin-bottom:var(--sp3)}
 .restaurant-page .re-create{gap:var(--sp3) var(--sp4);padding:var(--sp4) var(--sp5)}
-.restaurant-page .re-tools{gap:var(--sp2)}
 /* Занятое место: высота не зависит от того, есть ли выбор, текст или ошибка. */
 .restaurant-page .re-title{min-height:28px}
 .restaurant-page .re-guide{min-height:28px}
@@ -223,7 +221,6 @@
 .restaurant-page .re-steps li.done{color:var(--label2)}
 .restaurant-page .re-guide p{display:none}
 
-.restaurant-page .re-tools{justify-content:flex-start;min-height:var(--ctl)}
 .restaurant-page .re-aside{position:static}
 
 /* Вариант в списке: заголовок и подпись «лучший по расчёту», плюсы с минусами, кнопка выбора. */
@@ -234,8 +231,6 @@
 .restaurant-page .re-var-info li.con::before{color:var(--red)}
 .restaurant-page #restaurant-panel .re-var-info .btn{justify-self:start}
 .restaurant-page #restaurant-panel .re-all{background:none;color:var(--blue)}
-.restaurant-page #restaurant-panel .re-dates{min-height:var(--ctl);padding:0 8px;color:var(--label2);font-size:13px;background:none}
-.restaurant-page .re-tools{justify-content:space-between}
 .restaurant-page .sg-s.off{--t:#ffd0d2}
 .restaurant-page #restaurant-panel .re-ask{min-height:var(--ctl);padding:0 16px;border:0;border-radius:999px;background:var(--fill3);color:var(--blue);font-size:14px;font-weight:500}
 .restaurant-page #restaurant-panel .re-ask:disabled{opacity:.35}
@@ -249,6 +244,12 @@
 .restaurant-page .re-title{font:700 22px/28px var(--sf);letter-spacing:.35px}
 .restaurant-page .re-head{flex-wrap:wrap}
 @media(min-width:1180px){.restaurant-page .re-head{flex-wrap:nowrap}}
+.restaurant-page .re{gap:var(--sp4)}
+/* Дата в заголовке — кнопка: по нажатию можно поменять даты. */
+.restaurant-page #restaurant-panel button.re-title{font:700 22px/28px var(--sf);letter-spacing:.35px;background:none;border:0;color:var(--label);padding:0 var(--sp2);min-height:var(--ctl);border-radius:12px;cursor:pointer}
+.restaurant-page #restaurant-panel button.re-title:not(:disabled):hover{background:var(--fill3)}
+.restaurant-page #restaurant-panel button.re-title:disabled{cursor:default;opacity:1}
+.restaurant-page #restaurant-panel .re-all{background:none;color:var(--blue);min-height:var(--ctl);padding:0 var(--sp3);border-radius:999px}
 .restaurant-page .re-history button{font-size:20px}
 .restaurant-page .re-toast{background:rgba(28,28,30,.92);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}
 /* Блоки карточки: тонкие разделители, подписи спокойные. */
@@ -257,3 +258,11 @@
 .restaurant-page #restaurant-panel .re-adder summary{color:var(--blue);padding:0 var(--sp1)}
 .restaurant-page #restaurant-panel .re-chips button{border:0;background:var(--fill3);color:var(--label)}
 .restaurant-page .re-main{align-content:start}
+
+/* Таблица редактора без плашки: график лежит прямо на фоне страницы. Имена по левому краю заголовка;
+   закреплённая колонка получает фон только когда таблицу листают, иначе цифры наезжали бы на имена. */
+.restaurant-page .re-sheet{background:none;box-shadow:none;border-radius:0;overflow:visible;padding-bottom:0}
+.restaurant-page .re-sheet .sg-name{background:transparent;padding-left:0}
+.restaurant-page .re-sheet .sg-scrolled .sg-name{background:var(--glass-strong)}
+.restaurant-page .re-sheet .sg-s.note:not(.off){background:color-mix(in srgb,var(--t) 60%,transparent);box-shadow:0 0 6px 3px color-mix(in srgb,var(--t) 40%,transparent)}
+.restaurant-page .re-sheet .re-history{left:0;top:6px}
