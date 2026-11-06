@@ -1,5 +1,6 @@
-// Составление графика на сайте ресторана: период, люди, выходные и пожелания, настройки дня,
-// сборка черновика программой, ручная правка с проверкой правил и публикация для команды.
+// Составление графика на сайте ресторана: при создании программа сама ставит обязательные выходные и
+// собирает несколько вариантов; менеджер выбирает вариант, правит клетки и публикует для команды.
+// В график попадают только подтверждённые сотрудники ресторана.
 (() => {
   'use strict';
   const G=window.ScheduleGrid;if(!G)return;
@@ -14,6 +15,11 @@
     else{a=new Date(now.getFullYear(),now.getMonth()+1,1);b=new Date(now.getFullYear(),now.getMonth()+1,15);}
     return [iso(a),iso(b)];
   }
+  // Периоды всегда одни и те же: с 1 по 15 и с 16 до конца месяца. Новый — сразу после последнего.
+  function halfAfter(endIso){
+    const d=G.at(endIso),y=d.getFullYear(),m=d.getMonth();
+    return d.getDate()<=15?[iso(new Date(y,m,16)),iso(new Date(y,m+1,0))]:[iso(new Date(y,m+1,1)),iso(new Date(y,m+1,15))];
+  }
   const daysOf=(a,b)=>{const out=[];for(let d=G.at(a);d<=G.at(b);d.setDate(d.getDate()+1))out.push(iso(d));return out;};
 
   function open(root,opts){
@@ -21,39 +27,39 @@
     if(root._roster)return root._roster.refresh(opts.places);
     let places=opts.places||[],placeId=places[0]?.id,periods=[],cur=null,team=[],sel=null,side=null;
     let edits=0,saved=0,saving=false,timer=null,busy=false;
-    // Отмена: снимки черновика до каждого изменения. Режим: что ставит нажатие на клетку.
-    let undo=[],redo=[],last=null,mode='shift',painting=null;
+    // Отмена: снимки черновика до каждого изменения.
+    let undo=[],redo=[],last=null,forcePick=false,offsInfo=null,note='';
     root.innerHTML=`<div class="re sg">
+      <div class="re-guide" role="status"></div>
       <div class="re-head">
         <div class="re-period">
           <button type="button" class="re-step" data-step="-1" aria-label="Предыдущий график">‹</button>
-          <div class="re-heading"><strong class="re-title">График</strong><span class="re-state" role="status"></span></div>
+          <div class="re-heading"><strong class="re-title"></strong><span class="re-state" role="status"></span></div>
           <button type="button" class="re-step" data-step="1" aria-label="Следующий график">›</button>
           <select class="re-jump" aria-label="Все графики" hidden></select>
           <select class="re-place" aria-label="Ресторан" hidden></select>
-          <button type="button" class="re-new">+ Новый график</button>
-          <button type="button" class="re-delete" hidden>Удалить черновик</button>
+          <button type="button" class="re-new"></button>
+          <button type="button" class="re-dates">Другие даты</button>
+          <button type="button" class="re-delete is-off">Удалить черновик</button>
         </div>
-        <div class="re-guide" role="status" hidden></div>
-        <div class="re-actions"><button type="button" class="re-build" hidden>Собрать черновик</button><button type="button" class="btn re-publish" hidden>Опубликовать</button></div>
+        <div class="re-actions"><button type="button" class="re-ask" disabled>Запросить выходные</button><button type="button" class="re-build" disabled>Собрать заново</button><button type="button" class="btn re-publish" disabled>Опубликовать</button></div>
       </div>
-      <form class="re-create" hidden><strong>Новый график</strong><label>с <input type="date" name="start" required></label><label>по <input type="date" name="end" required></label>
+      <form class="re-create" hidden><strong>Другие даты</strong><label>с <input type="date" name="start" required></label><label>по <input type="date" name="end" required></label>
         <button class="btn">Создать</button><button type="button" class="re-cancel">Отмена</button></form>
       <p class="re-error" role="alert"></p>
       <p class="re-empty" hidden>Графиков пока нет.</p>
       <div class="re-editor" hidden>
-        <div class="re-main">
-          <div class="re-tools"><div class="re-modes" role="radiogroup" aria-label="Что ставить по нажатию">
-              <button type="button" role="radio" data-mode="shift" aria-checked="true">Смены</button>
-              <button type="button" role="radio" data-mode="off" aria-checked="false"><i class="sg-s off">вых</i>Выходные</button>
-              <button type="button" role="radio" data-mode="wish" aria-checked="false"><i class="re-wish-mark"></i>Пожелания</button></div>
-            <div class="re-history"><button type="button" class="re-undo" title="Отменить (Ctrl+Z)" disabled>↶ Отменить</button><button type="button" class="re-redo" title="Вернуть (Ctrl+Shift+Z)" disabled>↷</button></div></div>
-          <section class="sg-sheet re-sheet"><div class="sg-scroll"><table class="sg-edit"></table></div></section></div>
-        <aside class="re-aside">
-          <section class="re-card re-cell" aria-live="polite"></section>
-          <section class="re-card re-side" aria-label="Настройки"></section>
-          <section class="re-card re-check" aria-label="Проверка правил"><h3>Проверка <span class="re-badge"></span></h3><div class="re-report"></div></section>
-        </aside>
+        <div class="re-pickview" hidden></div>
+        <div class="re-editview">
+          <div class="re-main">
+            <div class="re-tools"><button type="button" class="re-all">Все варианты</button><div class="re-history"><button type="button" class="re-undo" title="Отменить (Ctrl+Z)" disabled>↶ Отменить</button><button type="button" class="re-redo" title="Вернуть (Ctrl+Shift+Z)" disabled>↷</button></div></div>
+            <section class="sg-sheet re-sheet"><div class="sg-scroll"><table class="sg-edit"></table></div></section></div>
+          <aside class="re-aside">
+            <section class="re-card re-cell" aria-live="polite"></section>
+            <section class="re-card re-side" aria-label="Настройки"></section>
+            <section class="re-card re-check" aria-label="Проверка правил"><h3>Проверка <span class="re-badge"></span></h3><div class="re-report"></div></section>
+          </aside>
+        </div>
       </div></div>`;
     const q=s=>root.querySelector(s),grid=q('.sg-edit'),sc=grid.parentElement,sheet=q('.re-sheet');
     const scroll=G.scroller(grid,sc,{sheet});G.hover(grid);
@@ -75,6 +81,7 @@
     function stateOf(p){return p.published_at?(p.changed?'опубликован, есть новые правки':'опубликован'):'черновик';}
     // Периоды листаются стрелками по датам, как в мини-приложении; список — для прыжка к давним.
     const ordered=()=>[...periods].sort((a,b)=>a.start<b.start?-1:1);
+    const suggested=()=>{const all=ordered();return all.length?halfAfter(all[all.length-1].end):nextHalf();};
     function renderPeriods(){
       q('.re-place').hidden=places.length<2;
       q('.re-place').innerHTML=places.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');q('.re-place').value=placeId;
@@ -84,9 +91,10 @@
       if(cur)q('.re-jump').value=cur.id;
       root.querySelectorAll('.re-step').forEach(b=>{b.hidden=list.length<2;b.disabled=i<0||!list[i+(+b.dataset.step)];});
       q('.re-empty').hidden=!!periods.length;
+      const next=suggested();q('.re-new').textContent=`+ График ${G.period(next[0],next[1])}`;
       if(!cur){q('.re-title').textContent='';q('.re-state').textContent='';}
-      q('.re-build').hidden=q('.re-publish').hidden=!cur;
-      q('.re-delete').hidden=!cur||!!cur.published_at;
+      q('.re-ask').disabled=q('.re-build').disabled=q('.re-publish').disabled=!cur;
+      q('.re-delete').classList.toggle('is-off',!cur||!!cur.published_at);
     }
     async function list(openId){
       error('');
@@ -96,14 +104,16 @@
     }
     async function load(id){
       if(!(await flush()))return;
-      try{const data=await api('open',{id});team=data.team||[];accept(data,true);sel=null;side=null;renderAll();
+      try{const data=await api('open',{id});team=data.team||[];note='';accept(data,true);sel=null;side=null;renderAll();refreshOffs();
         const today=iso(new Date());scroll.go(cur.days.includes(today)?today:cur.days[0],false);}
       catch(e){failed(e);}
     }
     function accept(data,replace){
       const keep=cur&&cur.id===data.id&&!replace?cur.draft:null;
-      if(cur?.id!==data.id){undo=[];redo=[];}
+      if(cur?.id!==data.id){undo=[];redo=[];forcePick=false;}
       cur={...data,days:daysOf(data.start,data.end),draft:keep||data.draft};
+      for(const key of ['off','off_auto','cells','wish_off','wish_starts','days','events'])cur.draft[key]=cur.draft[key]||{};
+      cur.draft.variants=cur.draft.variants||[];
       if(!keep)last=JSON.stringify(cur.draft);
       const i=periods.findIndex(p=>p.id===data.id),summary={id:data.id,start:data.start,end:data.end,published_at:data.published_at,changed:data.changed};
       if(i>=0)periods[i]=summary;else periods.unshift(summary);
@@ -125,7 +135,10 @@
       if(value)row[day]=value;else delete row[day];
       if(!Object.keys(row).length)delete D().cells[name];
     }
-    const money=day=>[0,5,6].includes(G.at(day).getDay())||!!D().days[day]?.holiday;
+    // Праздник: календарь России, если менеджер не решил иначе. Праздник — как пятница или суббота.
+    const holiday=day=>D().days[day]?.holiday??!!cur.holidays?.[day];
+    const holidayLabels=()=>Object.fromEntries(cur.days.filter(holiday).map(d=>[d,cur.holidays?.[d]||'Праздник']));
+    const money=day=>[0,5,6].includes(G.at(day).getDay())||holiday(day);
     const need=day=>D().days[day]?.count??(money(day)?6:5);
     function changed(){
       const now=JSON.stringify(D());
@@ -165,39 +178,30 @@
     function renderState(){
       if(!cur)return;
       const pending=edits!==saved;
-      q('.re-state').textContent=saving?'Сохраняю…':pending?'Есть несохранённые правки':`Сохранено · ${stateOf(cur)}`;
+      const offs=offsInfo?.total?` · выходные: ${offsInfo.answered} из ${offsInfo.total}${offsInfo.fresh?', есть новые':''}`:'';
+      q('.re-state').textContent=saving?'Сохраняю…':pending?'Есть несохранённые правки':`Сохранено · ${stateOf(cur)}${offs}${note?' · '+note:''}`;
       q('.re-publish').textContent=cur.published_at?(cur.changed||pending?'Опубликовать правки':'Опубликован'):'Опубликовать';
-      q('.re-publish').disabled=busy||(!!cur.published_at&&!cur.changed&&!pending);q('.re-build').disabled=busy;
+      q('.re-publish').disabled=busy||showPick()||(!!cur.published_at&&!cur.changed&&!pending);q('.re-build').disabled=busy;q('.re-ask').disabled=busy;
       q('.re-undo').disabled=!undo.length;q('.re-redo').disabled=!redo.length;
       renderGuide();
     }
-    // Подсказка «что дальше»: менеджеру не нужно помнить порядок работы.
+    // Этапы во всю ширину над заголовком: вариант → правка → публикация.
     function renderGuide(){
-      const box=q('.re-guide');if(!cur){box.hidden=true;return;}
-      const filled=Object.keys(D().cells).length,problems=cur.check?.problems||0,pending=edits!==saved;
-      const offs=Object.keys(D().off).length+Object.keys(D().wish_off).length;
-      let step,text;
-      if(!D().people.length){step=1;text='Добавь людей';}
-      else if(!filled){step=offs?2:1;text='';}
-      else if(problems){step=3;text=`Нарушений: ${problems}`;}
-      else if(!cur.published_at||cur.changed||pending){step=4;text=cur.published_at?'Есть неопубликованные правки':'';}
-      else{step=5;text='Опубликован';}
-      const steps=['Люди и выходные','Черновик','Правка','Публикация'];
-      box.hidden=false;
-      box.innerHTML=`<ol class="re-steps">${steps.map((name,i)=>`<li class="${i+1<step?'done':i+1===step?'now':''}">${name}</li>`).join('')}</ol><p>${esc(text)}</p>`;
+      const box=q('.re-guide'),steps=['Вариант','Правка','Публикация'];
+      let step=0;
+      if(cur){
+        const filled=Object.keys(D().cells).length,problems=cur.check?.problems||0,pending=edits!==saved;
+        if(!D().people.length||!filled||showPick())step=1;else if(problems)step=2;else if(!cur.published_at||cur.changed||pending)step=3;else step=4;
+      }
+      box.innerHTML=`<ol class="re-steps">${steps.map((name,i)=>`<li class="${step&&i+1<step?'done':i+1===step?'now':''}">${name}</li>`).join('')}</ol>`;
     }
-    function setMode(next){
-      mode=next;root.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-checked',String(b.dataset.mode===mode)));
-      grid.classList.toggle('re-painting',mode!=='shift');
-    }
-    root.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
     function people(){
       const d=D();
-      return d.people.map(p=>({name:p.name,cells:d.cells[p.name]||{},off:d.off[p.name]||[],wish_off:d.wish_off[p.name]||[]}));
+      return d.people.map(p=>({name:p.name,cells:d.cells[p.name]||{},off:d.off[p.name]||[]}));
     }
     function renderGrid(){
       const left=sc.scrollLeft;
-      grid.innerHTML=G.table({days:cur.days,people:people(),events:D().events,today:iso(new Date()),scrolls:true,edit:true,need,flagged:cur.check?.days});
+      grid.innerHTML=G.table({days:cur.days,people:people(),events:D().events,holidays:holidayLabels(),today:iso(new Date()),scrolls:true,edit:true,need,flagged:cur.check?.days});
       scroll.size();sc.scrollLeft=left;
       if(sel)grid.querySelector(`td.sg-c[data-r="${sel.r}"][data-day="${sel.day}"]`)?.classList.add('sg-sel');
       renderReport();
@@ -208,7 +212,6 @@
       badge.textContent=problems?`${problems} ${problems%10===1&&problems%100!==11?'нарушение':problems%10>=2&&problems%10<=4&&(problems%100<12||problems%100>14)?'нарушения':'нарушений'}`:'правила соблюдены';
       badge.classList.toggle('bad',!!problems);
       // До первой сборки таблица пустая — «не хватает людей» во все дни ничего не говорит.
-      q('.re-check').hidden=!Object.keys(D().cells).length;
       const items=cur.check?.items||[];
       const blocks=(cur.check?.text||'').split('\n\n').slice(1).filter(b=>!b.startsWith('Что не получилось:'));
       box.innerHTML=(items.length?`<ul class="re-problems">${items.map((it,i)=>`<li><button type="button" data-problem="${i}">${esc(it.text)}</button></li>`).join('')}</ul>`:'')+blocks.map(block=>{
@@ -217,32 +220,78 @@
         return `${head?`<h4>${esc(head.slice(0,-1))}</h4>`:''}${plain.map(l=>`<p>${esc(l)}</p>`).join('')}${items.length?`<ul>${items.map(l=>`<li>${esc(l.slice(2))}</li>`).join('')}</ul>`:''}`;
       }).join('');
     }
+    // Все варианты сразу, от лучшего по расчёту к самому слабому: таблица, плюсы и минусы, кнопка выбора.
+    const sameCells=(a,b)=>{const names=new Set([...Object.keys(a),...Object.keys(b)]);
+      for(const n of names){const x=a[n]||{},y=b[n]||{},keys=new Set([...Object.keys(x),...Object.keys(y)]);for(const k of keys)if(x[k]!==y[k])return false;}return true;};
+    const current=()=>(D().variants||[]).find(v=>v.id===D().variant&&D().picked&&sameCells(D().cells,v.cells));
+    function renderPick(){
+      const box=q('.re-pickview'),list=D().variants||[],auto=D().off_auto||{},manual={};
+      for(const [n,days] of Object.entries(D().off)){const m=days.filter(d=>!(auto[n]||[]).includes(d));if(m.length)manual[n]=m;}
+      const chosen=current();
+      box.innerHTML=list.map((v,i)=>{
+        const rank=i===0?'лучший по расчёту':i===list.length-1&&list.length>1?'слабее остальных':'';
+        return `<section class="re-var" data-id="${esc(v.id)}"><div class="sg-sheet re-varsheet"><div class="sg-scroll"><table class="sg-var"></table></div></div>
+          <article class="re-card re-var-info"><h3>${esc(v.title)}<small>${rank}</small></h3>
+          <ul>${v.pros.map(t=>`<li class="pro">${esc(t)}</li>`).join('')}${v.cons.map(t=>`<li class="con">${esc(t)}</li>`).join('')}</ul>
+          ${chosen?.id===v.id?'<button type="button" class="btn" data-edit>Править этот</button>':`<button type="button" class="btn btn-ghost" data-variant="${esc(v.id)}">Выбрать</button>`}</article></section>`;}).join('');
+      list.forEach(v=>{
+        const people=D().people.map(p=>({name:p.name,cells:v.cells[p.name]||{},off:[...new Set([...(manual[p.name]||[]),...(v.off[p.name]||[])])]}));
+        box.querySelector(`[data-id="${v.id}"] table`).innerHTML=G.table({days:cur.days,people,events:D().events,holidays:holidayLabels(),need});
+      });
+    }
+    function pick(id){
+      const v=(D().variants||[]).find(x=>x.id===id);if(!v)return;
+      // Если таблицу уже правили руками, замена вариантом их сотрёт.
+      const was=(D().variants||[]).find(x=>x.id===D().variant);
+      if(D().picked&&was&&!sameCells(D().cells,was.cells)&&!confirm('Заменить таблицу этим вариантом? Правки смен пропадут.'))return;
+      // Выходные, поставленные вручную (отпуск) или запрошенные людьми, остаются; автоматические берутся из варианта.
+      const auto=D().off_auto||{},manual={};
+      for(const [n,days] of Object.entries(D().off)){const m=days.filter(d=>!(auto[n]||[]).includes(d));if(m.length)manual[n]=m;}
+      D().cells=JSON.parse(JSON.stringify(v.cells));D().off_auto=JSON.parse(JSON.stringify(v.off));D().off={};
+      for(const n of new Set([...Object.keys(manual),...Object.keys(v.off)]))D().off[n]=[...new Set([...(manual[n]||[]),...(v.off[n]||[])])].sort();
+      D().variant=id;D().picked=true;forcePick=false;sel=null;side=null;
+      applyView();changed();
+    }
+    q('.re-pickview').addEventListener('click',e=>{
+      const b=e.target.closest('button');if(!b)return;
+      if(b.dataset.variant)pick(b.dataset.variant);
+      else if('edit' in b.dataset){forcePick=false;applyView();}
+    });
     q('.re-report').addEventListener('click',e=>{
       const b=e.target.closest('[data-problem]');if(!b)return;
       const it=cur.check.items[+b.dataset.problem],r=it.name?D().people.findIndex(p=>p.name===it.name):-1;
       scroll.go(it.day);
       if(r>=0)select(r,it.day);else{side={kind:'day',day:it.day};renderSide();}
     });
+    // Два вида одного графика: сначала все варианты сразу, после выбора — правка выбранного.
+    const showPick=()=>!!cur&&(cur.draft.variants||[]).length>0&&(forcePick||!cur.draft.picked);
+    function applyView(){
+      const pickMode=showPick();
+      q('.re-pickview').hidden=!pickMode;q('.re-editview').hidden=pickMode;
+      q('.re-all').hidden=!(D().variants||[]).length;
+      if(pickMode)renderPick();else{renderGrid();renderCell();renderSide();}
+      renderState();
+    }
     function renderAll(){
       q('.re-editor').hidden=false;q('.re-title').textContent=G.period(cur.start,cur.end);
-      renderGrid();renderState();renderCell();renderSide();
+      applyView();
     }
+    q('.re-all').onclick=()=>{forcePick=true;applyView();};
 
     // ─── клетка ───
     function renderCell(){
-      const box=q('.re-cell');
-      box.hidden=!sel||!person(sel.r);if(box.hidden)return;
-      const p=person(sel.r),value=D().cells[p.name]?.[sel.day]||'',v=G.parse(value);
-      const off=(D().off[p.name]||[]).includes(sel.day),wish=(D().wish_off[p.name]||[]).includes(sel.day);
+      // Карточка стоит на месте всегда; без выбранной клетки её кнопки неактивны.
+      const box=q('.re-cell'),has=!!sel&&!!person(sel.r),dis=has?'':' disabled';
+      const p=has?person(sel.r):null,v=has?G.parse(D().cells[p.name]?.[sel.day]||''):null;
+      const off=has&&(D().off[p.name]||[]).includes(sel.day);
       const start=v?.start;
-      box.innerHTML=`<h3>${esc(p.name)}<small>${esc(G.dayName(sel.day))}</small></h3>
+      box.innerHTML=`<h3>${has?esc(p.name):'Смена'}<small>${has?esc(G.dayName(sel.day)):''}</small></h3>
         <p class="re-label">Приход</p>
-        <div class="re-hours">${STARTS.map(h=>`<button type="button" data-set="${h}" aria-pressed="${start===h&&v.end==null}">${h}</button>`).join('')}</div>
-        <div class="re-line"><label class="re-range">Интервал <input value="${v&&v.end!=null?esc(start+'-'+v.end):''}" placeholder="9-17" inputmode="numeric"></label>
-          <button type="button" data-set="" class="re-clear" aria-pressed="${!v||start==null}">Не работает</button></div>
-        <div class="re-flags"><button type="button" data-off aria-pressed="${off}"><i class="sg-s off">вых</i>Обязательный выходной</button>
-          <button type="button" data-note aria-pressed="${!!v?.note}"><i class="sg-s note">★</i>Необычное</button>
-          <button type="button" data-wish aria-pressed="${wish}"><i class="re-wish-mark"></i>Просит выходной</button></div>`;
+        <div class="re-hours">${STARTS.map(h=>`<button type="button" data-set="${h}"${dis} aria-pressed="${start===h&&v.end==null}">${h}</button>`).join('')}</div>
+        <div class="re-line"><label class="re-range">Интервал <input${dis} value="${v&&v.end!=null?esc(start+'-'+v.end):''}" placeholder="9-17" inputmode="numeric"></label>
+          <button type="button" data-set=""${dis} class="re-clear" aria-pressed="${has&&(!v||start==null)}">Не работает</button></div>
+        <div class="re-flags"><button type="button" data-off${dis} aria-pressed="${off}"><i class="sg-s off">вых</i>Обязательный выходной</button>
+          <button type="button" data-note${dis} aria-pressed="${!!v?.note}"><i class="sg-s note">★</i>Необычное</button></div>`;
     }
     function applyCell(raw){
       const p=person(sel.r),old=G.parse(D().cells[p.name]?.[sel.day]);
@@ -260,11 +309,12 @@
     function toggleOff(){
       const p=person(sel.r),on=!(D().off[p.name]||[]).includes(sel.day);
       toggle('off',p.name,sel.day,on);
+      // Снятый выходной больше не автоматический.
+      if(!on){const auto=D().off_auto[p.name]||[],i=auto.indexOf(sel.day);if(i>=0){auto.splice(i,1);if(!auto.length)delete D().off_auto[p.name];}}
       // Обязательный выходной убирает смену, кроме отметки «необычное».
       if(on){const v=G.parse(D().cells[p.name]?.[sel.day]);setCell(p.name,sel.day,v?.note?'*':'');}
       changed();renderCell();
     }
-    function toggleWish(){toggle('wish_off',person(sel.r).name,sel.day);changed();renderCell();}
     function select(r,day,focus=true){
       sel={r,day};side={kind:'day',day};
       grid.querySelectorAll('.sg-sel').forEach(e=>e.classList.remove('sg-sel'));
@@ -274,7 +324,7 @@
     q('.re-cell').addEventListener('click',e=>{
       const b=e.target.closest('button');if(!b||!sel)return;
       if('set' in b.dataset)applyCell(b.dataset.set);else if('note' in b.dataset)toggleNote();
-      else if('off' in b.dataset)toggleOff();else if('wish' in b.dataset)toggleWish();
+      else if('off' in b.dataset)toggleOff();
     });
     q('.re-cell').addEventListener('change',e=>{if(e.target.matches('.re-range input'))applyCell(e.target.value.trim());});
     let typed='',typedAt=0;
@@ -289,7 +339,6 @@
       const key=e.key.toLowerCase();
       if(key==='delete'||key==='backspace'){e.preventDefault();typed='';return applyCell('');}
       if(key==='в'||key==='d'){e.preventDefault();return toggleOff();}
-      if(key==='п'||key==='g'){e.preventDefault();return toggleWish();}
       if(key==='*'){e.preventDefault();return toggleNote();}
       if(/^[0-9-]$/.test(key)){
         e.preventDefault();typed=Date.now()-typedAt<1200?typed+key:key;typedAt=Date.now();
@@ -302,33 +351,28 @@
       if(e.key==='Enter'){e.preventDefault();if(typed){applyCell(typed);typed='';}else q('.re-cell button')?.focus();}
       if(e.key==='Escape'){sel=null;grid.querySelectorAll('.sg-sel').forEach(x=>x.classList.remove('sg-sel'));renderCell();}
     });
-    // Режимы «Выходные» и «Пожелания»: нажатие ставит или снимает отметку, протяжка — на несколько дней.
-    function paint(cell){
-      const name=person(+cell.dataset.r).name,day=cell.dataset.day,key=painting.key;
-      toggle(key,name,day,painting.on);
-      if(key==='off'&&painting.on){const v=G.parse(D().cells[name]?.[day]);setCell(name,day,v?.note?'*':'');}
-      if(key==='off')cell.innerHTML=painting.on?'<span class="sg-s off">вых</span>':'<span class="sg-e"></span>';
-      else cell.classList.toggle('sg-wish',painting.on);
-    }
-    grid.addEventListener('pointerdown',e=>{
-      const cell=e.target.closest('td.sg-c');if(!cell||mode==='shift'||e.button>0)return;
-      e.preventDefault();cell.releasePointerCapture?.(e.pointerId);
-      const key=mode==='off'?'off':'wish_off',name=person(+cell.dataset.r).name;
-      painting={key,on:!(D()[key][name]||[]).includes(cell.dataset.day)};paint(cell);
-    });
-    grid.addEventListener('pointerover',e=>{const cell=e.target.closest('td.sg-c');if(painting&&cell)paint(cell);});
-    addEventListener('pointerup',()=>{if(painting){painting=null;changed();}});
     grid.addEventListener('click',e=>{
-      const cell=e.target.closest('td.sg-c');if(cell)return mode==='shift'?select(+cell.dataset.r,cell.dataset.day):undefined;
+      const x=e.target.closest('.sg-x');if(x){e.stopPropagation();return removePerson(+x.dataset.remove);}
+      const cell=e.target.closest('td.sg-c');if(cell)return select(+cell.dataset.r,cell.dataset.day);
       const head=e.target.closest('thead th.sg-day');if(head){side={kind:'day',day:head.dataset.day};scroll.go(head.dataset.day);renderSide();return;}
       const name=e.target.closest('tbody th.sg-name');if(name){side={kind:'person',r:+name.dataset.r};renderSide();}
     });
 
     // ─── настройки дня и человека ───
+    // Убрать человека из графика (уволился): его смены и выходные удаляются из черновика.
+    function removePerson(r){
+      const p=person(r);if(!p)return;
+      if(!confirm(`Убрать ${p.name} из графика?`))return;
+      D().people.splice(r,1);
+      for(const key of ['cells','off','off_auto','wish_off','wish_starts'])delete D()[key][p.name];
+      side=null;sel=null;changed();renderSide();renderCell();
+    }
     function renderSide(){
       const box=q('.re-side');
-      const adder=`<form class="re-add"><label>Добавить человека<input list="re-team" maxlength="80" required></label>
-        <datalist id="re-team">${team.filter(t=>!D().people.some(p=>p.name===t.report_name)).map(t=>`<option value="${esc(t.report_name)}">`).join('')}</datalist><button class="btn btn-ghost">Добавить</button></form>`;
+      if(!side){const today=iso(new Date());side={kind:'day',day:cur.days.includes(today)?today:cur.days[0]};}
+      // Добавить можно только подтверждённого сотрудника: по списку, а не по имени.
+      const addable=team.filter(t=>!D().people.some(p=>p.link===t.id));
+      const adder=addable.length?`<form class="re-add"><label>Сотрудник не в графике<select>${addable.map(t=>`<option value="${esc(t.id)}">${esc(t.report_name)}</option>`).join('')}</select></label><button class="btn btn-ghost">Добавить</button></form>`:'';
       if(side?.kind==='person'&&person(side.r)){
         const p=person(side.r),wish=(D().wish_starts[p.name]||[]).join(', ');
         box.innerHTML=`<h3>${esc(p.name)}</h3>
@@ -340,11 +384,11 @@
       if(side?.kind==='day'){
         const day=side.day,s=D().days[day]||{},event=D().events[day]||'';
         const opening=s.openers??(money(day)?2:1);
-        box.innerHTML=`<h3>${esc(G.dayName(day))}</h3>
+        box.innerHTML=`<h3>${esc(G.dayName(day))}<small>${esc(cur.holidays?.[day]||'')}</small></h3>
           <div class="re-fields"><label>Людей<input type="number" min="0" max="60" data-day-field="count" value="${need(day)}"></label>
           <label>Открывают<input type="number" min="0" max="10" data-day-field="openers" value="${opening}"></label>
           <label>Закрывают<input type="number" min="0" max="10" data-day-field="closers" value="${s.closers??3}"></label></div>
-          <label class="re-check-row"><input type="checkbox" data-holiday ${s.holiday?'checked':''}> Праздник</label>
+          <label class="re-check-row"><input type="checkbox" data-holiday ${holiday(day)?'checked':''}> Праздник</label>
           <label>Событие дня<input list="re-events" data-event maxlength="40" value="${esc(event)}" placeholder="Генуборка, собрание…"></label>
           <datalist id="re-events">${EVENTS.map(x=>`<option value="${x}">`).join('')}</datalist>${adder}`;
         return;
@@ -356,7 +400,8 @@
       if(side?.kind==='day'){
         const day=side.day,s=D().days[day]||(D().days[day]={});
         if(t.dataset.dayField){const n=parseInt(t.value,10);if(Number.isFinite(n)&&n>=0)s[t.dataset.dayField]=n;else delete s[t.dataset.dayField];}
-        if('holiday' in t.dataset){if(t.checked)s.holiday=true;else delete s.holiday;}
+        // Явная отметка хранится, только если она расходится с календарём России.
+        if('holiday' in t.dataset){if(t.checked===!!cur.holidays?.[day])delete s.holiday;else s.holiday=t.checked;}
         if('event' in t.dataset){const v=t.value.trim();if(v)D().events[day]=v;else delete D().events[day];}
         if(!Object.keys(s).length)delete D().days[day];
         changed();renderSide();
@@ -373,25 +418,36 @@
       const b=e.target.closest('button');if(!b||side?.kind!=='person')return;
       const list=D().people,r=side.r;
       if(b.dataset.move){const to=r+(+b.dataset.move);if(to<0||to>=list.length)return;[list[r],list[to]]=[list[to],list[r]];side.r=to;sel=null;changed();renderSide();renderCell();}
-      if('remove' in b.dataset){const p=list[r];if(!confirm(`Убрать ${p.name} из этого графика? Его смены в черновике удалятся.`))return;
-        list.splice(r,1);for(const key of ['cells','off','wish_off','wish_starts'])delete D()[key][p.name];side=null;sel=null;changed();renderSide();renderCell();}
+      if('remove' in b.dataset)removePerson(r);
     });
     q('.re-side').addEventListener('submit',e=>{
       if(!e.target.matches('.re-add'))return;e.preventDefault();
-      const name=e.target.querySelector('input').value.trim().replace(/\s+/g,' ');
-      if(name.length<2)return;
-      if(D().people.some(p=>p.name.toLowerCase()===name.toLowerCase())){error(`«${name}» уже в графике.`);return;}
-      const link=team.find(t=>t.report_name===name);
-      D().people.push({name,student:false,link:link?.id||null});error('');changed();renderSide();
+      const t=team.find(x=>x.id===e.target.querySelector('select').value);
+      if(!t||D().people.some(p=>p.link===t.id))return;
+      D().people.push({name:t.report_name,student:false,link:t.id});error('');changed();renderSide();
     });
+
+    // Сколько сотрудников уже записали обязательные выходные в Telegram.
+    async function refreshOffs(){
+      if(!cur)return;
+      try{offsInfo=await api('offs',{id:cur.id});}catch(e){offsInfo=null;}
+      renderState();
+    }
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden&&cur&&!root.closest('[hidden]'))refreshOffs();});
+    q('.re-ask').onclick=async()=>{
+      if(!cur||!confirm('Отправить сотрудникам просьбу выбрать обязательные выходные? Получат те, кто ещё не ответил.'))return;
+      busy=true;renderState();error('');
+      try{offsInfo=await api('ask_offs',{id:cur.id});note=`отправлено: ${offsInfo.sent}`;}
+      catch(e){failed(e);}finally{busy=false;renderState();}
+    };
 
     // ─── сборка и публикация ───
     q('.re-build').onclick=async()=>{
       const filled=Object.keys(D().cells).length;
-      if(filled&&!confirm('Пересобрать? Смены в таблице заменятся.'))return;
+      if(filled&&!confirm('Собрать заново? Варианты и смены в таблице заменятся, выходные, поставленные вручную, останутся.'))return;
       if(!(await flush()))return;
-      busy=true;renderState();error('');q('.re-state').textContent='Собираю…';
-      try{const data=await api('build',{id:cur.id,revision:cur.revision,draft:D()},120000);accept(data,true);sel=null;renderAll();}
+      busy=true;renderState();error('');q('.re-state').textContent='Собираю варианты…';
+      try{const data=await api('build',{id:cur.id,revision:cur.revision,draft:D()},120000);accept(data,true);sel=null;note='';forcePick=false;renderAll();refreshOffs();}
       catch(e){failed(e);}finally{busy=false;renderState();}
     };
     q('.re-publish').onclick=async()=>{
@@ -408,18 +464,21 @@
     q('.re-delete').onclick=async()=>{
       if(!cur||cur.published_at||!confirm('Удалить черновик?'))return;
       clearTimeout(timer);
-      try{await api('delete',{id:cur.id});periods=periods.filter(p=>p.id!==cur.id);cur=null;edits=saved=0;q('.re-editor').hidden=true;q('.re-guide').hidden=true;await list();}
+      try{await api('delete',{id:cur.id});periods=periods.filter(p=>p.id!==cur.id);cur=null;edits=saved=0;q('.re-editor').hidden=true;await list();}
       catch(e){failed(e);}
     };
-    q('.re-new').onclick=()=>{const [a,b]=nextHalf();const f=q('.re-create');f.start.value=a;f.end.value=b;f.hidden=false;f.start.focus();};
-    q('.re-cancel').onclick=()=>{q('.re-create').hidden=true;};
-    q('.re-create').onsubmit=async e=>{
-      e.preventDefault();const f=e.target;
+    async function createPeriod(start,end,done){
       if(!(await flush()))return;
-      try{const data=await api('create',{restaurant_id:placeId,start:f.start.value,end:f.end.value});f.hidden=true;team=[];
-        await list(data.id);}
-      catch(err){failed(err);}
-    };
+      const buttons=[q('.re-new'),q('.re-dates')];buttons.forEach(b=>b.disabled=true);
+      if(cur)q('.re-state').textContent='Собираю варианты…';else q('.re-title').textContent='Собираю варианты…';
+      try{const data=await api('create',{restaurant_id:placeId,start,end},120000);team=[];done?.();await list(data.id);}
+      catch(err){failed(err);if(cur)renderState();else q('.re-title').textContent='';}finally{buttons.forEach(b=>b.disabled=false);}
+    }
+    // Один клик: следующий период по порядку, даты вводить не нужно. «Другие даты» — на всякий случай.
+    q('.re-new').onclick=()=>{const [a,b]=suggested();createPeriod(a,b);};
+    q('.re-dates').onclick=()=>{const [a,b]=suggested();const f=q('.re-create');f.start.value=a;f.end.value=b;f.hidden=false;f.start.focus();};
+    q('.re-cancel').onclick=()=>{q('.re-create').hidden=true;};
+    q('.re-create').onsubmit=e=>{e.preventDefault();const f=e.target;createPeriod(f.start.value,f.end.value,()=>{f.hidden=true;});};
     q('.re-place').onchange=async()=>{if(!(await flush()))return;placeId=q('.re-place').value;cur=null;list();};
     addEventListener('beforeunload',e=>{if(cur&&edits!==saved){e.preventDefault();e.returnValue='';}});
     addEventListener('resize',()=>{if(cur)scroll.size();});

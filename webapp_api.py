@@ -834,7 +834,7 @@ def register_webapp_routes(app: web.Application, bot_token: str, bot_username: s
     app.router.add_post("/api/tips_compare", api_tips_compare)
     app.router.add_post("/api/tips_range", api_tips_range)
     for asset in ("background.js", "tips.js", "tips.css", "private.js", "restaurant.js", "restaurant.css", "ux.js", "research.js", "research.css",
-                  "schedule.css", "schedule-grid.js", "schedule.js", "roster-editor.js"):
+                  "schedule.css", "schedule-grid.js", "schedule.js", "roster-editor.js", "site-ios.css"):
         async def serve_asset(request, asset=asset):
             return web.FileResponse(os.path.join(WEBAPP_DIR, asset), headers=NO_CACHE)
         app.router.add_get("/app/" + asset, serve_asset)

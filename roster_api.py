@@ -6,13 +6,16 @@
 """
 import asyncio
 import re
-from datetime import date, datetime, timezone
+import re
+from datetime import date, datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from aiohttp import web
 from postgrest.exceptions import APIError
 
+import days_off
 import db
+import holidays_ru
 import identity
 import roster
 from workday import op_today
@@ -93,6 +96,8 @@ def normalize(draft, start, end):
 
     result = {'people': people,
               'off': per_person('off', in_period),
+              'off_auto': per_person('off_auto', in_period),
+              'off_requested': per_person('off_requested', in_period),
               'wish_off': per_person('wish_off', in_period),
               'wish_starts': per_person('wish_starts', lambda h: _int(h, 6, 22, 'Удобный приход')),
               'days': {}, 'events': {}, 'cells': {}}
@@ -105,8 +110,9 @@ def normalize(draft, start, end):
             if setting.get(field) is not None:
                 clean[field] = _int(setting[field], 0, high, {'count': 'Людей в смене', 'closers': 'Закрывают',
                                                                'openers': 'Открывают'}[field])
-        if setting.get('holiday'):
-            clean['holiday'] = True
+        # Праздник: True или False — явное решение менеджера; без него берётся календарь России.
+        if isinstance(setting.get('holiday'), bool):
+            clean['holiday'] = setting['holiday']
         if clean:
             result['days'][key] = clean
     for key, label in (draft.get('events') or {}).items():
@@ -123,7 +129,38 @@ def normalize(draft, start, end):
                 clean[in_period(key)] = str(value).strip()
         if clean:
             result['cells'][name] = clean
+    result['variants'] = clean_variants(draft.get('variants'), names, in_period)
+    result['picked'] = bool(draft.get('picked'))
+    chosen = str(draft.get('variant') or '')
+    result['variant'] = chosen if any(v['id'] == chosen for v in result['variants']) else None
     return result
+
+
+def clean_variants(raw, names, in_period):
+    """Варианты графика, собранные программой: смены, автоматические выходные и описание."""
+    out = []
+    for item in (raw if isinstance(raw, list) else [])[:5]:
+        if not isinstance(item, dict):
+            continue
+        vid = str(item.get('id', ''))
+        title = ' '.join(str(item.get('title', '')).split())[:40]
+        if not re.fullmatch(r'[a-z]{1,16}', vid) or not title:
+            continue
+        cells = {}
+        for name, row in (item.get('cells') or {}).items():
+            if name in names and isinstance(row, dict):
+                clean = {}
+                for key, value in row.items():
+                    if str(value).strip():
+                        parse_cell(value)
+                        clean[in_period(key)] = str(value).strip()
+                if clean:
+                    cells[name] = clean
+        off = {name: sorted({in_period(d) for d in days}) for name, days in (item.get('off') or {}).items()
+               if name in names and isinstance(days, list) and days}
+        text = lambda key: [' '.join(t.split())[:140] for t in (item.get(key) or [])[:4] if isinstance(t, str)]
+        out.append({'id': vid, 'title': title, 'cells': cells, 'off': off, 'pros': text('pros'), 'cons': text('cons')})
+    return out
 
 
 def to_request(draft, start, end):
@@ -142,7 +179,13 @@ def to_request(draft, start, end):
             request.closers[day] = setting['closers']
         if 'openers' in setting:
             request.openers[day] = setting['openers']
-        if setting.get('holiday'):
+    # Праздники России — дни, когда людей нужно больше, как в пятницу или субботу.
+    # Явная отметка менеджера (есть или нет) важнее календаря.
+    calendar = holidays_ru.between(start, end)
+    for offset in range((end - start).days + 1):
+        day = start + timedelta(days=offset)
+        flag = draft['days'].get(day.isoformat(), {}).get('holiday')
+        if flag if isinstance(flag, bool) else day in calendar:
             request.holidays.add(day)
     return request
 
@@ -184,11 +227,52 @@ def check(draft, start, end):
     return {'text': text, 'problems': len(where), 'days': flagged, 'items': items}
 
 
-def build_cells(draft, start, end, iterations=250000, restarts=3):
-    request = to_request(draft, start, end)
-    table = roster.build(request, iterations=iterations, restarts=restarts)
-    schedule = roster.as_schedule(request, table)
-    return {name: {day.isoformat(): str(hour) for day, hour in row.items()} for name, row in schedule.items() if row}
+def apply_variant(draft, variant, manual):
+    """Ставит вариант в черновик: его смены и его автоматические выходные поверх ручных."""
+    draft['cells'] = {name: dict(row) for name, row in variant['cells'].items()}
+    draft['off_auto'] = {name: list(days) for name, days in variant['off'].items()}
+    names = set(manual) | set(variant['off'])
+    draft['off'] = {name: sorted(set(manual.get(name, [])) | set(variant['off'].get(name, []))) for name in names}
+    draft['variant'] = variant['id']
+
+
+def build_all(draft, start, end, requested=None):
+    """Обязательные выходные расставляются сами, затем собираются несколько вариантов графика;
+    лучший сразу встаёт в таблицу. Выходные, которые менеджер поставил сам (отпуск), остаются.
+    requested — выходные, которые люди выбрали в Telegram ({имя: [даты]}): они ставятся первыми,
+    не больше нормы на человека, остальное до нормы добавляет программа."""
+    previous, asked_before = draft.get('off_auto', {}), draft.get('off_requested', {})
+    manual = {name: [d for d in days if d not in previous.get(name, []) and d not in asked_before.get(name, [])]
+              for name, days in draft['off'].items()}
+    manual = {name: days for name, days in manual.items() if days}
+    students = {p['name'] for p in draft['people'] if p['student']}
+    period = (end - start).days + 1
+    asked = {}
+    for name, days in (requested or {}).items():
+        if name not in {p['name'] for p in draft['people']}:
+            continue
+        keep = sorted({d for d in days if start.isoformat() <= d <= end.isoformat()})[:roster.off_limit(period, name in students)]
+        if keep:
+            asked[name] = keep
+    fixed = {name: sorted(set(manual.get(name, [])) | set(asked.get(name, []))) for name in set(manual) | set(asked)}
+    request = to_request({**draft, 'off': fixed}, start, end)
+    found = roster.build_variants(request)
+    draft['variants'] = [{'id': r['id'], 'title': r['title'],
+                          'cells': {name: {day.isoformat(): str(hour) for day, hour in row.items()}
+                                    for name, row in r['schedule'].items() if row},
+                          'off': {name: sorted(d.isoformat() for d in days) for name, days in r['off'].items() if days},
+                          'pros': r['pros'], 'cons': r['cons']} for r in found]
+    apply_variant(draft, draft['variants'][0], fixed)
+    draft['off_requested'] = asked
+    # Лучший вариант уже стоит в таблице, но менеджер ещё не выбирал: сначала он видит все варианты.
+    draft['picked'] = False
+
+
+async def requested_offs(restaurant_id, start, draft):
+    """Выходные, которые люди выбрали в Telegram, по именам из черновика."""
+    got = await days_off.for_period(restaurant_id, start)
+    by_link = {p['link']: p['name'] for p in draft['people'] if p.get('link')}
+    return {by_link[link]: days for link, days in got.items() if link in by_link}
 
 
 async def schedulable(uid):
@@ -249,7 +333,8 @@ def _opened(row):
     start, end = _period(row)
     draft = row['draft']
     return {**_summary(row), 'revision': row['revision'], 'restaurant_id': row['restaurant_id'],
-            'draft': draft, 'check': check(draft, start, end)}
+            'draft': draft, 'check': check(draft, start, end),
+            'holidays': {d.isoformat(): name for d, name in holidays_ru.between(start, end).items()}}
 
 
 async def _save(row, uid, revision, values):
@@ -308,6 +393,13 @@ async def handle(request):
                 raise ValueError(f'Даты пересекаются с графиком {a.day}.{a.month:02d}–{b.day}.{b.month:02d}.')
             seed = await carry_over(restaurant_id, start, await team(restaurant_id))
             draft = normalize(seed, start, end)
+            if draft['people']:
+                # Сразу несколько вариантов: менеджеру остаётся выбрать и поправить.
+                if _building.locked():
+                    return response({'error': 'Сейчас собирается другой график. Попробуй через минуту.'}, 429)
+                asked = await requested_offs(restaurant_id, start, draft)
+                async with _building:
+                    await asyncio.to_thread(build_all, draft, start, end, asked)
             row = {'id': str(uuid4()), 'restaurant_id': restaurant_id, 'start_date': start.isoformat(),
                    'end_date': end.isoformat(), 'draft': draft, 'updated_by': uid}
             try:
@@ -329,19 +421,28 @@ async def handle(request):
             stage = 'delete'
             await db._execute(db.supabase.table('rosters').delete().eq('id', row['id']).is_('published_at', 'null'))
             return response({'ok': True})
+        if action in ('offs', 'ask_offs'):
+            return response(await offs_action(request, uid, row, start, end, action == 'ask_offs'))
         revision = body.get('revision')
         if type(revision) is not int:
             raise ValueError('Обнови страницу: версия черновика неизвестна.')
         if action in ('save', 'build'):
-            draft = normalize(body.get('draft'), start, end)
+            # В график попадают только подтверждённые сотрудники ресторана: человека по имени
+            # добавить нельзя, уволенный (доступ отозван) убирается сам.
+            raw = body.get('draft')
+            if isinstance(raw, dict):
+                approved = {m['id'] for m in await team(row['restaurant_id'])}
+                raw = {**raw, 'people': [p for p in raw.get('people') or [] if isinstance(p, dict) and str(p.get('link')) in approved]}
+            draft = normalize(raw, start, end)
             if action == 'build':
                 if not draft['people']:
-                    raise ValueError('Добавь людей в график.')
+                    raise ValueError('В графике нет подтверждённых сотрудников.')
                 stage = 'build'
                 if _building.locked():
                     return response({'error': 'Сейчас собирается другой график. Попробуй через минуту.'}, 429)
+                asked = await requested_offs(row['restaurant_id'], start, draft)
                 async with _building:
-                    draft['cells'] = await asyncio.to_thread(build_cells, draft, start, end)
+                    await asyncio.to_thread(build_all, draft, start, end, asked)
             stage = 'save'
             return response(_opened(await _save(row, uid, revision, {'draft': draft})))
         if action == 'publish':
@@ -367,6 +468,31 @@ async def handle(request):
         return _failure(response, uid, error, stage)
     except Exception as error:
         return _failure(response, uid, error, stage)
+
+
+async def offs_action(request, uid, row, start, end, send):
+    """Кто уже записал обязательные выходные в Telegram; при send — просит ответить остальных."""
+    draft = row['draft']
+    approved = {m['id'] for m in await team(row['restaurant_id'])}
+    people = [p for p in draft.get('people', []) if p.get('link') in approved]
+    links = {p['link']: p['name'] for p in people}
+    try:
+        got = await days_off.for_period(row['restaurant_id'], start)
+        sent = 0
+        if send:
+            bot = request.app.get('bot')
+            if not bot:
+                raise ValueError('Бот сейчас недоступен. Попробуй позже.')
+            sent = await days_off.ask(bot, row['restaurant_id'], start, end, links, set(got))
+    except APIError as error:
+        if error.code in MISSING:
+            raise ValueError('Запись выходных пока недоступна: владельцу нужно обновить базу (migration_v32.sql).') from None
+        raise
+    answered = [link for link in links if link in got]
+    asked_before = draft.get('off_requested', {})
+    # Новое: ответ расходится с тем, что учтено при последней сборке.
+    fresh = sum(1 for link in answered if sorted(got[link]) != sorted(asked_before.get(links[link], [])))
+    return {'total': len(links), 'answered': len(answered), 'fresh': fresh, 'sent': sent}
 
 
 # ─── сообщения команде ───────────────────────────────────────────────────────
@@ -466,7 +592,8 @@ def published_view(row, link):
         people.append({'name': name, 'me': me, 'cells': snapshot.get('cells', {}).get(name, {}),
                        'off': snapshot.get('off', {}).get(name, [])})
     return {'start': row['start_date'], 'end': row['end_date'], 'days': days, 'people': people,
-            'events': snapshot.get('events', {}), 'published_at': row['published_at']}
+            'events': snapshot.get('events', {}), 'published_at': row['published_at'],
+            'holidays': {d.isoformat(): name for d, name in holidays_ru.between(start, end).items()}}
 
 
 async def view(request):

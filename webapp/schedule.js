@@ -26,7 +26,7 @@
     if(!r.ok)throw new Error(json.error||'График пока недоступен.');
     return json;
   }
-  const options=()=>({days:data.period.days,people:data.period.people,events:data.period.events,today:data.today});
+  const options=()=>({days:data.period.days,people:data.period.people,events:data.period.events,holidays:data.period.holidays,today:data.today});
   function render(){
     const p=data.period,list=data.periods,index=p?list.findIndex(x=>x.start===p.start):-1;
     const place=data.restaurants.find(r=>r.id===data.restaurant_id);

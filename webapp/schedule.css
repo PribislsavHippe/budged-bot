@@ -11,41 +11,51 @@
 .sg-scroll::-webkit-scrollbar{height:8px}
 .sg-scroll::-webkit-scrollbar-thumb{background:var(--sg-line);border-radius:4px}
 .sg table{border-collapse:separate;border-spacing:0}
-.sg th,.sg td{padding:0;text-align:center}
+/* Выравнивание: имена влево, всё остальное — числа по разрядам вправо, на одной линии в шапке,
+   клетках и итогах. Центра нет: смешивать центр и правый край нельзя. */
+.sg th,.sg td{padding:0;text-align:right}
+.sg{--pr:3px;--dg:9px}
 .sg tbody th,.sg tbody td{border-bottom:.5px solid color-mix(in srgb,var(--sg-line) 75%,transparent)}
 .sg tbody tr:last-child th,.sg tbody tr:last-child td{border-bottom:1px solid color-mix(in srgb,var(--sg-ink) 30%,transparent)}
-.sg thead th{font-weight:400;font-size:12px;padding:14px 0 10px;vertical-align:bottom;border-bottom:1px solid color-mix(in srgb,var(--sg-ink) 30%,transparent)}
-.sg thead th b{display:block;font-weight:600;font-size:16px;line-height:1.5}
-.sg thead th.sg-today b{background:var(--sg-ink);color:var(--sg-surface);border-radius:6px;width:fit-content;min-width:24px;margin:0 auto;padding:0 4px}
-.sg thead th i{display:block;font-style:normal;font-size:10px;line-height:1.2;margin-top:3px;color:var(--sg-warn);max-width:76px;margin-inline:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sg thead th em{display:block;font-style:normal;font-size:11px}
+/* Шапка: прижата к верху, одной высоты у всех колонок; жирные даты, бледные дни недели. */
+.sg thead th{font-weight:400;font-size:12px;padding:0 var(--pr) 0 0;vertical-align:top;border:0}
+.sg thead tr.sg-hd th{padding-top:12px;padding-bottom:8px;border-bottom:1px solid color-mix(in srgb,var(--sg-ink) 30%,transparent)}
+.sg thead tr.sg-hd th.sg-gap,.sg thead tr.sg-hd th.sg-tail{border-bottom:0}
+.sg thead tr.sg-hv th{height:22px;padding-top:12px;position:relative;text-align:left;overflow:visible;white-space:nowrap}
+.sg thead th.sg-ev i{position:absolute;left:2px;top:12px;font-style:normal;font-size:11px;font-weight:600;line-height:16px;color:var(--sg-warn)}
+.sg thead th .sg-wd{display:block;padding-right:var(--dg);color:var(--sg-muted);line-height:16px}
+.sg thead th b{display:block;width:fit-content;margin-left:auto;padding:0 var(--dg) 0 8px;font-weight:600;font-size:16px;line-height:24px;border-radius:6px}
+.sg thead th.sg-today b{background:var(--sg-ink);color:var(--sg-surface)}
+.sg thead th em{display:block;padding-right:var(--dg);font-style:normal;font-size:11px;line-height:16px;color:var(--sg-muted)}
 .sg thead th.sg-day{scroll-snap-align:start;cursor:pointer}
 .sg thead th.sg-day:hover b{text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px}
 .sg .sg-name{position:sticky;left:0;z-index:2;background:var(--sg-surface);text-align:left;padding:0 16px 0 18px;font-weight:400;white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis}
 .sg tr.sg-me .sg-name{font-weight:600}
-.sg thead .sg-name{font-weight:600;font-size:13px;vertical-align:bottom}
-.sg td.sg-c{height:40px;width:44px;min-width:44px;position:relative}
+.sg tr.sg-hl .sg-name{background:var(--sg-soft)}
+.sg td.sg-c{height:40px;width:48px;min-width:48px;position:relative;padding:0 var(--pr) 0 0;text-align:right}
 .sg-edit td.sg-c,.sg-edit tbody .sg-name{cursor:pointer}
 .sg .sg-gap{width:14px;min-width:14px;border:0!important;background:none!important;box-shadow:none!important}
 .sg .sg-tail{width:var(--tail,0px);min-width:var(--tail,0px);padding:0;border:0!important}
 .sg .sg-scrolled .sg-name{box-shadow:6px 0 6px -6px color-mix(in srgb,var(--sg-ink) 30%,transparent)}
 .sg th.sg-pick,.sg td.sg-pick{background:color-mix(in srgb,var(--sg-ink) 4%,var(--sg-surface))}
-.sg-s{display:inline-grid;place-items:center;min-width:38px;height:30px;padding:0 4px;box-sizing:border-box;border-radius:7px;line-height:1;white-space:nowrap;
+/* Клетка: число прижато вправо одним и тем же отступом, поэтому единицы и десятки стоят в столбик. */
+.sg-s{display:inline-flex;align-items:center;justify-content:flex-end;min-width:40px;height:30px;padding:0 var(--dg) 0 6px;box-sizing:border-box;border-radius:7px;line-height:1;white-space:nowrap;
   --t:transparent;background:color-mix(in srgb,var(--t) 50%,var(--sg-surface));box-shadow:0 0 5px 2px color-mix(in srgb,var(--t) 50%,var(--sg-surface))}
 .sg-s b{font-weight:600;font-size:14px}
+.sg-s.rng b{font-size:12.5px;letter-spacing:-.2px}
 .sg-s:not(.off):not(.note){background:none;box-shadow:none}
-.sg-s.off{--t:var(--sg-off);color:var(--sg-off-ink);font-size:12px}
+/* Обязательный выходной — спокойное бледное пятно с размытым краем, без резкой границы. */
+.sg-s.off{--t:var(--sg-off);color:color-mix(in srgb,var(--sg-off-ink) 72%,var(--sg-surface));font-size:12px;font-weight:400;justify-content:center;padding:0 6px;
+  background:color-mix(in srgb,var(--t) 26%,transparent);box-shadow:0 0 12px 6px color-mix(in srgb,var(--t) 26%,transparent)}
 .sg-s.note{--t:var(--sg-note);color:var(--sg-note-ink)}
-.sg-e{display:inline-block;width:38px;height:30px;border-radius:7px}
-/* Просит выходной: видно только менеджеру, без цвета — пунктирная рамка. */
-.sg td.sg-wish .sg-e,.sg td.sg-wish .sg-s{outline:1px dashed color-mix(in srgb,var(--sg-ink) 35%,transparent);outline-offset:-2px}
+.sg-e{display:inline-block;width:40px;height:30px;border-radius:7px}
 .sg tr.sg-hl td,.sg tr.sg-hl th{background-color:var(--sg-soft)}
 .sg td.sg-col{box-shadow:inset 0 0 0 999px color-mix(in srgb,var(--sg-ink) 5%,transparent)}
 .sg td.sg-sel .sg-s,.sg td.sg-sel .sg-e{outline:2px solid var(--sg-ink);outline-offset:2px}
-.sg tfoot th,.sg tfoot td{font-size:13px;height:40px}
-.sg tfoot .sg-name{font-weight:600}
+.sg tfoot th,.sg tfoot td{font-size:13px;height:40px;padding:0 calc(var(--pr) + var(--dg)) 0 0}
+.sg tfoot .sg-name{font-weight:600;padding:0 16px 0 18px}
 .sg tfoot td b{font-weight:600}
-.sg tfoot td small{font-weight:400;color:var(--sg-muted)}
+.sg tfoot td.sg-ok b{font-weight:400;color:var(--sg-muted)}
 .sg tfoot td.sg-bad b{color:var(--sg-off-ink)}
 .sg :focus-visible{outline:2px solid var(--sg-ink);outline-offset:2px}
 .sg-legend{display:flex;flex-wrap:wrap;gap:10px 18px;color:var(--sg-muted);font-size:13px;align-items:center;margin-top:14px}
@@ -73,17 +83,21 @@
 .sg-land col.sg-g{width:6px}
 .sg-land col.sg-tail{width:var(--tail,0px)}
 .sg-land .sg-gap{width:auto;min-width:0}
+.sg-land{--pr:2px;--dg:6px}
 .sg-land th,.sg-land td{height:var(--rh);padding:0;line-height:1;box-sizing:border-box}
-.sg-land td.sg-c{line-height:0;min-width:0;width:auto;height:var(--rh)}
-.sg-land thead th{font-size:9px;line-height:1.05;padding:0}
-.sg-land thead th b{font-size:12px}
-.sg-land thead th i{font-size:8px;margin-top:1px}
-.sg-land thead th.sg-today b{min-width:0;padding:0 3px;border-radius:4px}
+.sg-land td.sg-c{line-height:0;min-width:0;width:auto;height:var(--rh);padding:0 var(--pr) 0 0}
+.sg-land thead th{font-size:9px;line-height:1.05;padding:0 var(--pr) 0 0}
+.sg-land thead tr.sg-hv th{height:calc(var(--rh)*.55)}
+.sg-land thead th.sg-ev i{font-size:8px;line-height:10px}
+.sg-land thead tr.sg-hd th{height:auto;padding-bottom:3px}
+.sg-land thead th b{font-size:12px;line-height:14px;padding:0 var(--dg) 0 3px;border-radius:4px}
+.sg-land thead th .sg-wd{line-height:10px;padding-right:var(--dg)}
 .sg-land .sg-name{min-width:0;padding:0 6px;font-size:12px;overflow:hidden;text-overflow:ellipsis}
-.sg-land .sg-s,.sg-land .sg-e{width:calc(100% - 4px);min-width:0;padding:0;height:calc(var(--rh) - 4px);border-radius:5px;vertical-align:middle}
+.sg-land .sg-s,.sg-land .sg-e{width:calc(100% - 4px);min-width:0;padding:0 var(--dg) 0 0;height:calc(var(--rh) - 4px);border-radius:5px;vertical-align:middle}
+.sg-land .sg-s.off{padding:0;font-size:9px}
 .sg-land .sg-s b{font-size:12px}
-.sg-land .sg-s.off{font-size:9px}
-.sg-land tfoot th,.sg-land tfoot td{font-size:11px}
+.sg-land tfoot th,.sg-land tfoot td{font-size:11px;padding:0 calc(var(--pr) + var(--dg)) 0 0}
+.sg-land tfoot .sg-name{padding:0 6px}
 .sg-fold{font:inherit;font-size:11px;font-weight:500;height:calc(var(--rh) - 6px);max-height:28px;padding:0 8px;border-radius:6px;border:1px solid var(--sg-line);background:var(--sg-surface);color:var(--sg-ink);cursor:pointer}
 
 /* Вкладка в мини-приложении. */
@@ -102,7 +116,8 @@
 .sg-site{display:block;width:100%;margin-top:18px;min-height:44px;font:inherit;font-size:14px;border:1px solid #cfcfcf;border-radius:10px;background:transparent;color:var(--sg-ink);cursor:pointer}
 
 /* Редактор графика на сайте: таблица слева, справа карточки «Смена», «День/Человек», «Проверка». */
-.re{display:grid;gap:18px}
+.re{display:grid;gap:18px;grid-template-columns:minmax(0,1fr)}
+.re>*{min-width:0}
 .re button{font:inherit;cursor:pointer;color:var(--sg-ink)}
 .re [hidden]{display:none!important}
 .re-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 24px}
@@ -129,8 +144,9 @@
 .re-error:empty{display:none}
 .re-empty{margin:0;padding:28px;background:var(--sg-surface);border-radius:14px;color:var(--sg-muted);line-height:1.5;max-width:60ch}
 .re-muted{color:var(--sg-muted);margin:0;font-size:13px;line-height:1.5}
-.re-editor{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:20px;align-items:start}
-.re-main{min-width:0;display:grid;gap:10px;justify-items:start}
+.re-editor{display:block}
+.re-editview,.re-var{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:20px;align-items:start}
+.re-main{min-width:0;display:grid;gap:10px;justify-items:start;grid-template-columns:minmax(0,1fr)}
 .re-sheet{max-width:100%}
 .re-keys{font-size:12px;color:var(--sg-muted)}
 .re-keys summary{cursor:pointer;width:fit-content}
@@ -152,7 +168,6 @@
 #restaurant-panel .re-flags button{display:flex;align-items:center;gap:10px;min-height:38px;padding:0 6px;border-radius:8px;text-align:left;font-size:13px}
 #restaurant-panel .re-flags button[aria-pressed=true]{background:var(--sg-soft);font-weight:600}
 .re-flags i{font-style:normal;min-width:30px!important;height:22px!important;font-size:10px!important;border-radius:5px!important;flex:none}
-.re-flags .re-wish-mark{display:inline-block;width:30px;height:22px;border-radius:5px;outline:1px dashed color-mix(in srgb,var(--sg-ink) 40%,transparent);outline-offset:-2px}
 #restaurant-panel .re-card label{display:block;margin:0 0 12px;font-size:12px;color:var(--sg-muted)}
 #restaurant-panel .re-card input:not([type=checkbox]){display:block;width:100%;margin-top:6px;height:36px;padding:0 10px;border-radius:8px;border:1px solid var(--sg-line);font-size:14px;color:var(--sg-ink)}
 .re-fields{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
@@ -172,7 +187,7 @@
 .re-report ul{margin:0 0 12px;padding:0;list-style:none}
 .re-report li{padding:5px 0;border-bottom:.5px solid var(--sg-line)}
 .re-report li:last-child{border-bottom:0}
-@media(max-width:1180px){.re-editor{grid-template-columns:1fr}.re-aside{position:static;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}}
+@media(max-width:1180px){.re-editview,.re-var{grid-template-columns:minmax(0,1fr)}.re-aside{position:static;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}}
 #restaurant-panel .re-card .re-range{display:flex;align-items:center;gap:6px;margin:0;white-space:nowrap}
 #restaurant-panel .re-card .re-range input{display:inline-block;width:72px;margin:0;height:32px}
 #restaurant-panel .re-clear{white-space:nowrap}
@@ -202,21 +217,14 @@
 @media(max-width:1100px){.re-guide{grid-template-columns:1fr}.re-guide button{justify-self:start}}
 /* Режимы нажатия и отмена — над таблицей. */
 .re-tools{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;width:100%}
-.re-modes{display:flex;gap:2px;padding:3px;border-radius:11px;background:color-mix(in srgb,var(--sg-surface) 55%,transparent)}
-#restaurant-panel .re-modes button{display:flex;align-items:center;gap:8px;min-height:32px;padding:0 12px;border-radius:8px;font-size:13px}
-#restaurant-panel .re-modes button[aria-checked=true]{background:var(--sg-surface);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.06)}
-.re-modes i{font-style:normal;min-width:26px!important;height:18px!important;font-size:9px!important;border-radius:4px!important;box-shadow:none!important}
-.re-modes .re-wish-mark{width:26px;height:18px;border-radius:4px}
-.re-history{display:flex;gap:2px}
+#restaurant-panel #restaurant-panel .re-history{display:flex;gap:2px}
 #restaurant-panel .re-history button{min-height:32px;padding:0 10px;border-radius:8px;font-size:13px;color:var(--sg-ink)}
 #restaurant-panel .re-history button:disabled{opacity:.3}
-.sg.re .re-painting td.sg-c{cursor:cell;user-select:none;touch-action:none}
 /* Нарушения — кнопки: нажал — открылся день и клетка. */
 .re-problems{margin:0 0 14px!important}
 .re-problems li{padding:0!important}
 #restaurant-panel .re-problems button{display:block;width:100%;min-height:0;padding:7px 8px;margin:0 -8px;width:calc(100% + 16px);text-align:left;border-radius:8px;font-size:13px;line-height:1.4;color:var(--sg-off-ink)}
 #restaurant-panel .re-problems button:hover{background:color-mix(in srgb,var(--sg-off) 35%,var(--sg-surface))}
-.re-wish-mark{display:inline-block;outline:1px dashed color-mix(in srgb,var(--sg-ink) 40%,transparent);outline-offset:-2px}
 .re-guide p:empty{display:none}
 /* Шаги — тихая строка в шапке редактора, без своих кнопок: действия уже справа. */
 .re-guide{display:flex;align-items:center;gap:14px;background:none;padding:0;border-radius:0;grid-template-columns:none}
@@ -227,3 +235,31 @@
 .sg-head p:empty,.sg-head h1:empty{display:none}
 /* Во весь экран Telegram кладёт свои кнопки «закрыть» и «меню» поверх страницы — таблица ниже них. */
 html.tg-full .sg-land:not(.rotated) .sg-fit{padding-top:calc(var(--tg-safe-area-inset-top,0px) + var(--tg-content-safe-area-inset-top,0px))}
+
+/* Праздники России — бледная подпись над датой; событие менеджера (уборка, собрание) — цветная. */
+.sg thead th.sg-ev i.sg-hol{color:var(--sg-muted);font-weight:400}
+/* Лист не прижимает таблицу к нижнему краю. */
+.sg-sheet{padding-bottom:16px}
+/* Убрать человека из графика: «×» у имени, виден при наведении и при фокусе. */
+.sg .sg-name .sg-x{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:20px;height:20px;padding:0;border:0;border-radius:50%;
+  background:var(--sg-soft);color:var(--sg-muted);font:inherit;font-size:14px;line-height:1;cursor:pointer;opacity:0}
+.sg tr:hover .sg-x,.sg .sg-x:focus-visible{opacity:1}
+.sg .sg-x:hover{color:var(--sg-off-ink)}
+@media(hover:none){.sg .sg-name .sg-x{opacity:.5}}
+.sg thead th em.ev{color:var(--sg-warn);font-weight:600}
+
+/* Все варианты сразу: таблица слева, плюсы и минусы справа; таблицы компактнее рабочей. */
+.re-pickview{display:grid;gap:24px}
+.re-pickview .re-var-info{display:grid;gap:12px;align-content:start}
+.sg-var td.sg-c{height:30px;width:42px;min-width:42px}
+.sg-var .sg-s{height:22px;min-width:34px;padding:0 7px 0 4px;border-radius:5px}
+.sg-var .sg-s b{font-size:12.5px}
+.sg-var .sg-e{height:22px;width:34px}
+.sg-var tfoot th,.sg-var tfoot td{height:32px}
+.sg-var .sg-name{padding:0 12px 0 14px}
+.re-var-info ul{margin:0;padding:0;list-style:none;display:grid;gap:4px}
+.re-var-info li{position:relative;padding-left:18px;font-size:13px;line-height:1.4}
+.re-var-info li::before{position:absolute;left:0;font-weight:700}
+.re-var-info li.pro::before{content:"+";color:#34c759}
+.re-var-info li.con::before{content:"−";color:var(--sg-off-ink)}
+.re-all{min-height:36px;padding:0 4px;color:var(--sg-muted);font-size:14px}

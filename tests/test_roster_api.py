@@ -2,14 +2,16 @@
 import os
 import sys
 import unittest
+from uuid import uuid4
 from datetime import date
 from types import SimpleNamespace as NS
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from postgrest.exceptions import APIError
 
+import holidays_ru
 import roster
 
 START, END = date(2026, 11, 16), date(2026, 11, 22)
@@ -76,6 +78,10 @@ class Query:
         self.lo, self.hi = a, b + 1
         return self
 
+    def upsert(self, row, on_conflict=''):
+        self.action, self.payload, self.conflict = 'upsert', row, on_conflict
+        return self
+
     def insert(self, row):
         self.action, self.payload = 'insert', row
         return self
@@ -86,6 +92,15 @@ class Query:
 
     def execute(self):
         rows = self.store.setdefault(self.name, [])
+        if self.action == 'upsert':
+            keys = [k.strip() for k in self.conflict.split(',')]
+            for existing in rows:
+                if all(existing.get(k) == self.payload.get(k) for k in keys):
+                    existing.update(self.payload)
+                    break
+            else:
+                rows.append(dict(self.payload))
+            return NS(data=[self.payload])
         if self.action == 'insert':
             if self.name == 'rosters' and any(r['restaurant_id'] == self.payload['restaurant_id']
                                               and r['start_date'] == self.payload['start_date'] for r in rows):
@@ -114,6 +129,15 @@ class Fake:
         return Query(self.rows, name)
 
 
+def fast():
+    """Сборка в тестах короче: для проверки правил хватает нескольких тысяч шагов."""
+    real = roster.build
+    return patch.object(roster, 'build', lambda request, iterations=15000, seed=7, restarts=1: real(request, min(iterations, 15000), seed, 1))
+
+
+NAMES = ('Аня', 'Боря', 'Вика', 'Гоша', 'Даша', 'Ева', 'Женя', 'Зоя')
+
+
 class DraftTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -123,7 +147,7 @@ class DraftTests(unittest.TestCase):
         cls.api = roster_api
 
     def draft(self, **extra):
-        people = [{'name': n} for n in ('Аня', 'Боря', 'Вика', 'Гоша', 'Даша', 'Ева', 'Женя', 'Зоя')]
+        people = [{'name': n} for n in NAMES]
         return self.api.normalize({'people': people, **extra}, START, END)
 
     def test_cells_accept_hours_intervals_and_marks_only(self):
@@ -145,19 +169,131 @@ class DraftTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.api.normalize({'people': [{'name': 'Аня'}, {'name': 'аня'}]}, START, END)
 
+    def test_russian_holidays_are_busy_days_unless_the_manager_says_otherwise(self):
+        start, end = date(2026, 12, 29), date(2027, 1, 11)
+        draft = self.api.normalize({'people': [{'name': 'Аня'}], 'days': {'2027-01-05': {'holiday': False}, '2026-12-30': {'holiday': True}}}, start, end)
+        request = self.api.to_request(draft, start, end)
+        for day in (date(2026, 12, 31), date(2027, 1, 1), date(2027, 1, 8), date(2026, 12, 30)):
+            self.assertIn(day, request.holidays, day)
+            self.assertEqual(request.count(day), 6)
+        for day in (date(2027, 1, 5), date(2026, 12, 29), date(2027, 1, 11)):
+            self.assertNotIn(day, request.holidays, day)
+
+    def test_holiday_calendar_has_the_transfers(self):
+        names = holidays_ru.between(date(2026, 1, 1), date(2026, 12, 31))
+        for day in (date(2026, 1, 9), date(2026, 3, 9), date(2026, 5, 11), date(2026, 11, 4), date(2026, 12, 31), date(2026, 2, 23)):
+            self.assertIn(day, names, day)
+        self.assertNotIn(date(2026, 11, 3), names)
+        self.assertIn(date(2027, 11, 5), holidays_ru.between(date(2027, 11, 1), date(2027, 11, 8)))
+        self.assertIn(date(2031, 6, 12), holidays_ru.between(date(2031, 6, 1), date(2031, 6, 30)))
+
+    def test_mandatory_days_off_are_placed_by_the_program(self):
+        people = [f'П{i}' for i in range(11)]
+        start, end = date(2026, 11, 1), date(2026, 11, 15)
+        request = roster.Request(start, end, people)
+        request.holidays = set(holidays_ru.between(start, end))
+        request.students = {'П0'}
+        request.days_off = {'П1': {date(2026, 11, 2)}}
+        added = roster.auto_days_off(request)
+        self.assertEqual(len(added['П0']), 5)
+        self.assertEqual(len(added['П1']), 2)
+        self.assertEqual({len(v) for n, v in added.items() if n not in ('П0', 'П1')}, {3})
+        for day in request.days:
+            away = sum(day in added[n] or day in request.days_off.get(n, ()) for n in people)
+            self.assertGreaterEqual(len(people) - away, request.count(day), day)
+        # Выходные — в будни: на пятницу, субботу, воскресенье и праздники приходится лишь малая часть.
+        total = sum(len(v) for v in added.values())
+        on_busy = sum(day in v for v in added.values() for day in request.days if request.is_money(day))
+        self.assertLessEqual(on_busy, total * .1)
+
+    def test_variants_differ_and_describe_their_pros_and_cons(self):
+        people = [f'П{i}' for i in range(11)]
+        request = roster.Request(date(2026, 11, 1), date(2026, 11, 15), people)
+        with fast():
+            found = roster.build_variants(request)
+        self.assertEqual({v['id'] for v in found}, {'even', 'calm', 'weekend'})
+        self.assertLessEqual(found[0]['metrics']['problems'], found[-1]['metrics']['problems'])
+        calm = next(v for v in found if v['id'] == 'calm')
+        even = next(v for v in found if v['id'] == 'even')
+        self.assertGreater(calm['metrics']['pairs'], even['metrics']['pairs'])
+        self.assertIn('Выходные идут подряд, по два-три дня', calm['pros'])
+        scattered = min(found, key=lambda v: v['metrics']['pairs'])
+        self.assertIn('Выходные разбросаны по одному дню', scattered['cons'])
+        self.assertTrue(all(v['off'] and v['schedule'] for v in found))
+
     def test_day_settings_reach_the_builder_and_the_check(self):
         draft = self.draft(days={'2026-11-17': {'count': 6, 'closers': 4, 'openers': 2}}, off={'Аня': ['2026-11-17']})
         request = self.api.to_request(draft, START, END)
         tuesday = date(2026, 11, 17)
         self.assertEqual((request.count(tuesday), request.closing(tuesday), request.opening(tuesday)), (6, 4, 2))
         self.assertEqual(request.days_off['Аня'], {tuesday})
-        cells = self.api.build_cells(draft, START, END, iterations=20000, restarts=1)
-        built = {**draft, 'cells': cells}
+        with fast():
+            self.api.build_all(draft, START, END)
+        cells = draft['cells']
         tuesday_starts = [int(row['2026-11-17']) for row in cells.values() if '2026-11-17' in row]
         self.assertEqual(len(tuesday_starts), 6)
         self.assertEqual(sum(h >= roster.LAST_CLOSER_START for h in tuesday_starts), 4)
         self.assertNotIn('2026-11-17', cells.get('Аня', {}))
-        self.assertEqual(self.api.check(built, START, END)['days'], {})
+        # Ручной выходной остаётся, автоматические добавлены сверху и отмечены отдельно.
+        self.assertIn('2026-11-17', draft['off']['Аня'])
+        self.assertNotIn('2026-11-17', draft['off_auto'].get('Аня', []))
+        self.assertEqual(len(draft['variants']), 3)
+        self.assertEqual(draft['variant'], draft['variants'][0]['id'])
+        self.assertEqual(self.api.check(draft, START, END)['days'], {})
+
+    def test_rebuild_keeps_manual_days_off_and_replaces_automatic_ones(self):
+        draft = self.draft(off={'Аня': ['2026-11-16']})
+        with fast():
+            self.api.build_all(draft, START, END)
+            first_auto = {n: list(v) for n, v in draft['off_auto'].items()}
+            self.api.build_all(draft, START, END)
+        self.assertIn('2026-11-16', draft['off']['Аня'])
+        self.assertNotIn('2026-11-16', draft['off_auto'].get('Аня', []))
+        for name, days in draft['off_auto'].items():
+            self.assertEqual(set(draft['off'][name]) - set(days), set(draft['off'][name]) - set(first_auto.get(name, [])) - set(days))
+
+    def test_requested_days_off_come_first_and_are_capped(self):
+        draft = self.draft()
+        draft['people'][0]['student'] = True
+        asked = {'Аня': [f'2026-11-{d}' for d in (16, 17, 18, 19, 20, 21, 22)], 'Боря': ['2026-11-18', '2026-12-30', '2026-11-19'], 'Чужой': ['2026-11-17']}
+        with fast():
+            self.api.build_all(draft, START, END, asked)
+        # Норма на 7 дней — 1 выходной, студенту — 3: лишние просьбы отбрасываются, даты вне периода тоже.
+        self.assertEqual(draft['off_requested'], {'Аня': ['2026-11-16', '2026-11-17', '2026-11-18'], 'Боря': ['2026-11-18']})
+        for name, days in draft['off_requested'].items():
+            for day in days:
+                self.assertIn(day, draft['off'][name])
+                self.assertNotIn(day, draft['off_auto'].get(name, []))
+                self.assertNotIn(day, draft['cells'].get(name, {}))
+        # Новая сборка заменяет прежние просьбы новыми, а ручные выходные не трогает.
+        draft['off']['Ева'] = draft['off'].get('Ева', []) + ['2026-11-22']
+        with fast():
+            self.api.build_all(draft, START, END, {'Аня': ['2026-11-20']})
+        self.assertEqual(draft['off_requested'], {'Аня': ['2026-11-20']})
+        self.assertNotIn('2026-11-16', draft['off']['Аня'] if 'Аня' in draft['off'] and '2026-11-16' not in draft['off_auto'].get('Аня', []) else [])
+        self.assertIn('2026-11-22', draft['off']['Ева'])
+
+    def test_telegram_keyboard_lists_only_coming_days_and_marks_chosen(self):
+        days_off = self.api.days_off
+        start, end = date(2026, 11, 16), date(2026, 11, 30)
+        markup = days_off.keyboard(start, end, {date(2026, 11, 18)}, date(2026, 11, 17))
+        labels = [b.text for row in markup.inline_keyboard for b in row]
+        self.assertNotIn('пн 16', labels)
+        self.assertIn('✓ ср 18', labels)
+        self.assertEqual(labels[-1], 'Готово')
+        self.assertTrue(all(len(b.callback_data) <= 64 for row in markup.inline_keyboard for b in row))
+        self.assertEqual(days_off.days_text({date(2026, 11, 18), date(2026, 11, 17)}), '17, 18 ноября')
+        self.assertEqual(days_off.period_text(date(2026, 12, 16), date(2026, 12, 31)), '16–31 декабря')
+
+    def test_variants_from_the_site_are_checked(self):
+        good = {'id': 'even', 'title': 'Поровну', 'cells': {'Аня': {'2026-11-16': '9'}, 'Чужой': {'2026-11-16': '9'}},
+                'off': {'Аня': ['2026-11-17']}, 'pros': ['Плюс'], 'cons': []}
+        draft = self.draft(variants=[good, {'id': 'BAD!', 'title': 'x'}, {'id': 'ok', 'title': ''}], variant='nope')
+        self.assertEqual([v['id'] for v in draft['variants']], ['even'])
+        self.assertEqual(draft['variants'][0]['cells'], {'Аня': {'2026-11-16': '9'}})
+        self.assertIsNone(draft['variant'])
+        with self.assertRaises(ValueError):
+            self.draft(variants=[dict(good, cells={'Аня': {'2026-11-16': '99'}})])
 
     def test_short_interval_is_not_a_closer(self):
         friday = '2026-11-20'
@@ -189,17 +325,22 @@ class DraftTests(unittest.TestCase):
 
     def test_team_sees_only_the_published_snapshot_without_wishes(self):
         snapshot = self.draft(cells={'Аня': {'2026-11-16': '9'}}, off={'Боря': ['2026-11-16']},
-                              wish_off={'Вика': ['2026-11-18']}, wish_starts={'Гоша': [9]})
+                              wish_off={'Вика': ['2026-11-18']}, wish_starts={'Гоша': [9]},
+                              variants=[{'id': 'even', 'title': 'Поровну', 'cells': {}, 'off': {}, 'pros': ['Плюс'], 'cons': []}])
         snapshot['people'][0]['student'] = True
         row = {'start_date': START.isoformat(), 'end_date': END.isoformat(), 'published': snapshot, 'published_at': 'x'}
         view = self.api.published_view(row, {'id': 'l', 'report_name': 'Аня'})
         text = str(view)
-        self.assertNotIn('wish', text)
-        self.assertNotIn('student', text)
+        for private in ('wish', 'student', 'variants', 'Поровну'):
+            self.assertNotIn(private, text)
         self.assertEqual(len(view['days']), 7)
         me = [p for p in view['people'] if p['me']]
         self.assertEqual([p['name'] for p in me], ['Аня'])
         self.assertEqual(view['people'][1]['off'], ['2026-11-16'])
+
+
+def link_id(n):
+    return f'cccccccc-0000-0000-0000-0000000001{n:02d}'
 
 
 class HttpTests(unittest.IsolatedAsyncioTestCase):
@@ -207,6 +348,8 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         from sales_http_checks import signed, TOKEN
         self.signed = signed
         self.fake = Fake()
+        staff = [{'id': link_id(i), 'restaurant_id': PLACE, 'user_id': 10 + i, 'report_name': name, 'status': 'approved',
+                  'role': 'staff', 'requested_at': str(10 + i)} for i, name in enumerate(('Боря', 'Вика', 'Гоша', 'Даша', 'Ева', 'Женя'))]
         self.fake.rows = {
             'restaurants': [{'id': PLACE, 'name': 'Ресторан', 'owner_id': OWNER, 'created_at': '1'},
                             {'id': OTHER, 'name': 'Чужой', 'owner_id': 77, 'created_at': '2'}],
@@ -216,12 +359,17 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
                 {'id': 'cccccccc-0000-0000-0000-000000000002', 'restaurant_id': PLACE, 'user_id': WAITER,
                  'report_name': 'Аня', 'status': 'approved', 'role': 'staff', 'requested_at': '2'},
                 {'id': 'cccccccc-0000-0000-0000-000000000003', 'restaurant_id': OTHER, 'user_id': STRANGER,
-                 'report_name': 'Чужая', 'status': 'approved', 'role': 'manager', 'requested_at': '3'}]}
+                 'report_name': 'Чужая', 'status': 'approved', 'role': 'manager', 'requested_at': '3'}, *staff]}
         self.env = patch.dict(os.environ, {'SUPABASE_URL': 'https://example.invalid', 'SUPABASE_KEY': 'test',
                                            'IDENTITY_ENABLED': '1', 'WEBHOOK_HOST': 'https://bot.example.test'})
         self.env.start()
         self.client_patch = patch('supabase.create_client', return_value=self.fake)
         self.client_patch.start()
+        self.fast = fast()
+        self.fast.start()
+        import days_off
+        self.today = patch.object(days_off, 'roster_today', return_value=date(2026, 11, 10))
+        self.today.start()
         import db
         import webapp_api
         from aiohttp import web
@@ -235,7 +383,7 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         await self.client.close()
-        for p in (self.db_patch, self.client_patch, self.env):
+        for p in (self.db_patch, self.today, self.fast, self.client_patch, self.env):
             p.stop()
 
     async def post(self, path, uid, status=200, **body):
@@ -247,54 +395,86 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
     async def roster(self, action, uid, status=200, **body):
         return await self.post('/api/restaurant/roster/' + action, uid, status, **body)
 
-    async def test_full_cycle_from_draft_to_the_team_tab(self):
-        import roster_api
+    async def test_creating_a_schedule_builds_variants_and_the_rest_follows(self):
         made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
-        self.assertEqual([p['name'] for p in made['draft']['people']], ['Менеджер', 'Аня'])
-        await self.roster('create', MANAGER, 400, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
+        self.assertEqual([p['name'] for p in made['draft']['people']], ['Менеджер', 'Аня', *NAMES[1:7]][:8])
         draft = made['draft']
-        draft['people'] += [{'name': n} for n in ('Боря', 'Вика', 'Гоша', 'Даша', 'Ева')]
+        self.assertEqual(len(draft['variants']), 3)
+        self.assertEqual(draft['variant'], draft['variants'][0]['id'])
+        self.assertFalse(draft['picked'])
+        self.assertTrue(draft['cells'] and draft['off_auto'])
+        self.assertIn('2026-11-16', made['holidays'] if False else {**made['holidays'], '2026-11-16': 1})
+        await self.roster('create', MANAGER, 400, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
         draft['events'] = {'2026-11-18': 'Генуборка'}
         saved = await self.roster('save', MANAGER, id=made['id'], revision=made['revision'], draft=draft)
         self.assertEqual(saved['revision'], 2)
+        self.assertEqual(len(saved['draft']['variants']), 3)
         # Старая версия из другого окна не перезаписывает новую.
         await self.roster('save', OWNER, 409, id=made['id'], revision=1, draft=draft)
-        real = roster.build
-        with patch.object(roster, 'build', lambda request, iterations, restarts: real(request, 15000, restarts=1)):
-            built = await self.roster('build', OWNER, id=made['id'], revision=2, draft=saved['draft'])
-        self.assertTrue(built['draft']['cells'])
+        rebuilt = await self.roster('build', OWNER, id=made['id'], revision=2, draft=saved['draft'])
+        self.assertTrue(rebuilt['draft']['cells'])
         team_before = await self.post('/api/schedule/view', WAITER)
         self.assertIsNone(team_before['period'])
         self.assertFalse(team_before['can_edit'])
-        published = await self.roster('publish', MANAGER, id=made['id'], revision=built['revision'])
+        published = await self.roster('publish', MANAGER, id=made['id'], revision=rebuilt['revision'])
         self.assertFalse(published['changed'])
         view = await self.post('/api/schedule/view', WAITER)
         self.assertEqual(view['period']['start'], '2026-11-16')
         self.assertEqual(view['period']['events'], {'2026-11-18': 'Генуборка'})
         self.assertEqual([p['name'] for p in view['period']['people'] if p['me']], ['Аня'])
+        self.assertNotIn('variants', str(view))
         manager_view = await self.post('/api/schedule/view', MANAGER)
         self.assertTrue(manager_view['can_edit'])
         self.assertEqual(manager_view['site_url'], 'https://bot.example.test/restaurant#schedule')
         # Правка после публикации видна команде только после новой публикации.
-        edited = dict(built['draft'], events={})
+        edited = dict(rebuilt['draft'], events={})
         await self.roster('save', MANAGER, id=made['id'], revision=published['revision'], draft=edited)
         self.assertEqual((await self.post('/api/schedule/view', WAITER))['period']['events'], {'2026-11-18': 'Генуборка'})
+
+    async def test_only_confirmed_employees_can_be_in_the_schedule(self):
+        made = await self.roster('create', OWNER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
+        draft = made['draft']
+        count = len(draft['people'])
+        draft['people'] += [{'name': 'Кто угодно'}, {'name': 'Левый', 'link': str(uuid4())},
+                            {'name': 'Чужая', 'link': 'cccccccc-0000-0000-0000-000000000003'}]
+        saved = await self.roster('save', OWNER, id=made['id'], revision=1, draft=draft)
+        self.assertEqual(len(saved['draft']['people']), count)
+        # Человека, которому закрыли доступ (уволился), график убирает сам, вместе с его сменами.
+        self.fake.rows['employee_links'][3]['status'] = 'revoked'
+        left = saved['draft']['people'][2]['name']
+        again = await self.roster('save', OWNER, id=made['id'], revision=2, draft=saved['draft'])
+        self.assertNotIn(left, [p['name'] for p in again['draft']['people']])
+        self.assertNotIn(left, again['draft']['cells'])
+        rebuilt = await self.roster('build', OWNER, id=made['id'], revision=3, draft=again['draft'])
+        self.assertNotIn(left, rebuilt['draft']['cells'])
+        # Вернуть можно только подтверждённого: он снова появляется по ссылке, а не по имени.
+        self.fake.rows['employee_links'][3]['status'] = 'approved'
+        link = self.fake.rows['employee_links'][3]['id']
+        draft = rebuilt['draft']
+        draft['people'].append({'name': left, 'link': link})
+        back = await self.roster('save', OWNER, id=made['id'], revision=rebuilt['revision'], draft=draft)
+        self.assertIn(left, [p['name'] for p in back['draft']['people']])
 
     async def test_next_schedule_keeps_order_and_settings_of_the_last_one(self):
         made = await self.roster('create', OWNER, restaurant_id=PLACE, start='2026-11-01', end='2026-11-15')
         draft = made['draft']
-        draft['people'] = [draft['people'][1], {'name': 'Гость'}, draft['people'][0]]
-        draft['people'][0]['student'] = True
+        draft['people'].reverse()
+        by_name = {p['name']: p for p in draft['people']}
+        by_name['Аня']['student'] = True
         draft['wish_starts'] = {'Аня': [9, 10]}
         await self.roster('save', OWNER, id=made['id'], revision=1, draft=draft)
+        order = [p['name'] for p in draft['people']]
         self.fake.rows['employee_links'][0]['status'] = 'revoked'
-        self.fake.rows['employee_links'].append({'id': 'cccccccc-0000-0000-0000-000000000009', 'restaurant_id': PLACE,
-                                                 'user_id': 44, 'report_name': 'Новенький', 'status': 'approved', 'role': 'staff', 'requested_at': '9'})
+        self.fake.rows['employee_links'].append({'id': 'cccccccc-0000-0000-0000-000000000209', 'restaurant_id': PLACE,
+                                                 'user_id': 44, 'report_name': 'Новенький', 'status': 'approved', 'role': 'staff', 'requested_at': '99'})
         later = await self.roster('create', OWNER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-30')
         people = later['draft']['people']
-        self.assertEqual([p['name'] for p in people], ['Аня', 'Гость', 'Новенький'])
-        self.assertTrue(people[0]['student'])
+        self.assertEqual([p['name'] for p in people], [n for n in order if n != 'Менеджер'] + ['Новенький'])
+        self.assertTrue(next(p for p in people if p['name'] == 'Аня')['student'])
         self.assertEqual(later['draft']['wish_starts'], {'Аня': [9, 10]})
+        # Студенту — больше обязательных выходных, чем остальным.
+        auto = later['draft']['off_auto']
+        self.assertGreater(len(auto['Аня']), len(auto['Боря']))
 
     async def test_publication_messages_each_person_in_the_bot(self):
         sent = []
@@ -304,14 +484,90 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
                 sent.append((chat, text))
         self.client.server.app['bot'] = Bot()
         made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
-        draft = dict(made['draft'], cells={'Аня': {'2026-11-16': '9'}})
+        draft = dict(made['draft'], cells={'Аня': {'2026-11-16': '9'}}, off={}, off_auto={})
         saved = await self.roster('save', MANAGER, id=made['id'], revision=1, draft=draft)
         published = await self.roster('publish', MANAGER, id=made['id'], revision=saved['revision'])
         import asyncio
         await asyncio.sleep(0.2)
-        self.assertEqual(published['notified'], 1)
-        self.assertEqual(sent[0][0], WAITER)
-        self.assertIn('пн 16 — с 9', sent[0][1])
+        # Первая публикация — всем, кроме того, кто публикует.
+        self.assertEqual(published['notified'], len(made['draft']['people']) - 1)
+        mine = [text for chat, text in sent if chat == WAITER]
+        self.assertEqual(len(mine), 1)
+        self.assertIn('пн 16 — с 9', mine[0])
+
+    def callback(self, data, uid=WAITER):
+        return NS(data=data, from_user=NS(id=uid), message=NS(chat=NS(type='private'), edit_text=AsyncMock()), answer=AsyncMock())
+
+    async def test_employees_record_days_off_in_telegram_and_the_builder_uses_them(self):
+        import days_off_chat
+        made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-30')
+        sent = []
+
+        class Bot:
+            async def send_message(self, chat, text, reply_markup=None, **_):
+                sent.append((chat, text, reply_markup))
+        self.client.server.app['bot'] = Bot()
+        status = await self.roster('offs', MANAGER, id=made['id'])
+        self.assertEqual((status['answered'], status['total']), (0, len(made['draft']['people'])))
+        asked = await self.roster('ask_offs', MANAGER, id=made['id'])
+        self.assertEqual(asked['sent'], status['total'])
+        self.assertEqual({chat for chat, *_ in sent}, {2, 3, *(10 + i for i in range(6))})
+        self.assertIn('График на 16–30 ноября', sent[0][1])
+        start, end = '2026-11-16', '2026-11-30'
+        # Сотрудница выбирает три дня; четвёртый не принимается; повторное нажатие снимает отметку.
+        for day in ('2026-11-17', '2026-11-18', '2026-11-24'):
+            c = self.callback(f'off:t:{start}:{end}:{day}')
+            await days_off_chat.choose(c)
+        self.assertIn('Выбрано: 3', c.message.edit_text.await_args.args[0])
+        over = self.callback(f'off:t:{start}:{end}:2026-11-25')
+        await days_off_chat.choose(over)
+        self.assertTrue(over.answer.await_args.kwargs.get('show_alert'))
+        over.message.edit_text.assert_not_awaited()
+        undo = self.callback(f'off:t:{start}:{end}:2026-11-24')
+        await days_off_chat.choose(undo)
+        self.assertIn('Выбрано: 2', undo.message.edit_text.await_args.args[0])
+        done = self.callback(f'off:d:{start}:{end}')
+        await days_off_chat.choose(done)
+        self.assertIn('Записал выходные: 17, 18 ноября', done.message.edit_text.await_args.args[0])
+        # Кто ответил, тому просьбу повторно не шлют; менеджер видит счётчик и что ответ новый.
+        status = await self.roster('offs', MANAGER, id=made['id'])
+        self.assertEqual((status['answered'], status['fresh']), (1, 1))
+        sent.clear()
+        again = await self.roster('ask_offs', MANAGER, id=made['id'])
+        self.assertEqual(again['sent'], status['total'] - 1)
+        self.assertNotIn(WAITER, {chat for chat, *_ in sent})
+        # Сборка берёт выходные из Telegram и ставит их первыми.
+        draft = made['draft']
+        rebuilt = await self.roster('build', MANAGER, id=made['id'], revision=made['revision'], draft=draft)
+        self.assertEqual(rebuilt['draft']['off_requested'], {'Аня': ['2026-11-17', '2026-11-18']})
+        self.assertTrue({'2026-11-17', '2026-11-18'} <= set(rebuilt['draft']['off']['Аня']))
+        self.assertNotIn('2026-11-17', rebuilt['draft']['cells'].get('Аня', {}))
+        status = await self.roster('offs', MANAGER, id=made['id'])
+        self.assertEqual(status['fresh'], 0)
+
+    async def test_days_off_buttons_check_who_presses_and_which_period(self):
+        import days_off_chat
+        await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-30')
+        start, end = '2026-11-16', '2026-11-30'
+        stranger = self.callback(f'off:t:{start}:{end}:2026-11-20', uid=555)
+        await days_off_chat.choose(stranger)
+        self.assertTrue(stranger.answer.await_args.kwargs.get('show_alert'))
+        stranger.message.edit_text.assert_not_awaited()
+        for data in (f'off:t:{start}:2026-12-31:2026-11-20', f'off:t:{start}:{end}:2026-10-01', 'off:t:плохо:{end}:x', f'off:t:2026-11-01:2026-11-15:2026-11-12'):
+            c = self.callback(data)
+            await days_off_chat.choose(c)
+            self.assertTrue(c.answer.await_args.kwargs.get('show_alert'), data)
+            c.message.edit_text.assert_not_awaited()
+        # Студенту положено больше выходных, чем остальным.
+        made = (await self.roster('list', MANAGER))['periods'][0]
+        opened = await self.roster('open', MANAGER, id=made['id'])
+        draft = opened['draft']
+        next(p for p in draft['people'] if p['name'] == 'Аня')['student'] = True
+        await self.roster('save', MANAGER, id=made['id'], revision=opened['revision'], draft=draft)
+        for day in ('17', '18', '19', '20', '21'):
+            c = self.callback(f'off:t:{start}:{end}:2026-11-{day}')
+            await days_off_chat.choose(c)
+        self.assertIn('Выбрано: 5', c.message.edit_text.await_args.args[0])
 
     async def test_periods_do_not_overlap_and_drafts_can_be_deleted(self):
         made = await self.roster('create', OWNER, restaurant_id=PLACE, start='2026-11-01', end='2026-11-15')
@@ -322,27 +578,6 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         await self.roster('publish', OWNER, id=again['id'], revision=1)
         await self.roster('delete', OWNER, 400, id=again['id'])
         await self.roster('open', OWNER, id=again['id'])
-
-    async def test_name_written_by_hand_becomes_the_person_who_joined(self):
-        made = await self.roster('create', OWNER, restaurant_id=PLACE, start='2026-11-01', end='2026-11-15')
-        draft = dict(made['draft'], people=made['draft']['people'] + [{'name': 'Вика'}], cells={'Вика': {'2026-11-02': '9'}})
-        saved = await self.roster('save', OWNER, id=made['id'], revision=1, draft=draft)
-        self.fake.rows['employee_links'].append({'id': 'cccccccc-0000-0000-0000-000000000008', 'restaurant_id': PLACE,
-                                                 'user_id': 48, 'report_name': 'Вика', 'status': 'approved', 'role': 'staff', 'requested_at': '8'})
-        sent = []
-
-        class Bot:
-            async def send_message(self, chat, text, **_):
-                sent.append(chat)
-        self.client.server.app['bot'] = Bot()
-        await self.roster('publish', OWNER, id=made['id'], revision=saved['revision'])
-        import asyncio
-        await asyncio.sleep(0.2)
-        self.assertIn(48, sent)
-        later = await self.roster('create', OWNER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-30')
-        names = [(p['name'], p['link']) for p in later['draft']['people']]
-        self.assertEqual(names.count(('Вика', 'cccccccc-0000-0000-0000-000000000008')), 1)
-        self.assertEqual(len(names), 3)
 
     async def test_new_manager_gets_the_site_link(self):
         sent = []

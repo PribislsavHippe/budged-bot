@@ -12,6 +12,7 @@
 
 Имена живут только в сообщении владельца: модуль ничего не сохраняет и не пишет в логи.
 """
+import dataclasses
 import html
 import math
 import random
@@ -72,6 +73,8 @@ class Request:
     # Менеджер может поменять на дату, сколько закрывают и сколько открывают.
     closers: dict[date, int] = field(default_factory=dict)
     openers: dict[date, int] = field(default_factory=dict)
+    # Во сколько раз важнее та или иная цель; так получаются разные варианты графика.
+    weights: dict[str, float] = field(default_factory=dict)
 
     @property
     def days(self):
@@ -79,7 +82,7 @@ class Request:
 
     @property
     def mandatory_limit(self):
-        return MAX_MANDATORY * max(1, round(len(self.days) / MANDATORY_PERIOD_DAYS))
+        return off_limit(len(self.days))
 
     def is_money(self, day):
         return day in self.holidays or day.weekday() in MONEY_WEEKDAYS
@@ -148,21 +151,24 @@ def _recall_price(request, name):
     return RECALL_PROTECTED_COST if protected else RECALL_COST
 
 
-def _person_cost(row, money, target, wish_off, wish_starts, off, recall_price):
-    """Штраф одного человека. row — приход по дням или None."""
+def _person_cost(row, money, target, wish_off, wish_starts, off, recall_price, w=None):
+    """Штраф одного человека. row — приход по дням или None. w — веса целей (1 по умолчанию)."""
+    w = w or {}
+    streak_c, lonely_c, rise_c = STREAK_COST * w.get('streak', 1), LONELY_COST * w.get('lonely', 1), RISE_COST * w.get('rise', 1)
+    shift_c, money_c, hour_c = SHIFT_COST * w.get('shift', 1), MONEY_COST * w.get('money', 1), HOUR_COST * w.get('hour', 1)
     cost = streak = shifts = paid = hours = refused = recalled = 0
     previous = None
     for index, start in enumerate(row):
         if start is None:
             if streak > MAX_STREAK:
-                cost += STREAK_COST * (streak - MAX_STREAK) ** 2
+                cost += streak_c * (streak - MAX_STREAK) ** 2
             elif streak == 1:
-                cost += LONELY_COST
+                cost += lonely_c
             streak = 0
             previous = None
             continue
         if previous is not None and start < previous:
-            cost += RISE_COST
+            cost += rise_c
         previous = start
         streak += 1
         shifts += 1
@@ -178,13 +184,13 @@ def _person_cost(row, money, target, wish_off, wish_starts, off, recall_price):
             cost += WISH_START_COST
             refused += 1
     if streak > MAX_STREAK:
-        cost += STREAK_COST * (streak - MAX_STREAK) ** 2
+        cost += streak_c * (streak - MAX_STREAK) ** 2
     elif streak == 1:
-        cost += LONELY_COST
+        cost += lonely_c
     cost += recall_price * recalled + RECALL_SPREAD_COST * recalled * recalled
     # Каждый следующий отказ одному человеку дороже: отказывать лучше понемногу всем.
-    return (cost + REFUSAL_COST * refused * refused + SHIFT_COST * (shifts - target[0]) ** 2 + MONEY_COST * (paid - target[1]) ** 2
-            + HOUR_COST * (hours - target[2]) ** 2)
+    return (cost + REFUSAL_COST * refused * refused + shift_c * (shifts - target[0]) ** 2 + money_c * (paid - target[1]) ** 2
+            + hour_c * (hours - target[2]) ** 2)
 
 
 def _fair_shares(total, limits):
@@ -242,7 +248,7 @@ def _search(request, iterations, seed):
     prices = [_recall_price(request, name) for name in people]
 
     def person_cost(p):
-        return _person_cost(table[p], money, targets[p], wish_off[p], wish_starts[p], off[p], prices[p])
+        return _person_cost(table[p], money, targets[p], wish_off[p], wish_starts[p], off[p], prices[p], request.weights)
 
     table = [[None] * len(days) for _ in people]
     for d in range(len(days)):
@@ -279,6 +285,163 @@ def _search(request, iterations, seed):
         else:
             table[a][d], table[b][d] = table[b][d], table[a][d]
     return best_total, best
+
+
+# ─── обязательные выходные и варианты графика ───────────────────────────────
+
+STUDENT_EXTRA_OFF = 2   # студентам нужно больше обязательных выходных из-за учёбы
+
+
+def off_limit(days, student=False):
+    """Сколько обязательных выходных положено на период: 3 на 15 дней, студентам на 2 больше."""
+    return max(1, round(MAX_MANDATORY * days / MANDATORY_PERIOD_DAYS)) + (STUDENT_EXTRA_OFF if student else 0)
+
+
+def off_quota(request, name):
+    return off_limit(len(request.days), name in request.students)
+
+
+def auto_days_off(request, seed=0, pairs=False):
+    """Обязательные выходные каждому: поровну на период, в дни, когда людей нужно меньше всего.
+    Не больше, чем можно отпустить при нужном числе людей (и одном запасном); пятница, суббота,
+    воскресенье и праздники — последними. pairs: выходные по два дня подряд, где получается.
+    Уже стоящие выходные (отпуск, ручные) не трогаются. Возвращает только новые: {имя: set(дат)}."""
+    rng = random.Random(seed)
+    days = request.days
+    people = list(request.people)
+    off = {name: set(request.days_off.get(name, ())) for name in people}
+    extra = [0] * len(days)
+    away = [sum(day in off[name] for name in people) for day in days]
+    room = [len(people) - away[d] - request.count(day) - 1 for d, day in enumerate(days)]
+    price = [(70 if request.is_money(day) else 0) for day in days]
+    added = {name: set() for name in people}
+    order = [name for name in people if request.is_present(name)]
+    rng.shuffle(order)
+
+    def free(name, d):
+        return days[d] not in off[name] and extra[d] < room[d]
+
+    def cost(name, d):
+        near = sum(days[i] in off[name] for i in (d - 1, d + 1) if 0 <= i < len(days))
+        # В режиме «парами» соседство даже приветствуется; иначе выходные разносим.
+        return price[d] + extra[d] * 10 + (-6 if pairs else 8) * near + rng.random() * .5
+
+    def take(name, d):
+        off[name].add(days[d]); added[name].add(days[d]); extra[d] += 1
+
+    for name in order:
+        need = off_quota(request, name) - len(off[name])
+        while pairs and need >= 2:
+            options = [(cost(name, d) + cost(name, d + 1), d) for d in range(len(days) - 1) if free(name, d) and free(name, d + 1)]
+            if not options:
+                break
+            _, d = min(options)
+            take(name, d); take(name, d + 1)
+            need -= 2
+        while need > 0:
+            options = [(cost(name, d), d) for d in range(len(days)) if free(name, d)]
+            if not options:
+                break
+            _, d = min(options)
+            take(name, d)
+            need -= 1
+    return added
+
+
+# Варианты отличаются тем, что для них важнее; у каждого свой разброс выходных.
+VARIANTS = (
+    {'id': 'even', 'title': 'Поровну часов и смен', 'pairs': False, 'seed': 11, 'weights': {'shift': 3.0, 'hour': 3.0}},
+    {'id': 'calm', 'title': 'Спокойные переходы', 'pairs': True, 'seed': 23, 'weights': {'rise': 4.0, 'streak': 2.5, 'lonely': 3.0}},
+    {'id': 'weekend', 'title': 'Поровну пт–вс', 'pairs': False, 'seed': 37, 'weights': {'money': 4.0}},
+)
+
+
+def metrics(request, found, schedule=None):
+    """Числа, по которым варианты сравниваются между собой."""
+    present = {name: stats for name, stats in found.people.items()
+               if len(request.days_off.get(name, ())) < len(request.days)} or found.people
+    spread = lambda key: max(v[key] for v in present.values()) - min(v[key] for v in present.values())
+    return {'problems': len(found.shortages) + len(found.closers) + len(found.openers) + len(found.rises)
+                        + len(found.forced) + len(found.streaks),
+            'hours': spread('hours'), 'shifts': spread('shifts'), 'money': spread('money'),
+            'rises': len(found.rises), 'streaks': len(found.streaks), **_rest(request, schedule)}
+
+
+def _rest(request, schedule):
+    """Как выглядят выходные: самая долгая серия смен подряд и сколько выходных идут парами."""
+    if schedule is None:
+        return {'stretch': 0, 'pairs': 0}
+    days = request.days
+    longest = pairs = 0
+    for name in request.people:
+        if not request.is_present(name):
+            continue
+        run = 0
+        for day in days:
+            run = run + 1 if day in schedule.get(name, {}) else 0
+            longest = max(longest, run)
+        off = request.days_off.get(name, set())
+        pairs += sum(day in off and day + timedelta(days=1) in off for day in days)
+    return {'stretch': longest, 'pairs': pairs}
+
+
+# Что сравниваем: ключ, как назвать лучший и худший результат. Чем меньше число, тем лучше.
+COMPARE = (
+    ('problems', lambda v: 'Все правила соблюдены' if v == 0 else f'Меньше всего нарушений правил: {v}',
+                 lambda v: f'Больше всего нарушений правил: {v}'),
+    ('hours', lambda v: f'Часы ровнее всех: разница между людьми {v} ч',
+              lambda v: f'Часы неровные: разница между людьми {v} ч'),
+    ('shifts', lambda v: f'Смены ровнее всех: разница {v}',
+               lambda v: f'Смены неровные: разница {v}'),
+    ('money', lambda v: f'Пятницы, субботы, воскресенья и праздники ровнее всех: разница {v}',
+              lambda v: f'Пятницы, субботы и воскресенья неровно: разница {v}'),
+    ('rises', lambda v: 'Нет ранних приходов после поздних' if v == 0 else f'Ранних приходов после поздних меньше всего: {v}',
+              lambda v: f'Ранний приход после позднего: {v}'),
+    ('streaks', lambda v: 'Нет серий дольше трёх смен подряд' if v == 0 else f'Серий дольше трёх смен подряд меньше всего: {v}',
+                lambda v: f'Есть серии дольше трёх смен подряд: {v}'),
+    ('stretch', lambda v: f'Дольше всего без выходного — {v} дн. подряд, это меньше, чем в других',
+                lambda v: f'Кому-то работать {v} дн. подряд без выходного'),
+    ('pairs', lambda v: 'Выходные идут подряд, по два-три дня', lambda v: 'Выходные разбросаны по одному дню', True),
+)
+
+
+def describe(results, limit=3):
+    """Плюсы и минусы каждого варианта относительно остальных; различий нет — строки нет."""
+    for r in results:
+        r['pros'], r['cons'] = [], []
+    for key, good, bad, *more in COMPARE:
+        values = [r['metrics'][key] for r in results]
+        best, worst = (max(values), min(values)) if more else (min(values), max(values))
+        if best == worst:
+            continue
+        for r in results:
+            value = r['metrics'][key]
+            if value == best and len(r['pros']) < limit:
+                r['pros'].append(good(value))
+            elif value == worst and len(r['cons']) < limit:
+                r['cons'].append(bad(value))
+    return results
+
+
+def build_variants(request, iterations=120000, restarts=2):
+    """Несколько вариантов графика сразу: обязательные выходные расставляются сами, затем каждый
+    вариант собирается со своими приоритетами. Лучший по числу нарушений и разбросу — первый."""
+    results = []
+    for variant in VARIANTS:
+        auto = auto_days_off(request, variant['seed'], variant['pairs'])
+        merged = {name: set(request.days_off.get(name, ())) | auto.get(name, set()) for name in request.people}
+        trial = dataclasses.replace(request, days_off=merged, weights=variant['weights'])
+        table = build(trial, iterations=iterations, seed=variant['seed'], restarts=restarts)
+        schedule = as_schedule(trial, table)
+        found = audit(trial, schedule)
+        results.append({'id': variant['id'], 'title': variant['title'], 'schedule': schedule,
+                        'off': auto, 'metrics': metrics(trial, found, schedule)})
+    describe(results)
+    results.sort(key=lambda r: (r['metrics']['problems'], r['metrics']['hours'] + r['metrics']['money'] + r['metrics']['shifts']))
+    # Названия нейтральные: чем вариант хорош, говорят его плюсы и минусы, посчитанные по цифрам.
+    for letter, result in zip('АБВГД', results):
+        result['title'] = f'Вариант {letter}'
+    return results
 
 
 def as_schedule(request, table):

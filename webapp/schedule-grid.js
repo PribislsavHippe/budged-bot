@@ -28,49 +28,80 @@
   }
   const onDay=(people,iso)=>people.filter(p=>works(parse(p.cells?.[iso]))).length;
 
-  // o: days, people[{name,me,cells,off,wish_off}], events, today, near, scrolls, corner, edit, need(iso), flagged
+  // Правила таблицы (Бюро Горбунова, подборка «Таблицы»): все числа выровнены по разрядам вправо,
+  // шапка прижата к верху и одной высоты у всех дней, события дня — отдельной строкой над датами,
+  // повторяющееся (дни недели) бледное, отклонения (нехватка людей) заметные; группы разделены
+  // промежутком, а не линиями; пустого и бессмысленного цвета нет. Месяц в таблице не пишется:
+  // период стоит в заголовке страницы.
+  // o: days, people[{name,me,cells,off}], events, holidays{iso:название}, today, near, scrolls, corner, edit,
+  //    need(iso), flagged
   function table(o){
     const days=o.days,labels=['сегодня','завтра','послезавтра'];
     const gap=(iso,k)=>!o.near&&k>0&&at(iso).getDay()===1;
     const g=tag=>`<${tag} class="sg-gap" aria-hidden="true"></${tag}>`;
     const tail=tag=>o.scrolls?`<${tag} class="sg-tail" aria-hidden="true"></${tag}>`:'';
     const ti=o.today?days.indexOf(o.today):-1;
-    let html=`<colgroup><col class="sg-n">${days.map((iso,k)=>(gap(iso,k)?'<col class="sg-g">':'')+'<col>').join('')}${o.scrolls?'<col class="sg-tail">':''}</colgroup>`;
-    html+=`<thead><tr><th class="sg-name" scope="col">${o.corner??(o.near?'':NAMES[at(days[0]).getMonth()])}</th>`;
+    // На телефоне (три дня) события подписаны в строке «сегодня/завтра», отдельной строки нет.
+    const withEvents=!o.near&&(!!o.edit||days.some(iso=>o.events?.[iso]||o.holidays?.[iso]));
+    let html=`<colgroup><col class="sg-n">${days.map((iso,k)=>(gap(iso,k)?'<col class="sg-g">':'')+'<col>').join('')}${o.scrolls?'<col class="sg-tail">':''}</colgroup><thead>`;
+    // Строка 1: события дня (генуборка, собрание) и праздники — над датами, чтобы даты не прыгали.
+    // Подряд идущие дни с одним названием подписываются один раз.
+    // Серия праздничных дней подряд подписывается один раз, по первому названию, кроме «Выходной».
+    const runLabel={};
+    days.forEach((iso,k)=>{
+      if(!o.holidays?.[iso]||o.holidays?.[days[k-1]])return;
+      let end=k;while(o.holidays?.[days[end+1]])end++;
+      const names=days.slice(k,end+1).map(d=>o.holidays[d]);
+      runLabel[iso]=names.find(n=>n!=='Выходной')||names[0];
+    });
+    if(withEvents)html+=`<tr class="sg-hv"><th class="sg-name" scope="col"></th>${days.map((iso,k)=>{
+      const event=o.events?.[iso],holiday=event?'':runLabel[iso]||'';
+      return (gap(iso,k)?g('th'):'')+`<th class="sg-ev" scope="col">${event?`<i>${esc(event)}</i>`:holiday?`<i class="sg-hol">${esc(holiday)}</i>`:''}</th>`;}).join('')}${tail('th')}</tr>`;
+    // Строка 2: день недели бледным, число жирным.
+    html+=`<tr class="sg-hd"><th class="sg-name" scope="col">${o.corner??''}</th>`;
     days.forEach((iso,k)=>{const d=at(iso),rel=ti>=0?k-ti:-1;
       html+=(gap(iso,k)?g('th'):'')+`<th scope="col" data-day="${iso}" tabindex="0" class="sg-day ${iso===o.today?'sg-today':''}" title="${o.edit?'Настройки дня':'Поставить этот день рядом с именами'}">`
-        +`${o.near?`<em>${rel>=0&&rel<3?labels[rel]:'&nbsp;'}</em>`:''}${WD[d.getDay()]}<b>${d.getDate()}</b>${o.events?.[iso]?`<i>${esc(o.events[iso])}</i>`:''}</th>`;});
+        +`${o.near?(o.events?.[iso]?`<em class="ev">${esc(o.events[iso])}</em>`:`<em>${rel>=0&&rel<3?labels[rel]:runLabel[iso]?esc(runLabel[iso]):'&nbsp;'}</em>`):''}<span class="sg-wd">${WD[d.getDay()]}</span><b>${d.getDate()}</b></th>`;});
     html+=tail('th')+'</tr></thead><tbody>';
     o.people.forEach((p,r)=>{
-      html+=`<tr class="${p.me?'sg-me':''}"><th class="sg-name" scope="row" data-r="${r}" ${o.edit?'tabindex="0"':''}>${esc(p.name)}</th>`;
-      days.forEach((iso,k)=>{const wish=o.edit&&(p.wish_off||[]).includes(iso);
-        html+=(gap(iso,k)?g('td'):'')+`<td class="sg-c ${wish?'sg-wish':''}" data-r="${r}" data-day="${iso}" tabindex="0">${shift(p,iso)}</td>`;});
+      html+=`<tr class="${p.me?'sg-me':''}"><th class="sg-name" scope="row" data-r="${r}" ${o.edit?'tabindex="0"':''}>${esc(p.name)}${o.edit?`<button type="button" class="sg-x" data-remove="${r}" aria-label="Убрать из графика: ${esc(p.name)}" title="Убрать из графика">×</button>`:''}</th>`;
+      days.forEach((iso,k)=>{
+        html+=(gap(iso,k)?g('td'):'')+`<td class="sg-c" data-r="${r}" data-day="${iso}" tabindex="0">${shift(p,iso)}</td>`;});
       html+=tail('td')+'</tr>';
     });
+    // Итог: число людей в смене. Когда людей столько, сколько нужно, число бледное;
+    // отклонение — красное: заметно только то, что требует внимания.
     html+=`</tbody><tfoot><tr><th class="sg-name" scope="row">В смене</th>`;
     days.forEach((iso,k)=>{const have=onDay(o.people,iso),need=o.need?.(iso);
-      const bad=o.flagged?.[iso]||(need!=null&&have<need);
-      html+=(gap(iso,k)?g('td'):'')+`<td class="${bad?'sg-bad':''}"><b>${have}</b>${need!=null&&need!==have?`<small>/${need}</small>`:''}</td>`;});
+      const bad=o.flagged?.[iso]||(need!=null&&have!==need);
+      html+=(gap(iso,k)?g('td'):'')+`<td class="${bad?'sg-bad':'sg-ok'}"${need!=null?` title="Нужно: ${need}"`:''}><b>${have}</b></td>`;});
     return html+tail('td')+'</tr></tfoot>';
   }
 
   // Прокрутка: имена на месте, выбранный день встаёт к ним; хвост справа даёт довести даже последний.
   function scroller(t,sc,opts={}){
     const names=()=>t.querySelector('thead .sg-name')?.offsetWidth||0;
+    let fits=false;
     function size(){
-      t.style.setProperty('--tail','0px');
+      t.style.setProperty('--tail','0px');fits=false;
       if(opts.sheet)opts.sheet.style.width='';
       if(t.classList.contains('sg-near'))t.style.setProperty('--dw',Math.floor((sc.clientWidth-names())/3)+'px');
-      else if(opts.sheet)opts.sheet.style.width=t.offsetWidth+'px';
+      else if(opts.sheet){
+        // Весь период помещается — лист по ширине данных, без пустоты справа и без прокрутки.
+        const natural=t.offsetWidth;
+        if(natural<=opts.sheet.parentElement.clientWidth){fits=true;opts.sheet.style.width=natural+'px';sc.scrollLeft=0;t.style.setProperty('--names',names()+'px');return;}
+        opts.sheet.style.width=natural+'px';
+      }
       const heads=t.querySelectorAll('thead th.sg-day');if(!heads.length)return;
       t.style.setProperty('--tail',Math.max(0,sc.clientWidth-names()-heads[heads.length-1].offsetWidth)+'px');
-      sc.style.scrollPaddingLeft=names()+'px';
+      sc.style.scrollPaddingLeft=names()+'px';t.style.setProperty('--names',names()+'px');
     }
+    // Колонка подсвечивается только после выбора человеком: без выбора заливка ничего не значит.
     function go(iso,smooth=true){
       t.querySelectorAll('.sg-pick').forEach(e=>e.classList.remove('sg-pick'));
-      t.querySelectorAll(`[data-day="${iso}"]`).forEach(e=>e.classList.add('sg-pick'));
+      if(smooth)t.querySelectorAll(`[data-day="${iso}"]`).forEach(e=>e.classList.add('sg-pick'));
       const head=t.querySelector(`thead th[data-day="${iso}"]`);
-      if(head)sc.scrollTo({left:head.offsetLeft-names(),behavior:smooth?'smooth':'auto'});
+      if(head&&!fits)sc.scrollTo({left:head.offsetLeft-names(),behavior:smooth?'smooth':'auto'});
     }
     sc.addEventListener('scroll',()=>t.classList.toggle('sg-scrolled',sc.scrollLeft>2),{passive:true});
     return {size,go};
@@ -111,7 +142,7 @@
       land.classList.toggle('rotated',portrait);insets(portrait);
       land.style.width=portrait?w+'px':'';land.style.height=portrait?h+'px':'';
       const style=getComputedStyle(area),room=area.clientHeight-parseFloat(style.paddingTop)-parseFloat(style.paddingBottom);
-      const rows=options.people.length+2;let rh=Math.floor(room/rows);
+      const rows=options.people.length+2+(Object.keys(options.events||{}).length||Object.keys(options.holidays||{}).length?1:0);let rh=Math.floor(room/rows);
       land.style.setProperty('--rh',rh+'px');
       // Шапка с событием дня выше остальных строк: отнимаем лишнее у всех строк поровну.
       for(let pass=0;pass<4&&full.offsetHeight>room;pass++){rh-=Math.max(1,Math.ceil((full.offsetHeight-room)/(rows-1)));land.style.setProperty('--rh',rh+'px');}
