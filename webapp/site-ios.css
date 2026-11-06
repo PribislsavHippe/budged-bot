@@ -57,7 +57,7 @@
 /* Кнопки: синяя заливка — главное действие, серая плашка — второстепенное. */
 .restaurant-page #restaurant-panel :is(.btn,.re .btn,.re-publish){background:var(--blue);color:#fff!important;border:0;border-radius:999px;
   min-height:40px;padding:0 22px;font-size:16px;font-weight:600;box-shadow:none}
-.restaurant-page #restaurant-panel :is(.btn-ghost,.re-add .btn){background:var(--fill3);color:var(--blue)!important;border:0}
+.restaurant-page #restaurant-panel :is(.btn-ghost){background:var(--fill3);color:var(--blue)!important;border:0}
 .restaurant-page #restaurant-panel :is(.re-build,.re-step,.re-undo,.re-redo){background:var(--fill3);color:var(--blue);border:0;border-radius:999px;font-weight:500}
 .restaurant-page #restaurant-panel .re-step{min-width:36px;padding:0;font-size:20px}
 .restaurant-page #restaurant-panel :is(.re-new,.re-cancel,.re-history button){color:var(--blue);background:none}
@@ -91,14 +91,12 @@
 
 /* Редактор графика. */
 .restaurant-page .re-title{font:700 22px/28px var(--sf);letter-spacing:.35px}
-.restaurant-page .re-state{font-size:13px;color:var(--label2)}
 .restaurant-page .re-card h3{font-size:17px;font-weight:600;letter-spacing:-.4px}
 .restaurant-page .re-card h3 small,.restaurant-page .re-label,.restaurant-page #restaurant-panel .re-card label{color:var(--label2)}
 .restaurant-page #restaurant-panel .re-hours button{border:0;background:var(--fill3);border-radius:12px;min-height:40px;font-size:16px;color:var(--label)}
 .restaurant-page #restaurant-panel .re-hours button[aria-pressed=true]{background:var(--blue);color:#fff}
 .restaurant-page #restaurant-panel .re-flags{border-top:.5px solid var(--sep)}
 .restaurant-page #restaurant-panel .re-flags button[aria-pressed=true]{background:var(--fill3)}
-.restaurant-page .re-add{border-top:.5px solid var(--sep)}
 .restaurant-page .re-report li{border-bottom:.5px solid var(--sep)}
 .restaurant-page #restaurant-panel .re-problems button{color:var(--red);font-size:15px}
 .restaurant-page #restaurant-panel .re-problems button:hover{background:rgba(255,56,60,.1)}
@@ -151,7 +149,7 @@
 .restaurant-page .restaurant-login-code{margin-top:14px!important}
 @media(max-width:700px){
   .restaurant-page .re-period{width:100%;gap:6px 8px}
-  .restaurant-page .re-heading{flex:1 0 60%;text-align:left}
+  .restaurant-page .re-title{flex:1 0 60%;text-align:left}
   .restaurant-page .re-steps{flex-wrap:wrap;gap:6px 10px}
   .restaurant-page .re-steps li+li::after{display:none}
   .restaurant-page .re-tools{gap:8px}
@@ -199,7 +197,6 @@
 .restaurant-page .re-label{margin:0 0 var(--sp2)}
 .restaurant-page .re-line{margin:var(--sp3) 0}
 .restaurant-page .re-flags{padding-top:var(--sp2)}
-.restaurant-page .re-add{padding-top:var(--sp3);margin-top:0;gap:var(--sp2)}
 .restaurant-page #restaurant-panel .re-card label{margin:0 0 var(--sp3)}
 .restaurant-page .re-fields{gap:var(--sp2)}
 .restaurant-page .re-row{gap:var(--sp2);margin-bottom:var(--sp3)}
@@ -207,15 +204,12 @@
 .restaurant-page .re-tools{gap:var(--sp2)}
 /* Занятое место: высота не зависит от того, есть ли выбор, текст или ошибка. */
 .restaurant-page .re-title{min-height:28px}
-.restaurant-page .re-state{display:block;min-height:16px}
 .restaurant-page .re-guide{min-height:28px}
 .restaurant-page .re-guide p:empty{display:block;min-height:1px}
 .restaurant-page .re-delete.is-off{visibility:hidden}
-.restaurant-page .re-cell{min-height:292px}
-.restaurant-page .re-side{min-height:392px}
 .restaurant-page .re-check{min-height:140px}
 .restaurant-page .re-error{min-height:0}
-@media(max-width:1180px){.restaurant-page .re-cell,.restaurant-page .re-side,.restaurant-page .re-check{min-height:0}}
+@media(max-width:1180px){.restaurant-page .re-check{min-height:0}}
 
 /* Этапы — над заголовком, во всю ширину страницы: кружок, название, линия до следующего. */
 .restaurant-page .re-guide{display:block;width:100%;min-height:var(--ctl);order:0}
@@ -229,7 +223,7 @@
 .restaurant-page .re-steps li.done{color:var(--label2)}
 .restaurant-page .re-guide p{display:none}
 
-.restaurant-page .re-tools{justify-content:flex-end;min-height:var(--ctl)}
+.restaurant-page .re-tools{justify-content:flex-start;min-height:var(--ctl)}
 .restaurant-page .re-aside{position:static}
 
 /* Вариант в списке: заголовок и подпись «лучший по расчёту», плюсы с минусами, кнопка выбора. */
@@ -245,3 +239,21 @@
 .restaurant-page .sg-s.off{--t:#ffd0d2}
 .restaurant-page #restaurant-panel .re-ask{min-height:var(--ctl);padding:0 16px;border:0;border-radius:999px;background:var(--fill3);color:var(--blue);font-size:14px;font-weight:500}
 .restaurant-page #restaurant-panel .re-ask:disabled{opacity:.35}
+
+/* Заголовок страницы — список ресторанов, если их несколько: отдельной кнопки нет. */
+.restaurant-page .site-place #restaurant-select{font:700 34px/41px var(--sf);letter-spacing:.4px;color:var(--label);height:auto;min-height:41px;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='10' fill='none' stroke='%23999' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 2l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 2px center;
+  -webkit-appearance:none;appearance:none;border:0;border-radius:0;padding:0 28px 0 0;cursor:pointer;max-width:100%}
+@media(max-width:700px){.restaurant-page .site-place #restaurant-select{font-size:28px;line-height:34px}}
+/* Шапка редактора: период и кнопки в одном ряду. */
+.restaurant-page .re-title{font:700 22px/28px var(--sf);letter-spacing:.35px}
+.restaurant-page .re-head{flex-wrap:wrap}
+@media(min-width:1180px){.restaurant-page .re-head{flex-wrap:nowrap}}
+.restaurant-page .re-history button{font-size:20px}
+.restaurant-page .re-toast{background:rgba(28,28,30,.92);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}
+/* Блоки карточки: тонкие разделители, подписи спокойные. */
+.restaurant-page .re-block+.re-block{border-top:.5px solid var(--sep);margin-top:var(--sp4);padding-top:var(--sp4)}
+.restaurant-page .re-sub{margin:0 0 var(--sp3);color:var(--label2)}
+.restaurant-page #restaurant-panel .re-adder summary{color:var(--blue);padding:0 var(--sp1)}
+.restaurant-page #restaurant-panel .re-chips button{border:0;background:var(--fill3);color:var(--label)}
+.restaurant-page .re-main{align-content:start}

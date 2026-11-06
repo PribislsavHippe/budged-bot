@@ -307,8 +307,9 @@ async def carry_over(restaurant_id, start, members):
 
 
 async def team(restaurant_id):
+    """Подтверждённые официанты: менеджеры и управляющий в график смен не попадают."""
     return await db._pages(lambda: db.supabase.table('employee_links').select('id,report_name')
-                           .eq('restaurant_id', restaurant_id).eq('status', 'approved')
+                           .eq('restaurant_id', restaurant_id).eq('status', 'approved').eq('role', 'staff')
                            .order('requested_at').order('id'))
 
 
@@ -486,7 +487,7 @@ async def offs_action(request, uid, row, start, end, send):
             sent = await days_off.ask(bot, row['restaurant_id'], start, end, links, set(got))
     except APIError as error:
         if error.code in MISSING:
-            raise ValueError('Запись выходных пока недоступна: владельцу нужно обновить базу (migration_v32.sql).') from None
+            raise ValueError('Запись выходных пока недоступна: владельцу нужно обновить базу (migration_v33.sql).') from None
         raise
     answered = [link for link in links if link in got]
     asked_before = draft.get('off_requested', {})

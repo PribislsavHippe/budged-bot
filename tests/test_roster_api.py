@@ -78,8 +78,8 @@ class Query:
         self.lo, self.hi = a, b + 1
         return self
 
-    def upsert(self, row, on_conflict=''):
-        self.action, self.payload, self.conflict = 'upsert', row, on_conflict
+    def upsert(self, row, on_conflict='', ignore_duplicates=False):
+        self.action, self.payload, self.conflict, self.ignore = 'upsert', row, on_conflict, ignore_duplicates
         return self
 
     def insert(self, row):
@@ -96,7 +96,8 @@ class Query:
             keys = [k.strip() for k in self.conflict.split(',')]
             for existing in rows:
                 if all(existing.get(k) == self.payload.get(k) for k in keys):
-                    existing.update(self.payload)
+                    if not self.ignore:
+                        existing.update(self.payload)
                     break
             else:
                 rows.append(dict(self.payload))
@@ -273,15 +274,28 @@ class DraftTests(unittest.TestCase):
         self.assertNotIn('2026-11-16', draft['off']['Аня'] if 'Аня' in draft['off'] and '2026-11-16' not in draft['off_auto'].get('Аня', []) else [])
         self.assertIn('2026-11-22', draft['off']['Ева'])
 
-    def test_telegram_keyboard_lists_only_coming_days_and_marks_chosen(self):
+    def test_telegram_text_with_days_off_is_read_and_checked_against_the_period(self):
         days_off = self.api.days_off
-        start, end = date(2026, 11, 16), date(2026, 11, 30)
-        markup = days_off.keyboard(start, end, {date(2026, 11, 18)}, date(2026, 11, 17))
-        labels = [b.text for row in markup.inline_keyboard for b in row]
-        self.assertNotIn('пн 16', labels)
-        self.assertIn('✓ ср 18', labels)
-        self.assertEqual(labels[-1], 'Готово')
-        self.assertTrue(all(len(b.callback_data) <= 64 for row in markup.inline_keyboard for b in row))
+        start, end, today = date(2026, 11, 16), date(2026, 11, 30), date(2026, 11, 10)
+        parse = days_off.parse
+        self.assertEqual(parse('17, 24')['numbers'], [17, 24])
+        self.assertEqual(parse('17 и 24 ноября'), {'numbers': [17, 24], 'months': {11}})
+        self.assertEqual(parse('17-19')['numbers'], [17, 18, 19])
+        self.assertEqual(parse('Нет'), {'none': True})
+        # Суммы, обычные фразы и дробные числа остаются обычным сообщениям.
+        for text in ('3500', '17.5', 'кофе 17', '40', '', '17 3500'):
+            self.assertIsNone(parse(text), text)
+        ok, problem = days_off.resolve(parse('17, 24'), start, end, today, 3)
+        self.assertEqual((ok, problem), ({date(2026, 11, 17), date(2026, 11, 24)}, None))
+        # Числа первой половины месяца к графику 16–30 не подходят.
+        for text in ('1', '5, 17', '15'):
+            ok, problem = days_off.resolve(parse(text), start, end, today, 3)
+            self.assertIsNone(ok, text)
+            self.assertIn('16–30 ноября', problem)
+        self.assertIn('до 3', days_off.resolve(parse('17 18 19 20'), start, end, today, 3)[1])
+        self.assertIn('уже прошли', days_off.resolve(parse('17'), start, end, date(2026, 11, 20), 3)[1])
+        self.assertIsNone(days_off.resolve(parse('17 декабря'), start, end, today, 3)[0])
+        self.assertEqual(days_off.resolve(parse('нет'), start, end, today, 3), (set(), None))
         self.assertEqual(days_off.days_text({date(2026, 11, 18), date(2026, 11, 17)}), '17, 18 ноября')
         self.assertEqual(days_off.period_text(date(2026, 12, 16), date(2026, 12, 31)), '16–31 декабря')
 
@@ -397,7 +411,8 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_creating_a_schedule_builds_variants_and_the_rest_follows(self):
         made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
-        self.assertEqual([p['name'] for p in made['draft']['people']], ['Менеджер', 'Аня', *NAMES[1:7]][:8])
+        # Менеджер в график смен не попадает: в нём только официанты.
+        self.assertEqual([p['name'] for p in made['draft']['people']], ['Аня', *NAMES[1:7]])
         draft = made['draft']
         self.assertEqual(len(draft['variants']), 3)
         self.assertEqual(draft['variant'], draft['variants'][0]['id'])
@@ -436,12 +451,13 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         draft = made['draft']
         count = len(draft['people'])
         draft['people'] += [{'name': 'Кто угодно'}, {'name': 'Левый', 'link': str(uuid4())},
-                            {'name': 'Чужая', 'link': 'cccccccc-0000-0000-0000-000000000003'}]
+                            {'name': 'Чужая', 'link': 'cccccccc-0000-0000-0000-000000000003'},
+                            {'name': 'Менеджер', 'link': 'cccccccc-0000-0000-0000-000000000001'}]
         saved = await self.roster('save', OWNER, id=made['id'], revision=1, draft=draft)
         self.assertEqual(len(saved['draft']['people']), count)
         # Человека, которому закрыли доступ (уволился), график убирает сам, вместе с его сменами.
         self.fake.rows['employee_links'][3]['status'] = 'revoked'
-        left = saved['draft']['people'][2]['name']
+        left = saved['draft']['people'][1]['name']
         again = await self.roster('save', OWNER, id=made['id'], revision=2, draft=saved['draft'])
         self.assertNotIn(left, [p['name'] for p in again['draft']['people']])
         self.assertNotIn(left, again['draft']['cells'])
@@ -489,8 +505,8 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         published = await self.roster('publish', MANAGER, id=made['id'], revision=saved['revision'])
         import asyncio
         await asyncio.sleep(0.2)
-        # Первая публикация — всем, кроме того, кто публикует.
-        self.assertEqual(published['notified'], len(made['draft']['people']) - 1)
+        # Первая публикация — каждому официанту в графике; менеджер, который публикует, в нём не числится.
+        self.assertEqual(published['notified'], len(made['draft']['people']))
         mine = [text for chat, text in sent if chat == WAITER]
         self.assertEqual(len(mine), 1)
         self.assertIn('пн 16 — с 9', mine[0])
@@ -498,7 +514,20 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
     def callback(self, data, uid=WAITER):
         return NS(data=data, from_user=NS(id=uid), message=NS(chat=NS(type='private'), edit_text=AsyncMock()), answer=AsyncMock())
 
-    async def test_employees_record_days_off_in_telegram_and_the_builder_uses_them(self):
+    def text(self, body, uid=WAITER):
+        return NS(text=body, from_user=NS(id=uid), chat=NS(type='private'), answer=AsyncMock())
+
+    async def said(self, body, uid=WAITER):
+        """Сообщение сотрудника: возвращает ответ бота или None, если бот не считает это выходными."""
+        import days_off_chat
+        message = self.text(body, uid)
+        taken = await days_off_chat.expecting(message)
+        if not taken:
+            return None
+        await days_off_chat.write(message, **taken)
+        return message.answer.await_args
+
+    async def test_employees_write_days_off_in_telegram_and_the_builder_uses_them(self):
         import days_off_chat
         made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-30')
         sent = []
@@ -509,65 +538,72 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         self.client.server.app['bot'] = Bot()
         status = await self.roster('offs', MANAGER, id=made['id'])
         self.assertEqual((status['answered'], status['total']), (0, len(made['draft']['people'])))
+        # Пока никто не просил, числа остаются обычным сообщением.
+        self.assertIsNone(await self.said('17, 18'))
         asked = await self.roster('ask_offs', MANAGER, id=made['id'])
         self.assertEqual(asked['sent'], status['total'])
-        self.assertEqual({chat for chat, *_ in sent}, {2, 3, *(10 + i for i in range(6))})
+        self.assertEqual({chat for chat, *_ in sent}, {3, *(10 + i for i in range(6))})
         self.assertIn('График на 16–30 ноября', sent[0][1])
-        start, end = '2026-11-16', '2026-11-30'
-        # Сотрудница выбирает три дня; четвёртый не принимается; повторное нажатие снимает отметку.
-        for day in ('2026-11-17', '2026-11-18', '2026-11-24'):
-            c = self.callback(f'off:t:{start}:{end}:{day}')
-            await days_off_chat.choose(c)
-        self.assertIn('Выбрано: 3', c.message.edit_text.await_args.args[0])
-        over = self.callback(f'off:t:{start}:{end}:2026-11-25')
-        await days_off_chat.choose(over)
-        self.assertTrue(over.answer.await_args.kwargs.get('show_alert'))
-        over.message.edit_text.assert_not_awaited()
-        undo = self.callback(f'off:t:{start}:{end}:2026-11-24')
-        await days_off_chat.choose(undo)
-        self.assertIn('Выбрано: 2', undo.message.edit_text.await_args.args[0])
-        done = self.callback(f'off:d:{start}:{end}')
-        await days_off_chat.choose(done)
-        self.assertIn('Записал выходные: 17, 18 ноября', done.message.edit_text.await_args.args[0])
-        # Кто ответил, тому просьбу повторно не шлют; менеджер видит счётчик и что ответ новый.
+        self.assertIn('Напиши числа', sent[0][1])
+        self.assertIsNone(sent[0][2])
+        # Числа вне периода не принимаются, ничего не записывается.
+        refused = await self.said('1, 5')
+        self.assertIn('16–30 ноября', refused.args[0])
+        self.assertEqual((await self.roster('offs', MANAGER, id=made['id']))['answered'], 0)
+        # Сумма и обычный текст идут в обычную обработку.
+        self.assertIsNone(await self.said('3500'))
+        self.assertIsNone(await self.said('привет'))
+        # Четыре дня — больше нормы.
+        self.assertIn('до 3', (await self.said('17 18 24 25')).args[0])
+        done = await self.said('17, 18')
+        self.assertIn('Записал выходные: 17, 18 ноября', done.args[0])
+        self.assertEqual(done.kwargs['reply_markup'].inline_keyboard[0][0].text, 'Изменить')
+        # Ответ записан: числа снова обычное сообщение, пока не нажали «Изменить».
+        self.assertIsNone(await self.said('20'))
         status = await self.roster('offs', MANAGER, id=made['id'])
         self.assertEqual((status['answered'], status['fresh']), (1, 1))
+        change = self.callback('off:e:2026-11-16:2026-11-30')
+        await days_off_chat.change(change)
+        self.assertIn('заново', change.message.edit_text.await_args.args[0])
+        self.assertEqual((await self.roster('offs', MANAGER, id=made['id']))['answered'], 1)
+        self.assertIn('Записал выходные: 20 ноября', (await self.said('20')).args[0])
+        # Кто ответил, тому просьбу повторно не шлют.
         sent.clear()
         again = await self.roster('ask_offs', MANAGER, id=made['id'])
         self.assertEqual(again['sent'], status['total'] - 1)
         self.assertNotIn(WAITER, {chat for chat, *_ in sent})
         # Сборка берёт выходные из Telegram и ставит их первыми.
-        draft = made['draft']
-        rebuilt = await self.roster('build', MANAGER, id=made['id'], revision=made['revision'], draft=draft)
-        self.assertEqual(rebuilt['draft']['off_requested'], {'Аня': ['2026-11-17', '2026-11-18']})
-        self.assertTrue({'2026-11-17', '2026-11-18'} <= set(rebuilt['draft']['off']['Аня']))
-        self.assertNotIn('2026-11-17', rebuilt['draft']['cells'].get('Аня', {}))
-        status = await self.roster('offs', MANAGER, id=made['id'])
-        self.assertEqual(status['fresh'], 0)
+        rebuilt = await self.roster('build', MANAGER, id=made['id'], revision=made['revision'], draft=made['draft'])
+        self.assertEqual(rebuilt['draft']['off_requested'], {'Аня': ['2026-11-20']})
+        self.assertTrue({'2026-11-20'} <= set(rebuilt['draft']['off']['Аня']))
+        self.assertNotIn('2026-11-20', rebuilt['draft']['cells'].get('Аня', {}))
+        self.assertEqual((await self.roster('offs', MANAGER, id=made['id']))['fresh'], 0)
 
-    async def test_days_off_buttons_check_who_presses_and_which_period(self):
+    async def test_days_off_text_comes_only_from_the_asked_employee_and_old_buttons_stop(self):
         import days_off_chat
         await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-30')
-        start, end = '2026-11-16', '2026-11-30'
-        stranger = self.callback(f'off:t:{start}:{end}:2026-11-20', uid=555)
-        await days_off_chat.choose(stranger)
-        self.assertTrue(stranger.answer.await_args.kwargs.get('show_alert'))
-        stranger.message.edit_text.assert_not_awaited()
-        for data in (f'off:t:{start}:2026-12-31:2026-11-20', f'off:t:{start}:{end}:2026-10-01', 'off:t:плохо:{end}:x', f'off:t:2026-11-01:2026-11-15:2026-11-12'):
+        class Bot:
+            async def send_message(self, *_, **__):
+                pass
+        self.client.server.app['bot'] = Bot()
+        made = (await self.roster('list', MANAGER))['periods'][0]
+        await self.roster('ask_offs', MANAGER, id=made['id'])
+        self.assertIsNone(await self.said('17', uid=555))
+        for data in ('off:t:2026-11-16:2026-11-30:2026-11-20', 'off:d:2026-11-16:2026-11-30', 'off:e:плохо:2026-11-30',
+                     'off:e:2026-11-01:2026-11-15', 'off:e:2026-11-16:2027-12-31'):
             c = self.callback(data)
-            await days_off_chat.choose(c)
+            await days_off_chat.change(c)
             self.assertTrue(c.answer.await_args.kwargs.get('show_alert'), data)
             c.message.edit_text.assert_not_awaited()
+        stranger = self.callback('off:e:2026-11-16:2026-11-30', uid=555)
+        await days_off_chat.change(stranger)
+        self.assertTrue(stranger.answer.await_args.kwargs.get('show_alert'))
         # Студенту положено больше выходных, чем остальным.
-        made = (await self.roster('list', MANAGER))['periods'][0]
         opened = await self.roster('open', MANAGER, id=made['id'])
         draft = opened['draft']
         next(p for p in draft['people'] if p['name'] == 'Аня')['student'] = True
         await self.roster('save', MANAGER, id=made['id'], revision=opened['revision'], draft=draft)
-        for day in ('17', '18', '19', '20', '21'):
-            c = self.callback(f'off:t:{start}:{end}:2026-11-{day}')
-            await days_off_chat.choose(c)
-        self.assertIn('Выбрано: 5', c.message.edit_text.await_args.args[0])
+        self.assertIn('Записал выходные: 17, 18, 19, 20, 21 ноября', (await self.said('17-21')).args[0])
 
     async def test_periods_do_not_overlap_and_drafts_can_be_deleted(self):
         made = await self.roster('create', OWNER, restaurant_id=PLACE, start='2026-11-01', end='2026-11-15')

@@ -122,12 +122,11 @@
 .re [hidden]{display:none!important}
 .re-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 24px}
 .re-period{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px}
-.re-heading{display:grid;min-width:150px;text-align:center}
+.re-title{min-width:150px;text-align:center}
 .re-title{font-size:20px;font-weight:600;letter-spacing:-.01em;line-height:1.2}
-.re-state{font-size:12px;color:var(--sg-muted)}
 #restaurant-panel .re-step{min-width:36px;min-height:36px;padding:0;border-radius:9px;border:1px solid var(--sg-line);background:var(--sg-surface);font-size:18px;line-height:1}
 #restaurant-panel .re-step:disabled{opacity:.3}
-.re-jump,.re-place{font:inherit;font-size:13px;height:36px;border:1px solid var(--sg-line);border-radius:9px;background:var(--sg-surface);padding:0 10px;color:var(--sg-ink)}
+.re-jump{font:inherit;font-size:13px;height:36px;border:1px solid var(--sg-line);border-radius:9px;background:var(--sg-surface);padding:0 10px;color:var(--sg-ink)}
 #restaurant-panel .re-new{min-height:36px;padding:0 12px;border-radius:9px;color:var(--sg-muted);font-size:14px}
 #restaurant-panel .re-new:hover{color:var(--sg-ink)}
 .re-actions{display:flex;gap:8px;align-items:center}
@@ -176,9 +175,6 @@
 .re-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
 #restaurant-panel .re-row button{min-height:32px;padding:0 10px;border:1px solid var(--sg-line);border-radius:8px;font-size:13px}
 #restaurant-panel .re-row button[data-remove]{color:var(--sg-off-ink);border-color:transparent}
-.re-add{border-top:1px solid var(--sg-line);padding-top:12px;margin-top:4px;display:grid;gap:8px}
-#restaurant-panel .re-add label{margin:0}
-#restaurant-panel .re-add .btn{justify-self:start;background:transparent;color:var(--sg-ink)!important;border:1px solid var(--sg-line);min-height:34px}
 .re-badge{font-size:12px;font-weight:400;color:var(--sg-muted)}
 .re-badge.bad{color:var(--sg-off-ink);font-weight:600}
 .re-report{font-size:13px;line-height:1.5}
@@ -194,7 +190,6 @@
 #restaurant-panel .re-card .re-check-row{display:flex;gap:10px;align-items:flex-start;font-size:13px}
 #restaurant-panel .re-card .re-check-row input{width:auto;height:auto;margin:2px 0 0}
 .re-fields{align-items:end}
-.re-heading{text-align:left}
 /* Свои ближайшие смены над таблицей. */
 .sg-mine{background:var(--sg-surface);border-radius:14px;padding:14px 16px;margin-bottom:12px}
 .sg-mine p{margin:0;font-size:13px;color:var(--sg-muted)}
@@ -217,8 +212,7 @@
 @media(max-width:1100px){.re-guide{grid-template-columns:1fr}.re-guide button{justify-self:start}}
 /* Режимы нажатия и отмена — над таблицей. */
 .re-tools{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;width:100%}
-#restaurant-panel #restaurant-panel .re-history{display:flex;gap:2px}
-#restaurant-panel .re-history button{min-height:32px;padding:0 10px;border-radius:8px;font-size:13px;color:var(--sg-ink)}
+#restaurant-panel .re-history button{min-height:32px;min-width:32px;padding:0;border-radius:8px;font-size:18px;color:var(--sg-ink)}
 #restaurant-panel .re-history button:disabled{opacity:.3}
 /* Нарушения — кнопки: нажал — открылся день и клетка. */
 .re-problems{margin:0 0 14px!important}
@@ -229,7 +223,6 @@
 /* Шаги — тихая строка в шапке редактора, без своих кнопок: действия уже справа. */
 .re-guide{display:flex;align-items:center;gap:14px;background:none;padding:0;border-radius:0;grid-template-columns:none}
 .re-guide p{font-size:13px;color:var(--sg-off-ink);font-weight:500}
-.re-side>.re-add:first-child{border-top:0;padding-top:0;margin-top:0}
 @media(max-width:1100px){.re-guide{order:3;flex-basis:100%}}
 #restaurant-panel .re-delete{min-height:36px;padding:0 10px;border-radius:9px;color:var(--sg-off-ink);font-size:14px}
 .sg-head p:empty,.sg-head h1:empty{display:none}
@@ -263,3 +256,20 @@ html.tg-full .sg-land:not(.rotated) .sg-fit{padding-top:calc(var(--tg-safe-area-
 .re-var-info li.pro::before{content:"+";color:#34c759}
 .re-var-info li.con::before{content:"−";color:var(--sg-off-ink)}
 .re-all{min-height:36px;padding:0 4px;color:var(--sg-muted);font-size:14px}
+
+/* Откат и возврат — значки в левом верхнем углу листа, где у таблицы пустая шапка; места не занимают. */
+.re-sheet{position:relative}
+.re-history{position:absolute;left:10px;top:10px;z-index:3;display:flex;gap:2px}
+/* Одна карточка справа: человек и день в заголовке, ниже блоки «Смена», «День», «Сотрудник». */
+.re-block+.re-block{border-top:1px solid var(--sg-line);margin-top:16px;padding-top:16px}
+.re-sub{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:0 0 12px;font-size:12px;font-weight:600;color:var(--sg-muted)}
+.re-sub small{font-size:12px;font-weight:400}
+.re-label{margin:0 0 8px}
+/* Добавить сотрудника: кнопка под таблицей раскрывает список подтверждённых официантов. */
+.re-adder summary{display:inline-flex;align-items:center;min-height:36px;cursor:pointer;list-style:none;font-size:14px;color:var(--sg-muted)}
+.re-adder summary::-webkit-details-marker{display:none}
+.re-adder[open] summary{color:var(--sg-ink)}
+.re-chips{display:flex;flex-wrap:wrap;gap:8px;padding:4px 0 8px}
+#restaurant-panel .re-chips button{min-height:34px;padding:0 14px;border-radius:999px;border:1px solid var(--sg-line);font-size:14px}
+/* Сообщение внизу экрана: не сдвигает вёрстку. */
+.re-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:50;max-width:calc(100vw - 32px);padding:10px 18px;border-radius:999px;background:var(--sg-ink);color:#fff;font-size:14px;box-shadow:0 6px 24px rgba(0,0,0,.2)}

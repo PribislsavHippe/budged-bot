@@ -24,21 +24,20 @@
 
   function open(root,opts){
     // Повторное открытие раздела не пересоздаёт редактор: правки и слушатели остаются.
-    if(root._roster)return root._roster.refresh(opts.places);
-    let places=opts.places||[],placeId=places[0]?.id,periods=[],cur=null,team=[],sel=null,side=null;
+    if(root._roster)return root._roster.refresh(opts.places,opts.placeId);
+    let places=opts.places||[],placeId=places.some(p=>p.id===opts.placeId)?opts.placeId:places[0]?.id,periods=[],cur=null,team=[],sel=null,side=null;
     let edits=0,saved=0,saving=false,timer=null,busy=false;
     // Отмена: снимки черновика до каждого изменения.
-    let undo=[],redo=[],last=null,forcePick=false,offsInfo=null,note='';
+    let undo=[],redo=[],last=null,forcePick=false,offsInfo=null,toastTimer=null;
     root.innerHTML=`<div class="re sg">
       <div class="re-guide" role="status"></div>
       <div class="re-head">
         <div class="re-period">
           <button type="button" class="re-step" data-step="-1" aria-label="Предыдущий график">‹</button>
-          <div class="re-heading"><strong class="re-title"></strong><span class="re-state" role="status"></span></div>
+          <strong class="re-title"></strong>
           <button type="button" class="re-step" data-step="1" aria-label="Следующий график">›</button>
           <select class="re-jump" aria-label="Все графики" hidden></select>
-          <select class="re-place" aria-label="Ресторан" hidden></select>
-          <button type="button" class="re-new"></button>
+          <button type="button" class="re-new">+ График</button>
           <button type="button" class="re-dates">Другие даты</button>
           <button type="button" class="re-delete is-off">Удалить черновик</button>
         </div>
@@ -52,18 +51,25 @@
         <div class="re-pickview" hidden></div>
         <div class="re-editview">
           <div class="re-main">
-            <div class="re-tools"><button type="button" class="re-all">Все варианты</button><div class="re-history"><button type="button" class="re-undo" title="Отменить (Ctrl+Z)" disabled>↶ Отменить</button><button type="button" class="re-redo" title="Вернуть (Ctrl+Shift+Z)" disabled>↷</button></div></div>
-            <section class="sg-sheet re-sheet"><div class="sg-scroll"><table class="sg-edit"></table></div></section></div>
+            <div class="re-tools" hidden><button type="button" class="re-all">Все варианты</button></div>
+            <section class="sg-sheet re-sheet"><div class="re-history" hidden><button type="button" class="re-undo" title="Отменить (Ctrl+Z)" aria-label="Отменить" disabled>↶</button><button type="button" class="re-redo" title="Вернуть (Ctrl+Shift+Z)" aria-label="Вернуть" disabled>↷</button></div><div class="sg-scroll"><table class="sg-edit"></table></div></section>
+            <details class="re-adder" hidden><summary>+ Добавить сотрудника</summary><div class="re-chips"></div></details></div>
           <aside class="re-aside">
-            <section class="re-card re-cell" aria-live="polite"></section>
-            <section class="re-card re-side" aria-label="Настройки"></section>
+            <section class="re-card re-panel" aria-live="polite"><h3 class="re-who"></h3>
+              <div class="re-block re-cell"></div><div class="re-block re-day"></div><div class="re-block re-person"></div></section>
             <section class="re-card re-check" aria-label="Проверка правил"><h3>Проверка <span class="re-badge"></span></h3><div class="re-report"></div></section>
           </aside>
         </div>
-      </div></div>`;
+      </div>
+      <div class="re-toast" role="status" hidden></div></div>`;
     const q=s=>root.querySelector(s),grid=q('.sg-edit'),sc=grid.parentElement,sheet=q('.re-sheet');
     const scroll=G.scroller(grid,sc,{sheet});G.hover(grid);
     const error=t=>{q('.re-error').textContent=t||'';};
+    // Короткое сообщение внизу экрана: место в вёрстке не занимает, ничего не сдвигает.
+    function toast(text,sticky){
+      const el=q('.re-toast');clearTimeout(toastTimer);el.textContent=text||'';el.hidden=!text;
+      if(text&&!sticky)toastTimer=setTimeout(()=>{el.hidden=true;},4500);
+    }
 
     async function api(action,body={},timeout=20000){
       const r=await fetch('/api/restaurant/roster/'+action,{method:'POST',headers:{'Content-Type':'application/json'},
@@ -83,16 +89,14 @@
     const ordered=()=>[...periods].sort((a,b)=>a.start<b.start?-1:1);
     const suggested=()=>{const all=ordered();return all.length?halfAfter(all[all.length-1].end):nextHalf();};
     function renderPeriods(){
-      q('.re-place').hidden=places.length<2;
-      q('.re-place').innerHTML=places.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');q('.re-place').value=placeId;
       const list=ordered(),i=list.findIndex(p=>p.id===cur?.id);
       q('.re-jump').hidden=list.length<3;
       q('.re-jump').innerHTML=list.map(p=>`<option value="${esc(p.id)}">${esc(G.period(p.start,p.end))} · ${stateOf(p)}</option>`).join('');
       if(cur)q('.re-jump').value=cur.id;
       root.querySelectorAll('.re-step').forEach(b=>{b.hidden=list.length<2;b.disabled=i<0||!list[i+(+b.dataset.step)];});
       q('.re-empty').hidden=!!periods.length;
-      const next=suggested();q('.re-new').textContent=`+ График ${G.period(next[0],next[1])}`;
-      if(!cur){q('.re-title').textContent='';q('.re-state').textContent='';}
+      const next=suggested();q('.re-new').title=G.period(next[0],next[1]);
+      if(!cur)q('.re-title').textContent='';
       q('.re-ask').disabled=q('.re-build').disabled=q('.re-publish').disabled=!cur;
       q('.re-delete').classList.toggle('is-off',!cur||!!cur.published_at);
     }
@@ -104,7 +108,7 @@
     }
     async function load(id){
       if(!(await flush()))return;
-      try{const data=await api('open',{id});team=data.team||[];note='';accept(data,true);sel=null;side=null;renderAll();refreshOffs();
+      try{const data=await api('open',{id});team=data.team||[];toast('');accept(data,true);sel=null;side=null;renderAll();refreshOffs();
         const today=iso(new Date());scroll.go(cur.days.includes(today)?today:cur.days[0],false);}
       catch(e){failed(e);}
     }
@@ -178,11 +182,12 @@
     function renderState(){
       if(!cur)return;
       const pending=edits!==saved;
-      const offs=offsInfo?.total?` · выходные: ${offsInfo.answered} из ${offsInfo.total}${offsInfo.fresh?', есть новые':''}`:'';
-      q('.re-state').textContent=saving?'Сохраняю…':pending?'Есть несохранённые правки':`Сохранено · ${stateOf(cur)}${offs}${note?' · '+note:''}`;
       q('.re-publish').textContent=cur.published_at?(cur.changed||pending?'Опубликовать правки':'Опубликован'):'Опубликовать';
       q('.re-publish').disabled=busy||showPick()||(!!cur.published_at&&!cur.changed&&!pending);q('.re-build').disabled=busy;q('.re-ask').disabled=busy;
+      // Сколько человек уже записали выходные: подсказка к кнопке, а не строка под заголовком.
+      q('.re-ask').title=offsInfo?.total?`Ответили: ${offsInfo.answered} из ${offsInfo.total}${offsInfo.fresh?', есть новые':''}`:'';
       q('.re-undo').disabled=!undo.length;q('.re-redo').disabled=!redo.length;
+      q('.re-history').hidden=showPick()||(!undo.length&&!redo.length);
       renderGuide();
     }
     // Этапы во всю ширину над заголовком: вариант → правка → публикация.
@@ -261,14 +266,14 @@
       const b=e.target.closest('[data-problem]');if(!b)return;
       const it=cur.check.items[+b.dataset.problem],r=it.name?D().people.findIndex(p=>p.name===it.name):-1;
       scroll.go(it.day);
-      if(r>=0)select(r,it.day);else{side={kind:'day',day:it.day};renderSide();}
+      if(r>=0)select(r,it.day);else{sel=null;clearSel();side={kind:'day',day:it.day};renderPanel();}
     });
     // Два вида одного графика: сначала все варианты сразу, после выбора — правка выбранного.
     const showPick=()=>!!cur&&(cur.draft.variants||[]).length>0&&(forcePick||!cur.draft.picked);
     function applyView(){
       const pickMode=showPick();
       q('.re-pickview').hidden=!pickMode;q('.re-editview').hidden=pickMode;
-      q('.re-all').hidden=!(D().variants||[]).length;
+      q('.re-tools').hidden=!pickMode&&!(D().variants||[]).length;q('.re-all').hidden=!(D().variants||[]).length;
       if(pickMode)renderPick();else{renderGrid();renderCell();renderSide();}
       renderState();
     }
@@ -278,14 +283,28 @@
     }
     q('.re-all').onclick=()=>{forcePick=true;applyView();};
 
-    // ─── клетка ───
-    function renderCell(){
-      // Карточка стоит на месте всегда; без выбранной клетки её кнопки неактивны.
-      const box=q('.re-cell'),has=!!sel&&!!person(sel.r),dis=has?'':' disabled';
-      const p=has?person(sel.r):null,v=has?G.parse(D().cells[p.name]?.[sel.day]||''):null;
-      const off=has&&(D().off[p.name]||[]).includes(sel.day);
+    // ─── карточка справа: один человек и один день, ниже блоки «Смена», «День», «Сотрудник» ───
+    // Блоки стоят на месте всегда; чего не выбрано, то неактивно.
+    function focusOf(){
+      if(sel&&person(sel.r))return {r:sel.r,day:sel.day,cell:true};
+      if(side?.kind==='person'&&person(side.r))return {r:side.r,day:null,cell:false};
+      return {r:null,day:side?.kind==='day'?side.day:null,cell:false};
+    }
+    function renderPanel(){
+      if(!cur)return;
+      if(!side){const today=iso(new Date());side={kind:'day',day:cur.days.includes(today)?today:cur.days[0]};}
+      const f=focusOf(),p=f.r!=null?person(f.r):null;
+      q('.re-who').innerHTML=`${p?esc(p.name):f.day?esc(G.dayName(f.day)):'Смена'}<small>${p&&f.day?esc(G.dayName(f.day)):''}</small>`;
+      blockCell(f,p);blockDay(f);blockPerson(p);blockAdd();
+    }
+    function renderCell(){renderPanel();}
+    function renderSide(){renderPanel();}
+    function blockCell(f,p){
+      const box=q('.re-cell'),has=f.cell,dis=has?'':' disabled';
+      const v=has?G.parse(D().cells[p.name]?.[f.day]||''):null;
+      const off=has&&(D().off[p.name]||[]).includes(f.day);
       const start=v?.start;
-      box.innerHTML=`<h3>${has?esc(p.name):'Смена'}<small>${has?esc(G.dayName(sel.day)):''}</small></h3>
+      box.innerHTML=`<h4 class="re-sub">Смена</h4>
         <p class="re-label">Приход</p>
         <div class="re-hours">${STARTS.map(h=>`<button type="button" data-set="${h}"${dis} aria-pressed="${start===h&&v.end==null}">${h}</button>`).join('')}</div>
         <div class="re-line"><label class="re-range">Интервал <input${dis} value="${v&&v.end!=null?esc(start+'-'+v.end):''}" placeholder="9-17" inputmode="numeric"></label>
@@ -293,6 +312,36 @@
         <div class="re-flags"><button type="button" data-off${dis} aria-pressed="${off}"><i class="sg-s off">вых</i>Обязательный выходной</button>
           <button type="button" data-note${dis} aria-pressed="${!!v?.note}"><i class="sg-s note">★</i>Необычное</button></div>`;
     }
+    function blockDay(f){
+      const day=f.day,dis=day?'':' disabled',s=day?D().days[day]||{}:{},event=day?D().events[day]||'':'';
+      const opening=day?(s.openers??(money(day)?2:1)):'';
+      q('.re-day').innerHTML=`<h4 class="re-sub">День<small>${day?esc(cur.holidays?.[day]||''):''}</small></h4>
+        <div class="re-fields"><label>Людей<input type="number" min="0" max="60" data-day-field="count"${dis} value="${day?need(day):''}"></label>
+        <label>Открывают<input type="number" min="0" max="10" data-day-field="openers"${dis} value="${opening}"></label>
+        <label>Закрывают<input type="number" min="0" max="10" data-day-field="closers"${dis} value="${day?s.closers??3:''}"></label></div>
+        <label class="re-check-row"><input type="checkbox" data-holiday${dis} ${day&&holiday(day)?'checked':''}> Праздник</label>
+        <label>Событие дня<input list="re-events" data-event maxlength="40"${dis} value="${esc(event)}" placeholder="Генуборка, собрание…"></label>
+        <datalist id="re-events">${EVENTS.map(x=>`<option value="${x}">`).join('')}</datalist>`;
+    }
+    function blockPerson(p){
+      const dis=p?'':' disabled',wish=p?(D().wish_starts[p.name]||[]).join(', '):'';
+      q('.re-person').innerHTML=`<h4 class="re-sub">Сотрудник</h4>
+        <label class="re-check-row"><input type="checkbox" data-student${dis} ${p?.student?'checked':''}> Учёба</label>
+        <label>Удобный приход<input data-starts${dis} value="${esc(wish)}" placeholder="например, 9, 10"></label>
+        <div class="re-row"><button type="button" data-move="-1"${dis}>Выше</button><button type="button" data-move="1"${dis}>Ниже</button><button type="button" data-remove${dis}>Убрать из графика</button></div>`;
+    }
+    // Добавить можно только подтверждённого официанта и только из списка, не по имени.
+    function blockAdd(){
+      const addable=team.filter(t=>!D().people.some(p=>p.link===t.id)),box=q('.re-adder');
+      box.hidden=!addable.length;
+      q('.re-chips').innerHTML=addable.map(t=>`<button type="button" data-add="${esc(t.id)}">${esc(t.report_name)}</button>`).join('');
+    }
+    q('.re-chips').addEventListener('click',e=>{
+      const b=e.target.closest('[data-add]');if(!b)return;
+      const t=team.find(x=>x.id===b.dataset.add);
+      if(!t||D().people.some(p=>p.link===t.id))return;
+      D().people.push({name:t.report_name,student:false,link:t.id});error('');changed();renderPanel();
+    });
     function applyCell(raw){
       const p=person(sel.r),old=G.parse(D().cells[p.name]?.[sel.day]);
       if(raw===''){setCell(p.name,sel.day,old?.note?'*':'');}
@@ -315,6 +364,7 @@
       if(on){const v=G.parse(D().cells[p.name]?.[sel.day]);setCell(p.name,sel.day,v?.note?'*':'');}
       changed();renderCell();
     }
+    const clearSel=()=>grid.querySelectorAll('.sg-sel').forEach(e=>e.classList.remove('sg-sel'));
     function select(r,day,focus=true){
       sel={r,day};side={kind:'day',day};
       grid.querySelectorAll('.sg-sel').forEach(e=>e.classList.remove('sg-sel'));
@@ -349,13 +399,13 @@
         return;
       }
       if(e.key==='Enter'){e.preventDefault();if(typed){applyCell(typed);typed='';}else q('.re-cell button')?.focus();}
-      if(e.key==='Escape'){sel=null;grid.querySelectorAll('.sg-sel').forEach(x=>x.classList.remove('sg-sel'));renderCell();}
+      if(e.key==='Escape'){sel=null;clearSel();renderPanel();}
     });
     grid.addEventListener('click',e=>{
       const x=e.target.closest('.sg-x');if(x){e.stopPropagation();return removePerson(+x.dataset.remove);}
       const cell=e.target.closest('td.sg-c');if(cell)return select(+cell.dataset.r,cell.dataset.day);
-      const head=e.target.closest('thead th.sg-day');if(head){side={kind:'day',day:head.dataset.day};scroll.go(head.dataset.day);renderSide();return;}
-      const name=e.target.closest('tbody th.sg-name');if(name){side={kind:'person',r:+name.dataset.r};renderSide();}
+      const head=e.target.closest('thead th.sg-day');if(head){sel=null;clearSel();side={kind:'day',day:head.dataset.day};scroll.go(head.dataset.day);renderPanel();return;}
+      const name=e.target.closest('tbody th.sg-name');if(name){sel=null;clearSel();side={kind:'person',r:+name.dataset.r};renderPanel();}
     });
 
     // ─── настройки дня и человека ───
@@ -365,66 +415,30 @@
       if(!confirm(`Убрать ${p.name} из графика?`))return;
       D().people.splice(r,1);
       for(const key of ['cells','off','off_auto','wish_off','wish_starts'])delete D()[key][p.name];
-      side=null;sel=null;changed();renderSide();renderCell();
+      side=null;sel=null;clearSel();changed();renderPanel();
     }
-    function renderSide(){
-      const box=q('.re-side');
-      if(!side){const today=iso(new Date());side={kind:'day',day:cur.days.includes(today)?today:cur.days[0]};}
-      // Добавить можно только подтверждённого сотрудника: по списку, а не по имени.
-      const addable=team.filter(t=>!D().people.some(p=>p.link===t.id));
-      const adder=addable.length?`<form class="re-add"><label>Сотрудник не в графике<select>${addable.map(t=>`<option value="${esc(t.id)}">${esc(t.report_name)}</option>`).join('')}</select></label><button class="btn btn-ghost">Добавить</button></form>`:'';
-      if(side?.kind==='person'&&person(side.r)){
-        const p=person(side.r),wish=(D().wish_starts[p.name]||[]).join(', ');
-        box.innerHTML=`<h3>${esc(p.name)}</h3>
-          <label class="re-check-row"><input type="checkbox" data-student ${p.student?'checked':''}> Учёба</label>
-          <label>Удобный приход<input data-starts value="${esc(wish)}" placeholder="например, 9, 10"></label>
-          <div class="re-row"><button type="button" data-move="-1">Выше</button><button type="button" data-move="1">Ниже</button><button type="button" data-remove>Убрать из графика</button></div>${adder}`;
-        return;
-      }
-      if(side?.kind==='day'){
-        const day=side.day,s=D().days[day]||{},event=D().events[day]||'';
-        const opening=s.openers??(money(day)?2:1);
-        box.innerHTML=`<h3>${esc(G.dayName(day))}<small>${esc(cur.holidays?.[day]||'')}</small></h3>
-          <div class="re-fields"><label>Людей<input type="number" min="0" max="60" data-day-field="count" value="${need(day)}"></label>
-          <label>Открывают<input type="number" min="0" max="10" data-day-field="openers" value="${opening}"></label>
-          <label>Закрывают<input type="number" min="0" max="10" data-day-field="closers" value="${s.closers??3}"></label></div>
-          <label class="re-check-row"><input type="checkbox" data-holiday ${holiday(day)?'checked':''}> Праздник</label>
-          <label>Событие дня<input list="re-events" data-event maxlength="40" value="${esc(event)}" placeholder="Генуборка, собрание…"></label>
-          <datalist id="re-events">${EVENTS.map(x=>`<option value="${x}">`).join('')}</datalist>${adder}`;
-        return;
-      }
-      box.innerHTML=adder;
-    }
-    q('.re-side').addEventListener('change',e=>{
-      const t=e.target;
-      if(side?.kind==='day'){
-        const day=side.day,s=D().days[day]||(D().days[day]={});
-        if(t.dataset.dayField){const n=parseInt(t.value,10);if(Number.isFinite(n)&&n>=0)s[t.dataset.dayField]=n;else delete s[t.dataset.dayField];}
-        // Явная отметка хранится, только если она расходится с календарём России.
-        if('holiday' in t.dataset){if(t.checked===!!cur.holidays?.[day])delete s.holiday;else s.holiday=t.checked;}
-        if('event' in t.dataset){const v=t.value.trim();if(v)D().events[day]=v;else delete D().events[day];}
-        if(!Object.keys(s).length)delete D().days[day];
-        changed();renderSide();
-      }
-      if(side?.kind==='person'){
-        const p=person(side.r);
-        if('student' in t.dataset)p.student=t.checked;
-        if('starts' in t.dataset){const hours=[...new Set(t.value.split(/[^0-9]+/).filter(Boolean).map(Number).filter(h=>h>=6&&h<=22))];
-          if(hours.length)D().wish_starts[p.name]=hours;else delete D().wish_starts[p.name];}
-        changed();renderSide();
-      }
+    q('.re-day').addEventListener('change',e=>{
+      const t=e.target,day=focusOf().day;if(!day)return;
+      const s=D().days[day]||(D().days[day]={});
+      if(t.dataset.dayField){const n=parseInt(t.value,10);if(Number.isFinite(n)&&n>=0)s[t.dataset.dayField]=n;else delete s[t.dataset.dayField];}
+      // Явная отметка хранится, только если она расходится с календарём России.
+      if('holiday' in t.dataset){if(t.checked===!!cur.holidays?.[day])delete s.holiday;else s.holiday=t.checked;}
+      if('event' in t.dataset){const v=t.value.trim();if(v)D().events[day]=v;else delete D().events[day];}
+      if(!Object.keys(s).length)delete D().days[day];
+      changed();renderPanel();
     });
-    q('.re-side').addEventListener('click',e=>{
-      const b=e.target.closest('button');if(!b||side?.kind!=='person')return;
-      const list=D().people,r=side.r;
-      if(b.dataset.move){const to=r+(+b.dataset.move);if(to<0||to>=list.length)return;[list[r],list[to]]=[list[to],list[r]];side.r=to;sel=null;changed();renderSide();renderCell();}
+    q('.re-person').addEventListener('change',e=>{
+      const t=e.target,f=focusOf(),p=f.r!=null?person(f.r):null;if(!p)return;
+      if('student' in t.dataset)p.student=t.checked;
+      if('starts' in t.dataset){const hours=[...new Set(t.value.split(/[^0-9]+/).filter(Boolean).map(Number).filter(h=>h>=6&&h<=22))];
+        if(hours.length)D().wish_starts[p.name]=hours;else delete D().wish_starts[p.name];}
+      changed();renderPanel();
+    });
+    q('.re-person').addEventListener('click',e=>{
+      const b=e.target.closest('button'),f=focusOf();if(!b||f.r==null)return;
+      const list=D().people,r=f.r;
+      if(b.dataset.move){const to=r+(+b.dataset.move);if(to<0||to>=list.length)return;[list[r],list[to]]=[list[to],list[r]];side={kind:'person',r:to};sel=null;clearSel();changed();renderPanel();}
       if('remove' in b.dataset)removePerson(r);
-    });
-    q('.re-side').addEventListener('submit',e=>{
-      if(!e.target.matches('.re-add'))return;e.preventDefault();
-      const t=team.find(x=>x.id===e.target.querySelector('select').value);
-      if(!t||D().people.some(p=>p.link===t.id))return;
-      D().people.push({name:t.report_name,student:false,link:t.id});error('');changed();renderSide();
     });
 
     // Сколько сотрудников уже записали обязательные выходные в Telegram.
@@ -437,7 +451,7 @@
     q('.re-ask').onclick=async()=>{
       if(!cur||!confirm('Отправить сотрудникам просьбу выбрать обязательные выходные? Получат те, кто ещё не ответил.'))return;
       busy=true;renderState();error('');
-      try{offsInfo=await api('ask_offs',{id:cur.id});note=`отправлено: ${offsInfo.sent}`;}
+      try{offsInfo=await api('ask_offs',{id:cur.id});toast(`Отправлено: ${offsInfo.sent}`);}
       catch(e){failed(e);}finally{busy=false;renderState();}
     };
 
@@ -446,9 +460,9 @@
       const filled=Object.keys(D().cells).length;
       if(filled&&!confirm('Собрать заново? Варианты и смены в таблице заменятся, выходные, поставленные вручную, останутся.'))return;
       if(!(await flush()))return;
-      busy=true;renderState();error('');q('.re-state').textContent='Собираю варианты…';
-      try{const data=await api('build',{id:cur.id,revision:cur.revision,draft:D()},120000);accept(data,true);sel=null;note='';forcePick=false;renderAll();refreshOffs();}
-      catch(e){failed(e);}finally{busy=false;renderState();}
+      busy=true;renderState();error('');toast('Собираю варианты…',true);
+      try{const data=await api('build',{id:cur.id,revision:cur.revision,draft:D()},120000);accept(data,true);sel=null;forcePick=false;renderAll();refreshOffs();toast('');}
+      catch(e){failed(e);toast('');}finally{busy=false;renderState();}
     };
     q('.re-publish').onclick=async()=>{
       if(!(await flush()))return;
@@ -456,7 +470,7 @@
       if(!confirm(problems?`Нарушений: ${problems}. Всё равно опубликовать?`:'Опубликовать?'))return;
       busy=true;renderState();error('');
       try{const data=await api('publish',{id:cur.id,revision:cur.revision});accept(data,true);renderAll();
-        q('.re-state').textContent=data.notified?`Опубликован · отправлено: ${data.notified}`:'Опубликован';}
+        toast(data.notified?`Опубликовано. Сообщение отправлено: ${data.notified}`:'Опубликовано');}
       catch(e){failed(e);}finally{busy=false;renderState();}
     };
 
@@ -470,20 +484,24 @@
     async function createPeriod(start,end,done){
       if(!(await flush()))return;
       const buttons=[q('.re-new'),q('.re-dates')];buttons.forEach(b=>b.disabled=true);
-      if(cur)q('.re-state').textContent='Собираю варианты…';else q('.re-title').textContent='Собираю варианты…';
-      try{const data=await api('create',{restaurant_id:placeId,start,end},120000);team=[];done?.();await list(data.id);}
-      catch(err){failed(err);if(cur)renderState();else q('.re-title').textContent='';}finally{buttons.forEach(b=>b.disabled=false);}
+      toast('Собираю варианты…',true);
+      try{const data=await api('create',{restaurant_id:placeId,start,end},120000);team=[];done?.();await list(data.id);toast('');}
+      catch(err){failed(err);toast('');}finally{buttons.forEach(b=>b.disabled=false);}
     }
     // Один клик: следующий период по порядку, даты вводить не нужно. «Другие даты» — на всякий случай.
     q('.re-new').onclick=()=>{const [a,b]=suggested();createPeriod(a,b);};
     q('.re-dates').onclick=()=>{const [a,b]=suggested();const f=q('.re-create');f.start.value=a;f.end.value=b;f.hidden=false;f.start.focus();};
     q('.re-cancel').onclick=()=>{q('.re-create').hidden=true;};
     q('.re-create').onsubmit=e=>{e.preventDefault();const f=e.target;createPeriod(f.start.value,f.end.value,()=>{f.hidden=true;});};
-    q('.re-place').onchange=async()=>{if(!(await flush()))return;placeId=q('.re-place').value;cur=null;list();};
+    // Ресторан выбирает заголовок страницы (только у владельца нескольких ресторанов).
+    async function setPlace(id){
+      if(!id||id===placeId||!(await flush()))return;
+      placeId=id;cur=null;periods=[];q('.re-editor').hidden=true;list();
+    }
     addEventListener('beforeunload',e=>{if(cur&&edits!==saved){e.preventDefault();e.returnValue='';}});
     addEventListener('resize',()=>{if(cur)scroll.size();});
     list();
-    root._roster={refresh:fresh=>{if(fresh?.length)places=fresh;if(!cur)list();}};
+    root._roster={refresh:(fresh,id)=>{if(fresh?.length)places=fresh;if(id&&id!==placeId)setPlace(id);else if(!cur)list();},setPlace};
     return root._roster;
   }
   window.RosterEditor={open};

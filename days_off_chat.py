@@ -1,34 +1,68 @@
-"""Кнопки выбора обязательных выходных в личном чате с ботом (без команд)."""
+"""Обязательные выходные обычным текстом в личном чате с бота (без команд).
+
+Бот просит написать числа и после этого ждёт их от сотрудника (`days_off.waiting`). Принимаются только
+числа периода: у графика 16–30 число 5 бот не примет. Любое другое сообщение уходит в обычную обработку.
+"""
 import logging
 from datetime import date
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.filters import StateFilter
 
 import days_off
 import roster
 
 router = Router()
+router.message.filter(F.chat.type == 'private', F.text, StateFilter(None))
 router.callback_query.filter(F.message.chat.type == 'private', F.data.startswith(days_off.PREFIX + ':'))
 
 
-async def _show(callback, text, markup):
+async def expecting(message):
+    """Фильтр: сообщение похоже на выходные и бот ждёт их от этого человека."""
+    parsed = days_off.parse(message.text)
+    if not parsed:
+        return False
     try:
-        await callback.message.edit_text(text, reply_markup=markup)
-    except TelegramBadRequest:
-        pass  # то же самое сообщение: ничего менять не нужно
+        wait = await days_off.waiting(message.from_user.id)
+    except Exception as error:
+        from diagnostics import failure
+        failure(error, area='days_off', stage='waiting')
+        return False
+    return {'parsed': parsed, 'wait': wait} if wait else False
+
+
+@router.message(expecting)
+async def write(message, parsed, wait):
+    link, start, end = wait['link'], wait['start'], wait['end']
+    try:
+        today = days_off.roster_today()
+        limit = roster.off_limit((end - start).days + 1, await days_off.is_student(link['restaurant_id'], link['id']))
+        chosen, problem = days_off.resolve(parsed, start, end, today, limit)
+        if problem:
+            await message.answer(problem)
+            return
+        await days_off.save(link, start, end, chosen)
+        await message.answer(days_off.summary_text(start, end, chosen), reply_markup=days_off.edit_markup(start, end))
+    except Exception as error:
+        from diagnostics import failure
+        failure(error, area='days_off', stage='write')
+        logging.warning('days off: text failed')
+        await message.answer('Сейчас не получается сохранить. Попробуй чуть позже.')
 
 
 @router.callback_query()
-async def choose(callback):
+async def change(callback):
+    """«Изменить»: бот снова ждёт числа. Кнопки-даты прежней версии больше не работают."""
     parts = callback.data.split(':')
     try:
-        kind, start, end = parts[1], date.fromisoformat(parts[2]), date.fromisoformat(parts[3])
-        day = date.fromisoformat(parts[4]) if kind == 't' else None
-        if kind not in ('t', 'd', 'e') or not 0 <= (end - start).days < roster.MAX_DAYS or (day and not start <= day <= end):
+        if parts[1] != 'e':
+            raise ValueError
+        start, end = date.fromisoformat(parts[2]), date.fromisoformat(parts[3])
+        if not 0 <= (end - start).days < roster.MAX_DAYS:
             raise ValueError
     except (ValueError, IndexError):
-        await callback.answer('Эта кнопка устарела.', show_alert=True)
+        await callback.answer('Эта кнопка устарела. Напиши числа выходных сообщением.', show_alert=True)
         return
     try:
         link = await days_off.member(callback.from_user.id)
@@ -39,29 +73,15 @@ async def choose(callback):
         if end < today or not await days_off.period_exists(link['restaurant_id'], start, end):
             await callback.answer('Этот график уже закрыт.', show_alert=True)
             return
-        chosen = await days_off.get(link['id'], start) or set()
+        await days_off.reopen(link, start)
         limit = roster.off_limit((end - start).days + 1, await days_off.is_student(link['restaurant_id'], link['id']))
-        if kind == 't':
-            if day < today:
-                await callback.answer('Этот день уже прошёл.')
-                return
-            if day in chosen:
-                chosen.discard(day)
-            elif len(chosen) >= limit:
-                await callback.answer(f'Можно выбрать до {limit}.', show_alert=True)
-                return
-            else:
-                chosen.add(day)
-            await days_off.save(link, start, end, chosen)
-            await _show(callback, days_off.prompt_text(start, end, chosen, limit), days_off.keyboard(start, end, chosen, today))
-        elif kind == 'd':
-            await days_off.save(link, start, end, chosen)
-            await _show(callback, days_off.summary_text(start, end, chosen), days_off.keyboard(start, end, chosen, today, finished=True))
-        else:
-            await _show(callback, days_off.prompt_text(start, end, chosen, limit), days_off.keyboard(start, end, chosen, today))
+        try:
+            await callback.message.edit_text(days_off.prompt_text(start, end, limit, today, again=True))
+        except TelegramBadRequest:
+            pass
         await callback.answer()
     except Exception as error:
         from diagnostics import failure
-        failure(error, area='days_off', stage='choose')
-        logging.warning('days off: callback failed')
-        await callback.answer('Сейчас не получается сохранить. Попробуй чуть позже.', show_alert=True)
+        failure(error, area='days_off', stage='change')
+        logging.warning('days off: change failed')
+        await callback.answer('Сейчас не получается. Попробуй чуть позже.', show_alert=True)

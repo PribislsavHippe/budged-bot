@@ -38,6 +38,15 @@
     <div id="restaurant-content" hidden>${parts.filters}<p class="restaurant-scope">Планы и продажи после присоединения к ресторану</p>${parts.rows}${parts.invite}</div>
     <section id="restaurant-schedule" hidden></section>`;
   $('restaurant-month').value=month;
+  // Ресторан меняет сам заголовок страницы: он становится списком, если ресторанов несколько
+  // (это бывает только у владельца). Сотруднику одного ресторана выбирать нечего.
+  function placeSwitch(list){
+    const select=$('restaurant-select'),many=list.length>1;
+    select.innerHTML=list.map(r=>`<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('');
+    select.value=list.some(r=>r.id===selectedId)?selectedId:list[0]?.id||'';
+    select.hidden=!many;
+    if(standalone)$('restaurant-title').hidden=many;
+  }
   function lock(){panel.querySelectorAll('button,input,select').forEach(el=>el.disabled=busy);}
   function member(row){
     const states={pending:'Ждёт подтверждения',rejected:'Заявка отклонена',revoked:'Доступ закрыт'};
@@ -94,15 +103,13 @@
       $('restaurant-sections').hidden=!standalone||!schedulePlaces.length;
       panel.querySelector('[data-section=team]').hidden=!restaurants.length;
       if(standalone&&schedulePlaces.length&&(section==='schedule'||!restaurants.length)){showSchedule();return;}
-      if(!restaurants.length&&schedulePlaces.length&&!canCreate){$('restaurant-title').textContent='График';$('restaurant-content').hidden=true;$('restaurant-create').hidden=true;
+      if(!restaurants.length&&schedulePlaces.length&&!canCreate){placeSwitch([]);$('restaurant-title').textContent='График';$('restaurant-content').hidden=true;$('restaurant-create').hidden=true;
         $('restaurant-notice').textContent='График — на сайте ресторана.';return;}
       if(canCreate)window.showResearchTab?.();
       if(!restaurants.some(r=>r.id===selectedId))selectedId=restaurants[0]?.id||null;
       restaurant=restaurants.find(r=>r.id===selectedId)||null;
       $('restaurant-add').hidden=!canCreate||!restaurant;
-      $('restaurant-select').hidden=restaurants.length<2;
-      $('restaurant-select').innerHTML=restaurants.map(r=>`<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('');
-      $('restaurant-select').value=selectedId||'';
+      placeSwitch(restaurants);
       if(!restaurant){$('restaurant-create').hidden=!canCreate;$('restaurant-create-cancel').hidden=true;$('restaurant-content').hidden=true;return;}
       $('restaurant-create-cancel').hidden=false;$('restaurant-schedule').hidden=true;$('restaurant-month').hidden=false;
       render(await api('view',{month,page,status}));
@@ -113,17 +120,20 @@
   function showSchedule(){
     section='schedule';
     panel.querySelectorAll('[data-section]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.section==='schedule')));
-    $('restaurant-title').textContent=(restaurant||schedulePlaces[0])?.name||'График смен';$('restaurant-content').hidden=true;$('restaurant-create').hidden=true;
-    $('restaurant-month').hidden=true;$('restaurant-select').hidden=true;$('restaurant-add').hidden=true;$('restaurant-schedule').hidden=false;
-    window.RosterEditor?.open($('restaurant-schedule'),{places:schedulePlaces,initData:tg?.initData||'',onAuth:()=>{if(site)showLogin();}});
+    if(!schedulePlaces.some(r=>r.id===selectedId))selectedId=schedulePlaces[0]?.id||null;
+    placeSwitch(schedulePlaces);
+    $('restaurant-title').textContent=schedulePlaces.find(r=>r.id===selectedId)?.name||'График смен';$('restaurant-content').hidden=true;$('restaurant-create').hidden=true;
+    $('restaurant-month').hidden=true;$('restaurant-add').hidden=true;$('restaurant-schedule').hidden=false;
+    openSchedule();
   }
+  const openSchedule=()=>window.RosterEditor?.open($('restaurant-schedule'),{places:schedulePlaces,placeId:selectedId,initData:tg?.initData||'',onAuth:()=>{if(site)showLogin();}});
   function showTeam(){
     section='team';$('restaurant-schedule').hidden=true;
     panel.querySelectorAll('[data-section]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.section==='team')));
     load();
   }
   function showLogin(){
-    $('restaurant-title').textContent='Ресторан';$('restaurant-content').hidden=true;$('restaurant-create').hidden=true;
+    placeSwitch([]);$('restaurant-title').textContent='Ресторан';$('restaurant-content').hidden=true;$('restaurant-create').hidden=true;
     $('restaurant-select').hidden=true;$('restaurant-add').hidden=true;$('restaurant-logout').hidden=true;$('restaurant-login').hidden=false;$('restaurant-month').hidden=true;
     $('restaurant-sections').hidden=true;$('restaurant-schedule').hidden=true;
     if(!loginWait)startLogin();
@@ -208,7 +218,9 @@
   if(standalone&&location.hash==='#schedule')section='schedule';
   $('restaurant-add').onclick=()=>{$('restaurant-create').hidden=false;$('restaurant-name').focus();};
   $('restaurant-create-cancel').onclick=()=>{$('restaurant-create').hidden=true;};
-  $('restaurant-select').onchange=()=>{selectedId=$('restaurant-select').value;page=0;status='approved';$('restaurant-link').hidden=true;$('restaurant-url').value='';$('restaurant-notice').textContent='';load();};
+  $('restaurant-select').onchange=()=>{selectedId=$('restaurant-select').value;
+    if(section==='schedule'){$('restaurant-title').textContent=schedulePlaces.find(r=>r.id===selectedId)?.name||'';openSchedule();return;}
+    page=0;status='approved';$('restaurant-link').hidden=true;$('restaurant-url').value='';$('restaurant-notice').textContent='';load();};
   $('restaurant-month').onchange=()=>{month=$('restaurant-month').value;page=0;load();};
   $('restaurant-prev').onclick=()=>{page=Math.max(0,page-1);load();};$('restaurant-next').onclick=()=>{page++;load();};
   $('restaurant-retry').onclick=load;$('restaurant-invite').onclick=()=>change('invite',{});
