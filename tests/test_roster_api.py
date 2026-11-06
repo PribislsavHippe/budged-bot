@@ -651,7 +651,10 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         with patch('restaurant_api.member_sales', return_value={'metrics': {}}):
             director_view = await self.post('/api/restaurant/view', WAITER, restaurant_id=PLACE, month='2026-11')
             manager_view = await self.post('/api/restaurant/view', MANAGER, restaurant_id=PLACE, month='2026-11')
-        self.assertTrue(all('sales' in r for r in director_view['rows']))
+        # План есть только у официантов: у менеджеров и управляющего его нет, и показывать нечего.
+        self.assertTrue(all(('sales' in r) == (r['role'] == 'staff') for r in director_view['rows']))
+        self.assertTrue(any(r['role'] == 'staff' for r in director_view['rows']))
+        self.assertTrue(any(r['role'] != 'staff' for r in director_view['rows']))
         self.assertFalse(any('sales' in r for r in manager_view['rows']))
         await self.post('/api/restaurant/role', WAITER, id=manager, role='staff', restaurant_id=PLACE)
         await self.post('/api/restaurant/role', WAITER, 403, id=manager, role='director', restaurant_id=PLACE)

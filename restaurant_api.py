@@ -130,8 +130,10 @@ async def handle(request):
         # Продажи каждого видят владелец и управляющий; менеджеру — только список сотрудников.
         if status=='approved' and restaurant['role'] in roles.SALES:
             stage='sales'
-            results=await asyncio.gather(*(member_sales(row,month) for row in rows))
-            for row,data in zip(rows,results):row['sales']=data
+            # У менеджеров и управляющего плана нет: продажи считаются только у официантов.
+            waiters=[r for r in rows if r.get('role','staff')=='staff']
+            results=await asyncio.gather(*(member_sales(row,month) for row in waiters))
+            for row,data in zip(waiters,results):row['sales']=data
         # Recheck membership/ownership after reads so a concurrent revoke cannot
         # deliver newly fetched financial data to an owner who lost access.
         stage='access_recheck'

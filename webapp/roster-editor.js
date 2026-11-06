@@ -56,7 +56,7 @@
             <details class="re-adder" hidden><summary>+ Добавить сотрудника</summary><div class="re-chips"></div></details></div>
           <aside class="re-aside">
             <section class="re-card re-panel" aria-live="polite"><h3 class="re-who"></h3>
-              <div class="re-block re-cell"></div><div class="re-block re-day"></div><div class="re-block re-person"></div></section>
+              <div class="re-block re-person"></div><div class="re-block re-cell"></div><div class="re-block re-day"></div></section>
             <section class="re-card re-check" aria-label="Проверка правил"><h3>Проверка <span class="re-badge"></span></h3><div class="re-report"></div></section>
           </aside>
         </div>
@@ -204,10 +204,18 @@
       const d=D();
       return d.people.map(p=>({name:p.name,cells:d.cells[p.name]||{},off:d.off[p.name]||[]}));
     }
+    // Весь график помещается на экране: ширина колонок подбирается под место, а не наоборот.
+    // Совсем узкое окно прокручивается, но без ползунка.
+    function sizeGrid(){
+      const names=grid.querySelector('thead .sg-name')?.offsetWidth||0,room=sheet.parentElement.clientWidth;
+      const width=Math.floor((room-names-2)/Math.max(1,cur.days.length));
+      grid.style.setProperty('--cw',Math.min(60,Math.max(44,width))+'px');
+      scroll.size();
+    }
     function renderGrid(){
       const left=sc.scrollLeft;
-      grid.innerHTML=G.table({days:cur.days,people:people(),events:D().events,holidays:holidayLabels(),today:iso(new Date()),scrolls:true,edit:true,need,flagged:cur.check?.days});
-      scroll.size();sc.scrollLeft=left;
+      grid.innerHTML=G.table({days:cur.days,people:people(),events:D().events,holidays:holidayLabels(),today:iso(new Date()),scrolls:true,edit:true,weekGap:false,need,flagged:cur.check?.days});
+      sizeGrid();sc.scrollLeft=left;
       if(sel)grid.querySelector(`td.sg-c[data-r="${sel.r}"][data-day="${sel.day}"]`)?.classList.add('sg-sel');
       renderReport();
     }
@@ -241,7 +249,7 @@
           ${chosen?.id===v.id?'<button type="button" class="btn" data-edit>Править этот</button>':`<button type="button" class="btn btn-ghost" data-variant="${esc(v.id)}">Выбрать</button>`}</article></section>`;}).join('');
       list.forEach(v=>{
         const people=D().people.map(p=>({name:p.name,cells:v.cells[p.name]||{},off:[...new Set([...(manual[p.name]||[]),...(v.off[p.name]||[])])]}));
-        box.querySelector(`[data-id="${v.id}"] table`).innerHTML=G.table({days:cur.days,people,events:D().events,holidays:holidayLabels(),need});
+        box.querySelector(`[data-id="${v.id}"] table`).innerHTML=G.table({days:cur.days,people,events:D().events,holidays:holidayLabels(),weekGap:false,need});
       });
     }
     function pick(id){
@@ -295,7 +303,7 @@
       if(!side){const today=iso(new Date());side={kind:'day',day:cur.days.includes(today)?today:cur.days[0]};}
       const f=focusOf(),p=f.r!=null?person(f.r):null;
       q('.re-who').innerHTML=`${p?esc(p.name):f.day?esc(G.dayName(f.day)):'Смена'}<small>${p&&f.day?esc(G.dayName(f.day)):''}</small>`;
-      blockCell(f,p);blockDay(f);blockPerson(p);blockAdd();
+      blockPerson(p);blockCell(f,p);blockDay(f);blockAdd();
     }
     function renderCell(){renderPanel();}
     function renderSide(){renderPanel();}
@@ -499,7 +507,7 @@
       placeId=id;cur=null;periods=[];q('.re-editor').hidden=true;list();
     }
     addEventListener('beforeunload',e=>{if(cur&&edits!==saved){e.preventDefault();e.returnValue='';}});
-    addEventListener('resize',()=>{if(cur)scroll.size();});
+    addEventListener('resize',()=>{if(cur&&!q('.re-editview').hidden)sizeGrid();});
     list();
     root._roster={refresh:(fresh,id)=>{if(fresh?.length)places=fresh;if(id&&id!==placeId)setPlace(id);else if(!cur)list();},setPlace};
     return root._roster;

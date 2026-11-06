@@ -20,7 +20,7 @@
     if(works(v)){
       // Выход в обязательный выходной — тоже «необычное», но цветом выходного.
       const cls=off?'off':v.note||v.end!=null?'note':'';
-      return `<span class="sg-s ${cls}"><b>${v.start}${v.end!=null?'–'+v.end:''}</b></span>`;
+      return `<span class="sg-s ${cls}${v.end!=null?' rng':''}"><b>${v.start}${v.end!=null?'–'+v.end:''}</b></span>`;
     }
     if(off)return '<span class="sg-s off">вых</span>';
     if(v&&v.note)return '<span class="sg-s note"></span>';
@@ -34,10 +34,10 @@
   // промежутком, а не линиями; пустого и бессмысленного цвета нет. Месяц в таблице не пишется:
   // период стоит в заголовке страницы.
   // o: days, people[{name,me,cells,off}], events, holidays{iso:название}, today, near, scrolls, corner, edit,
-  //    need(iso), flagged
+  //    need(iso), flagged, weekGap (false — без промежутка между неделями)
   function table(o){
     const days=o.days,labels=['сегодня','завтра','послезавтра'];
-    const gap=(iso,k)=>!o.near&&k>0&&at(iso).getDay()===1;
+    const gap=(iso,k)=>!o.near&&o.weekGap!==false&&k>0&&at(iso).getDay()===1;
     const g=tag=>`<${tag} class="sg-gap" aria-hidden="true"></${tag}>`;
     const tail=tag=>o.scrolls?`<${tag} class="sg-tail" aria-hidden="true"></${tag}>`:'';
     const ti=o.today?days.indexOf(o.today):-1;
