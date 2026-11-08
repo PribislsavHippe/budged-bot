@@ -362,3 +362,19 @@ async def wish_of(link_id):
             return {'days': [], 'pattern': None}
         raise
     return {'days': sorted(rows[0]['days']), 'pattern': rows[0].get('pattern')} if rows else {'days': [], 'pattern': None}
+
+
+async def upcoming_for(restaurant_id):
+    """Записанные обязательные выходные ресторана на текущие и будущие графики: {id сотрудника: [даты]}."""
+    try:
+        rows = await db._pages(lambda: db.supabase.table('day_off_requests').select('link_id,days')
+                               .eq('restaurant_id', restaurant_id).eq('answered', True)
+                               .gte('end_date', roster_today().isoformat()).order('link_id'))
+    except APIError as error:
+        if error.code in MISSING:
+            return {}
+        raise
+    found = {}
+    for r in rows:
+        found.setdefault(r['link_id'], []).extend(r['days'])
+    return {link: sorted(set(days)) for link, days in found.items() if days}

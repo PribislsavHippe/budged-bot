@@ -770,6 +770,10 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         status = await self.roster('offs', MANAGER, id=made['id'])
         self.assertEqual((status['weekdays'], status['patterns']), ({'Аня': [6]}, {'Аня': '2/2'}))
         self.assertEqual((await self.post('/api/schedule/view', WAITER))['mine']['pattern'], '2/2')
+        # Во вкладке «Ресторан» и на сайте пожелание видно в карточке сотрудника.
+        rows = (await self.post('/api/restaurant/view', MANAGER, restaurant_id=PLACE, month='2026-11'))['rows']
+        self.assertEqual(next(r for r in rows if r['report_name'] == 'Аня')['wish'], {'days': [6], 'pattern': '2/2', 'offs': []})
+        self.assertNotIn('wish', next(r for r in rows if r['report_name'] == 'Боря'))
 
     async def test_periods_do_not_overlap_and_drafts_can_be_deleted(self):
         made = await self.roster('create', OWNER, restaurant_id=PLACE, start='2026-11-01', end='2026-11-15')

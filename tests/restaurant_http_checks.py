@@ -110,6 +110,6 @@ async def main():
                 checked=await post('view',restaurant_id='aaaaaaaa-0000-0000-0000-000000000001')
                 assert checked['rows'][0]['sales']['category_metrics'][0]['total']==123,checked
                 with patch.dict(os.environ,{'IDENTITY_ENABLED':'0'}):await post('view',status=404)
-                assert set(store.tables)<={'restaurants','employee_links','sales_months','sales_events','sales_reports','category_reports','category_months'},store.tables
+                assert set(store.tables)<={'restaurants','employee_links','sales_months','sales_events','sales_reports','category_reports','category_months','weekday_wishes','day_off_requests'},store.tables  # пожелания и выходные — не личные деньги
     print('Restaurant HTTP checks passed: signed identity, owner isolation, membership boundaries, no tips access, actions and feature flag.')
 if __name__=='__main__':asyncio.run(main())

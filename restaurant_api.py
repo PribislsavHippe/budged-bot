@@ -142,6 +142,14 @@ async def handle(request):
                 .eq('restaurant_id',restaurant['id']).order('id'))
         allowed={(r['id'],r['status']) for r in active}
         rows=[r for r in rows if (r['id'],r['status']) in allowed]
+        # Пожелания и записанные выходные сотрудников видят все, кто работает с кабинетом ресторана.
+        if status=='approved':
+            import days_off
+            wishes=await days_off.wishes_for(restaurant['id']);offs=await days_off.upcoming_for(restaurant['id'])
+            for r in rows:
+                w=wishes.get(r['id'])
+                if w or offs.get(r['id']):
+                    r['wish']={'days':(w or {}).get('days',[]),'pattern':(w or {}).get('pattern'),'offs':offs.get(r['id'],[])}
         return response({'restaurant':restaurant,'month':month,'status':status,'page':page,
                          'more':len(selected)>(page+1)*10,'counts':counts,'rows':rows})
     except ValueError as error:

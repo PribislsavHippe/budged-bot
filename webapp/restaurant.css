@@ -143,3 +143,5 @@ body.restaurant-page{background-color:#f7f3f2;background-image:
   radial-gradient(55vw 50vh at 0% 100%,rgba(206,201,159,.5),transparent 70%);
   background-attachment:fixed;min-height:100vh}
 .restaurant-page .restaurant-filters{background:rgba(255,255,255,.5)}
+
+.restaurant-wish{margin:6px 0 0;font-size:14px;line-height:1.45}
