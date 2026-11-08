@@ -299,6 +299,16 @@ class DraftTests(unittest.TestCase):
         self.assertEqual(days_off.days_text({date(2026, 11, 18), date(2026, 11, 17)}), '17, 18 ноября')
         self.assertEqual(days_off.period_text(date(2026, 12, 16), date(2026, 12, 31)), '16–31 декабря')
 
+    def test_weekday_wishes_are_read_from_ordinary_phrases(self):
+        parse = self.api.days_off.parse_weekdays
+        self.assertEqual(parse('выходной по вторникам'), [1])
+        self.assertEqual(parse('Желательные воскресенья а так мне 2/2 нравится'), [6])
+        self.assertEqual(parse('по понедельникам и средам не могу'), [0, 2])
+        self.assertEqual(parse('хочу отдыхать в субботу и воскресенье'), [5, 6])
+        for text in ('хочу работать по вторникам', 'вторник', 'чай 500', 'среди недели выходной', ''):
+            self.assertIsNone(parse(text), text)
+        self.assertEqual(self.api.days_off.weekdays_text([6, 1]), 'по вторникам и воскресеньям')
+
     def test_variants_from_the_site_are_checked(self):
         good = {'id': 'even', 'title': 'Поровну', 'cells': {'Аня': {'2026-11-16': '9'}, 'Чужой': {'2026-11-16': '9'}},
                 'off': {'Аня': ['2026-11-17']}, 'pros': ['Плюс'], 'cons': []}
@@ -518,7 +528,7 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         return NS(data=data, from_user=NS(id=uid), message=NS(chat=NS(type='private'), edit_text=AsyncMock()), answer=AsyncMock())
 
     def text(self, body, uid=WAITER):
-        return NS(text=body, from_user=NS(id=uid), chat=NS(type='private'), answer=AsyncMock())
+        return NS(text=body, from_user=NS(id=uid), chat=NS(type='private'), answer=AsyncMock(), message_id=7)
 
     async def said(self, body, uid=WAITER):
         """Сообщение сотрудника: возвращает ответ бота или None, если бот не считает это выходными."""
@@ -663,6 +673,33 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         views = [c for c in track.call_args_list if c.args[1] == 'roster_viewed']
         self.assertEqual(views[0].kwargs['operation'], views[1].kwargs['operation'])
         self.assertEqual({c.args[0] for c in views}, {WAITER})
+
+    async def test_weekday_wish_from_telegram_goes_into_the_build_and_the_editor(self):
+        import days_off_chat
+        store = {}
+        async def get_data(): return dict(store)
+        async def update_data(**kw): store.update(kw)
+        state = NS(get_data=get_data, update_data=update_data, clear=AsyncMock())
+        message = self.text('выходной по вторникам')
+        taken = await days_off_chat.weekday_wish(message)
+        self.assertEqual(taken['days'], [1])
+        await days_off_chat.save_weekday_wish(message, state=state, **taken)
+        self.assertIn('по вторникам', message.answer.await_args.args[0])
+        self.assertEqual(store['wish_text'], 'выходной по вторникам')
+        # Не сотрудник ресторана — обычная обработка сообщения.
+        self.assertFalse(await days_off_chat.weekday_wish(self.text('выходной по вторникам', uid=555)))
+        made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
+        self.assertEqual(made['draft']['wish_off'], {'Аня': ['2026-11-17']})
+        # Обязательный выходной у Ани ставится на вторник во всех вариантах.
+        self.assertTrue(all('2026-11-17' in v['off'].get('Аня', []) for v in made['draft']['variants']))
+        opened = await self.roster('open', MANAGER, id=made['id'])
+        self.assertEqual(list(opened['wishes'].values()), [[1]])
+        # «Убрать пожелание» стирает его; следующая сборка его уже не учитывает.
+        callback = self.callback('off:w')
+        await days_off_chat.clear_weekday_wish(callback)
+        self.assertIn('убрал', callback.message.edit_text.await_args.args[0])
+        rebuilt = await self.roster('build', MANAGER, id=made['id'], revision=made['revision'], draft=made['draft'])
+        self.assertEqual(rebuilt['draft']['wish_off'], {})
 
     async def test_periods_do_not_overlap_and_drafts_can_be_deleted(self):
         made = await self.roster('create', OWNER, restaurant_id=PLACE, start='2026-11-01', end='2026-11-15')

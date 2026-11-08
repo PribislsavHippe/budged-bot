@@ -317,6 +317,9 @@ def auto_days_off(request, seed=0, pairs=False):
     added = {name: set() for name in people}
     order = [name for name in people if request.is_present(name)]
     rng.shuffle(order)
+    # У кого есть пожелания, выбирает первым: желаемые дни ещё свободны.
+    order.sort(key=lambda name: not request.wish_off.get(name))
+    wish = {name: request.wish_off.get(name, set()) for name in people}
 
     def free(name, d):
         return days[d] not in off[name] and extra[d] < room[d]
@@ -324,7 +327,9 @@ def auto_days_off(request, seed=0, pairs=False):
     def cost(name, d):
         near = sum(days[i] in off[name] for i in (d - 1, d + 1) if 0 <= i < len(days))
         # В режиме «парами» соседство даже приветствуется; иначе выходные разносим.
-        return price[d] + extra[d] * 10 + (-6 if pairs else 8) * near + rng.random() * .5
+        # Пожелание («выходной по вторникам») важнее того, что день денежный: человек сам от него отказался.
+        wanted = -90 if days[d] in wish[name] else 0
+        return price[d] + wanted + extra[d] * 10 + (-6 if pairs else 8) * near + rng.random() * .5
 
     def take(name, d):
         off[name].add(days[d]); added[name].add(days[d]); extra[d] += 1

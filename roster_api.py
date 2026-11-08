@@ -251,11 +251,17 @@ def apply_variant(draft, variant, manual):
     draft['variant'] = variant['id']
 
 
-def build_all(draft, start, end, requested=None):
+def build_all(draft, start, end, requested=None, weekdays=None):
     """Обязательные выходные расставляются сами, затем собираются несколько вариантов графика;
     лучший сразу встаёт в таблицу. Выходные, которые менеджер поставил сам (отпуск), остаются.
     requested — выходные, которые люди выбрали в Telegram ({имя: [даты]}): они ставятся первыми,
-    не больше нормы на человека, остальное до нормы добавляет программа."""
+    не больше нормы на человека, остальное до нормы добавляет программа.
+    weekdays — пожелания по дням недели ({имя: [0..6]}): это мягкие пожелания на весь период."""
+    if weekdays is not None:
+        names = {p['name'] for p in draft['people']}
+        span = [date.fromordinal(start.toordinal() + i) for i in range((end - start).days + 1)]
+        draft['wish_off'] = {name: [d.isoformat() for d in span if d.weekday() in set(days)]
+                             for name, days in weekdays.items() if name in names and days}
     previous, asked_before = draft.get('off_auto', {}), draft.get('off_requested', {})
     manual = {name: [d for d in days if d not in previous.get(name, []) and d not in asked_before.get(name, [])]
               for name, days in draft['off'].items()}
@@ -286,6 +292,13 @@ def build_all(draft, start, end, requested=None):
 async def requested_offs(restaurant_id, start, draft):
     """Выходные, которые люди выбрали в Telegram, по именам из черновика."""
     got = await days_off.for_period(restaurant_id, start)
+    by_link = {p['link']: p['name'] for p in draft['people'] if p.get('link')}
+    return {by_link[link]: days for link, days in got.items() if link in by_link}
+
+
+async def weekday_wishes(restaurant_id, draft):
+    """Пожелания по дням недели из Telegram, по именам из черновика."""
+    got = await days_off.weekdays_for(restaurant_id)
     by_link = {p['link']: p['name'] for p in draft['people'] if p.get('link')}
     return {by_link[link]: days for link, days in got.items() if link in by_link}
 
@@ -423,8 +436,9 @@ async def handle(request):
                 if _building.locked():
                     return response({'error': 'Сейчас собирается другой график. Попробуй через минуту.'}, 429)
                 asked = await requested_offs(restaurant_id, start, draft)
+                wishes = await weekday_wishes(restaurant_id, draft)
                 async with _building:
-                    await asyncio.to_thread(build_all, draft, start, end, asked)
+                    await asyncio.to_thread(build_all, draft, start, end, asked, wishes)
             row = {'id': str(uuid4()), 'restaurant_id': restaurant_id, 'start_date': start.isoformat(),
                    'end_date': end.isoformat(), 'draft': draft, 'updated_by': uid}
             try:
@@ -440,7 +454,8 @@ async def handle(request):
             return response({'error': 'График не найден или доступ изменился.'}, 404)
         start, end = _period(row)
         if action == 'open':
-            return response({**_opened(row), 'team': await team(row['restaurant_id'])})
+            return response({**_opened(row), 'team': await team(row['restaurant_id']),
+                             'wishes': await days_off.weekdays_for(row['restaurant_id'])})
         if action == 'delete':
             if row.get('published_at'):
                 raise ValueError('Опубликованный график не удаляется.')
@@ -470,8 +485,9 @@ async def handle(request):
                 if _building.locked():
                     return response({'error': 'Сейчас собирается другой график. Попробуй через минуту.'}, 429)
                 asked = await requested_offs(row['restaurant_id'], start, draft)
+                wishes = await weekday_wishes(row['restaurant_id'], draft)
                 async with _building:
-                    await asyncio.to_thread(build_all, draft, start, end, asked)
+                    await asyncio.to_thread(build_all, draft, start, end, asked, wishes)
             stage = 'save'
             saved = await _save(row, uid, revision, {'draft': draft})
             if action == 'build':

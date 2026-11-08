@@ -53,6 +53,61 @@ async def write(message, parsed, wait):
         await message.answer('Сейчас не получается сохранить. Попробуй чуть позже.')
 
 
+async def weekday_wish(message):
+    """Фильтр: «выходной по вторникам» от сотрудника ресторана."""
+    days = days_off.parse_weekdays(message.text)
+    if not days:
+        return False
+    try:
+        link = await days_off.member(message.from_user.id)
+    except Exception as error:
+        from diagnostics import failure
+        failure(error, area='days_off', stage='weekday_member')
+        return False
+    return {'days': days, 'link': link} if link else False
+
+
+@router.message(weekday_wish)
+async def save_weekday_wish(message, days, link, state):
+    from postgrest.exceptions import APIError
+    from aiogram.types import InlineKeyboardButton as Button, InlineKeyboardMarkup as Markup
+    try:
+        await days_off.save_weekdays(link, days)
+    except APIError as error:
+        if error.code not in days_off.MISSING:
+            raise
+        from ux_chat import offer_wish
+        await offer_wish(message, state)
+        return
+    except Exception as error:
+        from diagnostics import failure
+        failure(error, area='days_off', stage='weekday_save')
+        await message.answer('Сейчас не получается сохранить. Попробуй чуть позже.')
+        return
+    # Целиком сообщение можно передать Леше: в нём может быть что-то ещё, кроме дней недели.
+    await state.update_data(wish_text=(message.text or '').strip()[:2000], wish_message=message.message_id)
+    await message.answer(
+        f'Записал пожелание: выходные {days_off.weekdays_text(days)}. Программа постарается ставить '
+        'обязательные выходные в эти дни; если людей не хватит, может поставить смену. '
+        'Менеджер увидит пожелание в графике. Новое сообщение заменит это пожелание.',
+        reply_markup=Markup(inline_keyboard=[[Button(text='Убрать пожелание', callback_data=f'{days_off.PREFIX}:w')],
+                                             [Button(text='Передать Леше весь текст', callback_data='ux:wishsend')]]))
+
+
+@router.callback_query(F.data == f'{days_off.PREFIX}:w')
+async def clear_weekday_wish(callback):
+    try:
+        link = await days_off.member(callback.from_user.id)
+        if link:
+            await days_off.save_weekdays(link, [])
+        await callback.answer()
+        await callback.message.edit_text('Пожелание по дням недели убрал.')
+    except Exception as error:
+        from diagnostics import failure
+        failure(error, area='days_off', stage='weekday_clear')
+        await callback.answer('Сейчас не получается. Попробуй чуть позже.', show_alert=True)
+
+
 @router.callback_query()
 async def change(callback):
     """«Изменить»: бот снова ждёт числа. Кнопки-даты прежней версии больше не работают."""

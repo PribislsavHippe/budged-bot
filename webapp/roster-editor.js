@@ -25,7 +25,7 @@
   function open(root,opts){
     // Повторное открытие раздела не пересоздаёт редактор: правки и слушатели остаются.
     if(root._roster)return root._roster.refresh(opts.places,opts.placeId);
-    let places=opts.places||[],placeId=places.some(p=>p.id===opts.placeId)?opts.placeId:places[0]?.id,periods=[],cur=null,team=[],sel=null,side=null;
+    let wishes={},places=opts.places||[],placeId=places.some(p=>p.id===opts.placeId)?opts.placeId:places[0]?.id,periods=[],cur=null,team=[],sel=null,side=null;
     let edits=0,saved=0,saving=false,timer=null,busy=false;
     // Отмена: снимки черновика до каждого изменения.
     let undo=[],redo=[],last=null,forcePick=false,offsInfo=null,toastTimer=null;
@@ -108,7 +108,7 @@
     }
     async function load(id){
       if(!(await flush()))return;
-      try{const data=await api('open',{id});team=data.team||[];toast('');accept(data,true);sel=null;side=null;renderAll();refreshOffs();
+      try{const data=await api('open',{id});team=data.team||[];wishes=data.wishes||{};toast('');accept(data,true);sel=null;side=null;renderAll();refreshOffs();
         const today=iso(new Date());scroll.go(cur.days.includes(today)?today:cur.days[0],false);}
       catch(e){failed(e);}
     }
@@ -362,7 +362,9 @@
     }
     function blockPerson(p){
       const dis=p?'':' disabled',wish=p?(D().wish_starts[p.name]||[]).join(', '):'';
+      const WD=['пн','вт','ср','чт','пт','сб','вс'],asks=p?.link?wishes[p.link]||[]:[];
       q('.re-person').innerHTML=`<h4 class="re-sub">Сотрудник</h4>
+        ${asks.length?`<p class="re-wish">Просит выходные по ${asks.map(d=>WD[d]).join(', ')} <small>из Telegram</small></p>`:''}
         <label class="re-check-row"><input type="checkbox" data-student${dis} ${p?.student?'checked':''}> Учёба</label>
         <label>Удобный приход<input data-starts${dis} value="${esc(wish)}" placeholder="например, 9, 10"></label>
         <div class="re-row"><button type="button" data-move="-1"${dis}>Выше</button><button type="button" data-move="1"${dis}>Ниже</button><button type="button" data-remove${dis}>Убрать из графика</button></div>`;

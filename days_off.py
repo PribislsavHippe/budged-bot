@@ -202,3 +202,55 @@ async def ask(bot, restaurant_id, start, end, links, answered):
 def roster_today():
     from workday import op_today
     return op_today()
+
+
+# ─── пожелания по дням недели ───────────────────────────────────────────────
+# Человек пишет боту «выходной по вторникам»: дни недели запоминаются надолго, программа старается
+# ставить обязательные выходные на эти дни и не ставить в них смены. Людей в смене это не перебивает.
+
+WEEKDAY_WORDS = ((0, r'понедельник\w*|пн'), (1, r'вторник\w*|вт'), (2, r'сред[аеуы]\w*|ср'),
+                 (3, r'четверг\w*|чт'), (4, r'пятниц\w*|пт'), (5, r'суббот\w*|сб'), (6, r'воскресен\w*|вс'))
+OFF_INTENT = re.compile(r'выходн|отдых|не\s+могу|не\s+работ|не\s+став|свобод|желательн|хочу|удобн|не\s+выйд|не\s+выход')
+DATIVE = ('понедельникам', 'вторникам', 'средам', 'четвергам', 'пятницам', 'субботам', 'воскресеньям')
+
+
+def parse_weekdays(text):
+    """Дни недели, в которые человек просит выходной, или None, если это не такое пожелание."""
+    t = (text or '').lower().replace('ё', 'е')
+    if not t or len(t) > 300:
+        return None
+    days = sorted({n for n, pattern in WEEKDAY_WORDS if re.search(rf'\b(?:{pattern})\b', t)})
+    if not days or not OFF_INTENT.search(t):
+        return None
+    # «хочу работать по вторникам» — наоборот, это не просьба о выходном.
+    if 'работ' in t and not re.search(r'не\s+работ', t):
+        return None
+    return days
+
+
+def weekdays_text(days):
+    names = [DATIVE[d] for d in sorted(days)]
+    return 'по ' + (names[0] if len(names) == 1 else ', '.join(names[:-1]) + ' и ' + names[-1])
+
+
+async def save_weekdays(link, days):
+    from datetime import datetime, timezone
+    table = db.supabase.table('weekday_wishes')
+    if not days:
+        await db._execute(table.delete().eq('link_id', link['id']), retries=1)
+        return
+    row = {'link_id': link['id'], 'restaurant_id': link['restaurant_id'], 'days': sorted(set(days)),
+           'updated_at': datetime.now(timezone.utc).isoformat()}
+    await db._execute(table.upsert(row, on_conflict='link_id'), retries=1)
+
+
+async def weekdays_for(restaurant_id):
+    """Пожелания ресторана: {id сотрудника: [дни недели]}. Без migration_v35 пожеланий нет."""
+    try:
+        rows = await db._pages(lambda: db.supabase.table('weekday_wishes').select('link_id,days')
+                               .eq('restaurant_id', restaurant_id).order('link_id'))
+    except APIError as error:
+        if error.code in MISSING:
+            return {}
+        raise
+    return {r['link_id']: [int(d) for d in r['days'] if 0 <= int(d) <= 6] for r in rows}

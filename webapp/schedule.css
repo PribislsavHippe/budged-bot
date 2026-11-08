@@ -321,3 +321,6 @@ html.tg-full .sg-land:not(.rotated) .sg-fit{padding-top:calc(var(--tg-safe-area-
 .sg-land .sg-name{background:transparent}
 /* Пока график открыт на весь экран, остальная страница скрыта, а фон (#bg) остаётся виден. */
 html.sg-land-open body>*:not(.sg-land):not(#bg){visibility:hidden}
+
+.re-wish{margin:0 0 12px;font-size:13px;color:var(--sg-ink)}
+.re-wish small{color:var(--sg-muted);font-size:12px}
