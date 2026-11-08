@@ -45,6 +45,7 @@
       </div>
       <form class="re-create" hidden><strong>Даты графика</strong><label>с <input type="date" name="start" required></label><label>по <input type="date" name="end" required></label>
         <button class="btn">Сохранить</button><button type="button" class="re-cancel">Отмена</button></form>
+      <p class="re-phone">Составлять и править график удобнее на компьютере. Здесь можно посмотреть его и запросить выходные.</p>
       <p class="re-error" role="alert"></p>
       <p class="re-empty" hidden>Графиков пока нет.</p>
       <div class="re-editor" hidden>
@@ -304,7 +305,10 @@
       if(r>=0)select(r,it.day);else{sel=null;clearSel();side={kind:'day',day:it.day};renderPanel();}
     });
     // Два вида одного графика: сначала все варианты сразу, после выбора — правка выбранного.
-    const showPick=()=>!!cur&&(cur.draft.variants||[]).length>0&&(forcePick||!cur.draft.picked);
+    // На телефоне график только смотрят: всегда таблица, без выбора вариантов.
+    const phone=matchMedia('(max-width: 700px)');
+    phone.addEventListener?.('change',()=>{if(cur)applyView();});
+    const showPick=()=>!phone.matches&&!!cur&&(cur.draft.variants||[]).length>0&&(forcePick||!cur.draft.picked);
     function applyView(){
       const pickMode=showPick();
       q('.re-pickview').hidden=!pickMode;q('.re-editview').hidden=pickMode;

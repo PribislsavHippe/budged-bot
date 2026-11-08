@@ -265,3 +265,55 @@
 .restaurant-page .re-sheet .sg-name{background:transparent;padding-left:0}
 .restaurant-page .re-sheet .sg-s.note:not(.off){background:color-mix(in srgb,var(--t) 60%,transparent);box-shadow:0 0 6px 3px color-mix(in srgb,var(--t) 40%,transparent)}
 .restaurant-page .re-sheet .re-history{left:0;top:6px}
+
+/* ───────────── Телефон: по гайдлайнам iOS ─────────────
+   Шапка-навигация: крупный заголовок слева, действия справа в одну строку. Сегменты на всю ширину.
+   Сотрудники — сгруппированный список в одной карточке с тонкими разделителями и шевроном.
+   График на телефоне — только просмотр и «Запросить выходные»: составлять его удобнее на компьютере. */
+@media(max-width:700px){
+  .restaurant-page #restaurant-panel{padding-left:16px;padding-right:16px}
+  .restaurant-page .site-bar{flex-wrap:nowrap;align-items:center;gap:8px;padding-top:12px;min-height:56px}
+  .restaurant-page .site-place{flex:1 1 auto;min-width:0}
+  .restaurant-page #restaurant-title,.restaurant-page .site-place #restaurant-select{font-size:28px;line-height:34px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  .restaurant-page #restaurant-panel .site-tools{flex-wrap:nowrap;gap:6px;flex:none}
+  .restaurant-page #restaurant-panel .site-tools button{min-height:34px;padding:0 12px;font-size:15px;box-shadow:none;background:var(--fill3)}
+  .restaurant-page #restaurant-panel .site-tools #restaurant-add{font-size:0;width:34px;padding:0}
+  .restaurant-page #restaurant-panel .site-tools #restaurant-add::before{content:"+";font-size:22px;line-height:1}
+  /* Сегменты: «Сотрудники | График» и фильтры — на всю ширину, равные части. */
+  .restaurant-page .restaurant-sections,.restaurant-page .restaurant-filters{display:flex;width:100%}
+  .restaurant-page #restaurant-panel .restaurant-sections button,.restaurant-page #restaurant-panel .restaurant-filters button{flex:1 1 0;min-height:36px;padding:0 6px;font-size:14px}
+  .restaurant-page .restaurant-filters{overflow:visible}
+  .restaurant-page .site-toolbar{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--sp3)}
+  .restaurant-page .site-toolbar-end{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--sp2);align-items:center}
+  .restaurant-page .restaurant-invite summary{justify-content:center;font-size:14px;padding:0 8px;white-space:nowrap}
+  .restaurant-page #restaurant-month{width:100%;min-width:0}
+  /* Сотрудники: одна карточка-список. */
+  .restaurant-page #restaurant-rows{background:var(--glass-strong);border-radius:18px;padding:0 16px;box-shadow:var(--glass-shadow)}
+  .restaurant-page #restaurant-rows:empty,.restaurant-page #restaurant-rows:has(.restaurant-empty){background:none;box-shadow:none;padding:0}
+  .restaurant-page .restaurant-member{border-bottom:.5px solid var(--sep);padding:12px 0}
+  .restaurant-page .restaurant-member:last-child{border-bottom:0}
+  .restaurant-page .restaurant-member summary{min-height:44px;position:relative;padding-right:18px}
+  .restaurant-page .restaurant-member summary::after{content:"›";position:absolute;right:0;top:50%;transform:translateY(-50%);color:var(--label3);font-size:22px;transition:transform .2s}
+  .restaurant-page .restaurant-member details[open] summary::after{transform:translateY(-50%) rotate(90deg)}
+  .restaurant-page .restaurant-member strong{font-size:17px}
+  .restaurant-page .restaurant-turnover{font-size:17px;text-align:right}
+  .restaurant-page .restaurant-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+  .restaurant-page .restaurant-actions button{min-height:36px}
+  /* График: только просмотр. */
+  .restaurant-page .re-guide,.restaurant-page .re-new,.restaurant-page .re-all,.restaurant-page .re-delete,
+  .restaurant-page .re-build,.restaurant-page .re-publish,.restaurant-page .re-history,.restaurant-page .re-adder,
+  .restaurant-page .re-panel,.restaurant-page .re-report,.restaurant-page .re-check>h3,.restaurant-page .sg-x,
+  .restaurant-page .re-create,.restaurant-page .re-jump{display:none!important}
+  .restaurant-page .re-phone{display:block!important}
+  .restaurant-page .re-head{flex-wrap:wrap;gap:var(--sp2)}
+  .restaurant-page .re-period{width:100%;flex-wrap:nowrap}
+  .restaurant-page #restaurant-panel button.re-title{font-size:22px;flex:1 1 auto;text-align:left;padding:0}
+  .restaurant-page .re-actions{width:100%;margin:0}
+  .restaurant-page #restaurant-panel .re-ask{width:100%;min-height:44px}
+  .restaurant-page .sg-edit td.sg-c,.restaurant-page .sg-edit thead th.sg-day{pointer-events:none}
+  .restaurant-page .sg-edit .sg-name{max-width:96px;font-size:14px;padding-right:8px}
+  .restaurant-page .re-check:has(.re-asks[hidden]){display:none}
+  .restaurant-page .re-check{padding:var(--sp4)}
+  .restaurant-page .re-asks{margin:0}
+}
+.re-phone{display:none;margin:0;font-size:14px;line-height:1.4;color:var(--sg-muted,rgba(60,60,67,.6))}
