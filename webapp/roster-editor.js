@@ -534,7 +534,7 @@
       box.hidden=!names.length;
       box.innerHTML=names.length?`<h4>Выходные из Telegram</h4>${names.map(n=>`<p>${esc(n)} — ${[
         req[n]?.length?esc(daysText(req[n])):'',wd[n]?.length?`<small>по ${wd[n].map(d=>WD[d]).join(', ')}</small>`:'',
-        pt[n]?`<small>график ${esc(pt[n])}</small>`:''].filter(Boolean).join(' · ')}</p>`).join('')}
+        pt[n]?`<small>график ${esc(pt[n])}</small>`:'',offsInfo?.over?.[n]?`<small class="re-over">больше ${offsInfo.over[n]} — согласовать</small>`:''].filter(Boolean).join(' · ')}</p>`).join('')}
         ${offsInfo?.fresh?'<p><small>Есть новые: «Собрать заново» учтёт их.</small></p>':''}`:'';
     }
     document.addEventListener('visibilitychange',()=>{if(!document.hidden&&cur&&!root.closest('[hidden]'))refreshOffs();});

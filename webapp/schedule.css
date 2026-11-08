@@ -335,3 +335,5 @@ html.sg-land-open body>*:not(.sg-land):not(#bg){visibility:hidden}
 .re-asks small{color:var(--sg-muted)}
 
 .sg-mine-off{margin-top:10px!important;color:var(--sg-ink)!important;font-size:14px!important;line-height:1.45}
+
+.re-asks small.re-over{color:var(--sg-off-ink)}

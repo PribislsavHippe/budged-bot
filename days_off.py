@@ -46,13 +46,22 @@ def prompt_text(start, end, limit, today=None, again=False):
     example = ', '.join(str(d.day) for d in (days[1], days[8])) if len(days) > 8 else ''
     head = 'Напиши числа заново' if again else f'График на {period_text(start, end)}. Напиши числа обязательных выходных'
     tail = f' Например: {example}.' if example else ''
-    return f'{head} — до {limit}.{tail}\nЕсли выходные не нужны, напиши «нет».'
+    return (f'{head}.{tail} Обязательных — {limit}; если нужно больше, менеджер согласует.\n'
+            'Если выходные не нужны, напиши «нет».')
 
 
-def summary_text(start, end, chosen):
+def over_note(chosen, limit):
+    """Больше нормы: записываем все, но сверх нормы — по согласованию с менеджером."""
+    if not limit or len(chosen) <= limit:
+        return ''
+    return (f' Обязательных выходных {limit}, остальные — по согласованию с менеджером: '
+            'он увидит всю просьбу в графике.')
+
+
+def summary_text(start, end, chosen, limit=None):
     if not chosen:
         return f'График на {period_text(start, end)}. Выходные не выбраны, их расставит программа.'
-    return f'График на {period_text(start, end)}. Записал выходные: {days_text(chosen)}.'
+    return f'График на {period_text(start, end)}. Записал выходные: {days_text(chosen)}.' + over_note(chosen, limit)
 
 
 NONE = re.compile(r'(нет|без выходных|не нужно|не надо|ничего|пропустить)[.!]?')
@@ -103,9 +112,9 @@ def resolve(parsed, start, end, today, limit):
         return None, f'График на {period_text(start, end)}. Числа {", ".join(map(str, outside))} в него не входят. Пришли числа ещё раз.'
     if past:
         return None, f'Эти дни уже прошли: {", ".join(map(str, past))}. Пришли числа ещё раз.'
-    if len(chosen) > limit:
-        return None, (f'Обязательных выходных можно до {limit}, а в сообщении {len(chosen)}: '
-                      f'{days_text(chosen)}. Выбери {limit} и пришли ещё раз.')
+    # Больше нормы — можно: такие выходные согласует менеджер (over_note). Предел только у хранилища.
+    if len(chosen) > 12:
+        return None, 'Больше 12 выходных за один график записать нельзя. Напиши, какие важнее, или договорись с менеджером.'
     return chosen, None
 
 
@@ -279,7 +288,7 @@ async def place_dates(link, uid, dates):
         limit = roster.off_limit((end - start).days + 1, await is_student(link['restaurant_id'], link['id']))
         chosen, problem = resolve(dates, start, end, today, limit)
         if chosen:
-            return start, end, chosen, None
+            return start, end, chosen, limit
         first_problem = first_problem or problem
     return None, None, None, first_problem or ('Графика на эти числа пока нет. Когда менеджер попросит выходные, '
                                                'бот напишет — ответь ему числами.')
@@ -343,7 +352,8 @@ async def mine(link_id):
         rows = (await db._execute(db.supabase.table('day_off_requests').select('start_date,end_date,days')
                                   .eq('link_id', link_id).eq('answered', True).gte('end_date', today)
                                   .order('start_date'))).data
-        result['requests'] = [{'start': r['start_date'], 'end': r['end_date'], 'days': sorted(r['days'])}
+        result['requests'] = [{'start': r['start_date'], 'end': r['end_date'], 'days': sorted(r['days']),
+                               'limit': roster.off_limit((date.fromisoformat(r['end_date']) - date.fromisoformat(r['start_date'])).days + 1)}
                               for r in rows if r['days']]
     except APIError as error:
         if error.code not in MISSING:

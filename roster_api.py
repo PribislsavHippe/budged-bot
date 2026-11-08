@@ -568,7 +568,12 @@ async def offs_action(request, uid, row, start, end, send):
     return {'total': len(links), 'answered': len(answered), 'fresh': fresh, 'sent': sent,
             'requests': {links[link]: sorted(got[link]) for link in answered if got[link]},
             'weekdays': {links[link]: w['days'] for link, w in wishes.items() if link in links and w['days']},
-            'patterns': {links[link]: w['pattern'] for link, w in wishes.items() if link in links and w['pattern']}}
+            'patterns': {links[link]: w['pattern'] for link, w in wishes.items() if link in links and w['pattern']},
+            # Больше нормы — согласовать: сборка сама ставит только норму, остальное решает менеджер.
+            'over': {links[link]: limit for link in answered
+                     for limit in [roster.off_limit((end - start).days + 1,
+                                                    any(p.get('link') == link and p.get('student') for p in people))]
+                     if len(got[link]) > limit}}
 
 
 # ─── сообщения команде ───────────────────────────────────────────────────────

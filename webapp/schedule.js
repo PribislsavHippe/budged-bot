@@ -69,8 +69,9 @@
   }
   function offsText(){
     const mine=data.mine||{},days=(mine.requests||[]).flatMap(r=>r.days),wd=mine.weekdays||[];
+    const over=(mine.requests||[]).find(r=>r.limit&&r.days.length>r.limit);
     const wish=[wd.length?`выходные по ${wd.map(d=>WD[d]).join(', ')}`:'',mine.pattern?`график ${mine.pattern}`:''].filter(Boolean).join(', ');
-    const parts=[days.length?`Твои обязательные выходные: ${daysText(days)}`:'',wish?`Пожелание: ${wish}`:''].filter(Boolean);
+    const parts=[days.length?`Твои выходные: ${daysText(days)}${over?` (больше ${over.limit} — по согласованию с менеджером)`:''}`:'',wish?`Пожелание: ${wish}`:''].filter(Boolean);
     return parts.length?`<p class="sg-mine-off">${parts.map(G.esc).join('<br>')}</p>`:'';
   }
   function renderMine(p){

@@ -292,7 +292,11 @@ class DraftTests(unittest.TestCase):
             ok, problem = days_off.resolve(parse(text), start, end, today, 3)
             self.assertIsNone(ok, text)
             self.assertIn('16–30 ноября', problem)
-        self.assertIn('до 3', days_off.resolve(parse('17 18 19 20'), start, end, today, 3)[1])
+        # Больше нормы — принимается; сверх нормы согласует менеджер.
+        many, problem = days_off.resolve(parse('17 18 19 20'), start, end, today, 3)
+        self.assertEqual((len(many), problem), (4, None))
+        self.assertIn('по согласованию с менеджером', days_off.over_note(many, 3))
+        self.assertEqual(days_off.over_note(many, 5), '')
         self.assertIn('уже прошли', days_off.resolve(parse('17'), start, end, date(2026, 11, 20), 3)[1])
         self.assertIsNone(days_off.resolve(parse('17 декабря'), start, end, today, 3)[0])
         self.assertEqual(days_off.resolve(parse('нет'), start, end, today, 3), (set(), None))
@@ -585,8 +589,6 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         # Сумма и обычный текст идут в обычную обработку.
         self.assertIsNone(await self.said('3500'))
         self.assertIsNone(await self.said('привет'))
-        # Четыре дня — больше нормы.
-        self.assertIn('до 3', (await self.said('17 18 24 25')).args[0])
         with patch('research.track') as track:
             done = await self.said('17, 18')
         self.assertEqual([(c.args[1], c.kwargs) for c in track.call_args_list],
@@ -597,6 +599,7 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await self.said('20'))
         status = await self.roster('offs', MANAGER, id=made['id'])
         self.assertEqual((status['answered'], status['fresh']), (1, 1))
+        self.assertEqual(status['over'], {})
         change = self.callback('off:e:2026-11-16:2026-11-30')
         await days_off_chat.change(change)
         self.assertIn('заново', change.message.edit_text.await_args.args[0])
@@ -742,7 +745,7 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status['requests'], {'Аня': ['2026-11-17', '2026-11-19']})
         self.assertEqual(status['weekdays'], {'Аня': [0]})
         mine = (await self.post('/api/schedule/view', WAITER))['mine']
-        self.assertEqual(mine, {'requests': [{'start': '2026-11-16', 'end': '2026-11-30', 'days': ['2026-11-17', '2026-11-19']}],
+        self.assertEqual(mine, {'requests': [{'start': '2026-11-16', 'end': '2026-11-30', 'days': ['2026-11-17', '2026-11-19'], 'limit': 3}],
                                 'weekdays': [0], 'pattern': None})
         # Другой человек видит только своё: чужие выходные не показываются.
         self.assertEqual((await self.post('/api/schedule/view', STRANGER))['mine'], {'requests': [], 'weekdays': [], 'pattern': None})
@@ -778,6 +781,26 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         rows = (await self.post('/api/restaurant/view', MANAGER, restaurant_id=PLACE, month='2026-11'))['rows']
         self.assertEqual(next(r for r in rows if r['report_name'] == 'Аня')['wish'], {'days': [6], 'pattern': '2/2', 'offs': []})
         self.assertNotIn('wish', next(r for r in rows if r['report_name'] == 'Боря'))
+
+    async def test_more_days_off_than_the_norm_are_accepted_for_the_manager_to_agree(self):
+        import days_off_chat
+        store = {}
+        async def update_data(**kw): store.update(kw)
+        made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-30')
+        text = 'НЕ могу работать: 16,17,20, 24,27\n\nМогу работать: все остальные могу\n\nРабочие неполные ->18 ноября  -> С 9:00-17:00 !'
+        message = self.text(text)
+        await days_off_chat.write_request(message, state=NS(update_data=update_data), **(await days_off_chat.off_request(message)))
+        reply = message.answer.await_args.args[0]
+        self.assertIn('16, 17, 20, 24, 27 ноября', reply)
+        self.assertIn('по согласованию с менеджером', reply)
+        status = await self.roster('offs', MANAGER, id=made['id'])
+        self.assertEqual(status['requests']['Аня'], ['2026-11-16', '2026-11-17', '2026-11-20', '2026-11-24', '2026-11-27'])
+        self.assertEqual(status['over'], {'Аня': 3})
+        mine = (await self.post('/api/schedule/view', WAITER))['mine']
+        self.assertEqual(mine['requests'][0]['limit'], 3)
+        # Сборка сама ставит только норму; остальное менеджер добавляет вручную после согласования.
+        rebuilt = await self.roster('build', MANAGER, id=made['id'], revision=made['revision'], draft=made['draft'])
+        self.assertEqual(len(rebuilt['draft']['off_requested']['Аня']), 3)
 
     async def test_periods_do_not_overlap_and_drafts_can_be_deleted(self):
         made = await self.roster('create', OWNER, restaurant_id=PLACE, start='2026-11-01', end='2026-11-15')

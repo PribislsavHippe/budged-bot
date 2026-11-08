@@ -45,7 +45,7 @@ async def write(message, parsed, wait):
         await days_off.save(link, start, end, chosen)
         import research
         research.track(message.from_user.id, 'days_off_answered', source='bot', screen='schedule')
-        await message.answer(days_off.summary_text(start, end, chosen), reply_markup=days_off.edit_markup(start, end))
+        await message.answer(days_off.summary_text(start, end, chosen, limit), reply_markup=days_off.edit_markup(start, end))
     except Exception as error:
         from diagnostics import failure
         failure(error, area='days_off', stage='write')
@@ -96,14 +96,17 @@ async def write_request(message, found, link, state):
                     raise
                 problems.append('Пожелания по дням недели пока не подключены.')
         if found['dates']:
-            start, end, chosen, problem = await days_off.place_dates(link, message.from_user.id, found['dates'])
+            start, end, chosen, extra = await days_off.place_dates(link, message.from_user.id, found['dates'])
             if chosen:
                 await days_off.save(link, start, end, chosen)
                 import research
                 research.track(message.from_user.id, 'days_off_answered', source='bot', screen='schedule')
-                saved.append(f'обязательные выходные {days_off.days_text(chosen)}')
+                saved.append(f'выходные {days_off.days_text(chosen)}')
+                note = days_off.over_note(chosen, extra).strip()
+                if note:
+                    problems.append(note)
             else:
-                problems.append(problem)
+                problems.append(extra)
     except Exception as error:
         from diagnostics import failure
         failure(error, area='days_off', stage='request_save')
