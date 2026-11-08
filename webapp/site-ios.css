@@ -320,3 +320,9 @@
   .restaurant-page .re-asks{margin:0}
 }
 .re-phone{display:none;margin:0;font-size:14px;line-height:1.4;color:var(--sg-muted,rgba(60,60,67,.6))}
+/* «Заявки» в общем переключателе — только на телефоне; на компьютере они в фильтрах списка. */
+.restaurant-page #restaurant-panel .restaurant-section-pending{display:none}
+@media(max-width:700px){
+  .restaurant-page #restaurant-panel .restaurant-section-pending:not([hidden]){display:block}
+  .restaurant-page .restaurant-filters{display:none!important}
+}
