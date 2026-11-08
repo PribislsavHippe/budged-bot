@@ -320,3 +320,5 @@
   .restaurant-page .re-asks{margin:0}
 }
 .re-phone{display:none;margin:0;font-size:14px;line-height:1.4;color:var(--sg-muted,rgba(60,60,67,.6))}
+/* Капсула переключателя «Сотрудники | График» занимает всю высоту своей половины, как в фильтрах. */
+.restaurant-page .restaurant-sections{align-items:stretch}
