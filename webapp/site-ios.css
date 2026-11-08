@@ -276,9 +276,12 @@
   .restaurant-page .site-place{flex:1 1 auto;min-width:0}
   .restaurant-page #restaurant-title,.restaurant-page .site-place #restaurant-select{font-size:28px;line-height:34px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
   .restaurant-page #restaurant-panel .site-tools{flex-wrap:nowrap;gap:6px;flex:none}
-  .restaurant-page #restaurant-panel .site-tools button{min-height:34px;padding:0 12px;font-size:15px;box-shadow:none;background:var(--fill3)}
-  .restaurant-page #restaurant-panel .site-tools #restaurant-add{font-size:0;width:34px;padding:0}
-  .restaurant-page #restaurant-panel .site-tools #restaurant-add::before{content:"+";font-size:22px;line-height:1}
+  /* Как кнопки в навигации iOS: только текст и значок, без подложек. */
+  .restaurant-page #restaurant-panel .site-tools button{min-height:44px;padding:0 6px;font-size:17px;box-shadow:none;background:none;
+    -webkit-backdrop-filter:none;backdrop-filter:none}
+  .restaurant-page #restaurant-panel .site-tools #restaurant-add{font-size:0;width:36px;padding:0}
+  .restaurant-page #restaurant-panel .site-tools #restaurant-add::before{content:"+";font-size:30px;font-weight:300;line-height:1;color:var(--blue)}
+  .restaurant-page .site-bar{padding-top:8px;margin-bottom:var(--sp2)}
   /* Сегменты: «Сотрудники | График» и фильтры — на всю ширину, равные части. */
   .restaurant-page .restaurant-sections,.restaurant-page .restaurant-filters{display:flex;width:100%}
   .restaurant-page #restaurant-panel .restaurant-sections button,.restaurant-page #restaurant-panel .restaurant-filters button{flex:1 1 0;min-height:36px;padding:0 6px;font-size:14px}

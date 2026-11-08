@@ -22,7 +22,7 @@
     tools:'<button id="restaurant-add" hidden>+ Добавить ресторан</button><button id="restaurant-site" hidden>Сайт ресторана</button><button id="restaurant-logout" hidden>Выйти</button>',
     sections:'<nav class="restaurant-sections" id="restaurant-sections" hidden aria-label="Разделы кабинета"><button data-section="team" aria-pressed="true">Сотрудники</button><button data-section="schedule" aria-pressed="false">График</button></nav>',
     status:'<section id="restaurant-login" hidden><h2>Кабинет ресторана</h2><div id="restaurant-login-box"></div></section><p id="restaurant-error" role="alert"></p><p id="restaurant-notice" role="status"></p><button id="restaurant-retry" class="btn btn-ghost" hidden>Попробовать ещё раз</button><form id="restaurant-create" hidden><label>Название ресторана<input id="restaurant-name" maxlength="80" minlength="2" required autocomplete="organization"></label><button class="btn">Создать ресторан</button><button type="button" id="restaurant-create-cancel">Отмена</button></form>',
-    filters:'<div class="restaurant-filters" aria-label="Сотрудники"><button data-status="approved" aria-pressed="true">Сотрудники</button><button data-status="pending" aria-pressed="false">Заявки</button><button data-status="rejected" aria-pressed="false">Отклонённые</button><button data-status="revoked" aria-pressed="false">Без доступа</button></div>',
+    filters:'<div class="restaurant-filters" aria-label="Сотрудники"><button data-status="approved" aria-pressed="true">В команде</button><button data-status="pending" aria-pressed="false">Заявки</button><button data-status="rejected" aria-pressed="false">Отклонённые</button><button data-status="revoked" aria-pressed="false">Без доступа</button></div>',
     rows:'<div id="restaurant-rows"></div><div class="restaurant-pages"><button id="restaurant-prev">← Назад</button><span id="restaurant-page"></span><button id="restaurant-next">Далее →</button></div>',
     invite:'<details class="restaurant-invite"><summary>Пригласить сотрудника</summary><button id="restaurant-invite" class="btn btn-ghost">Создать ссылку</button><div id="restaurant-link" hidden><label>Приглашение на 7 дней<input readonly id="restaurant-url"></label><button id="restaurant-copy">Скопировать</button></div></details>',
   };
@@ -90,7 +90,7 @@
     // Месяц продаж нужен только тем, кто видит продажи: владельцу и управляющему.
     $('restaurant-month').hidden=!['owner','director'].includes(restaurant.role||'owner');
     $('restaurant-create').hidden=true;$('restaurant-content').hidden=false;
-    const labels={approved:'Сотрудники',pending:'Заявки',rejected:'Отклонённые',revoked:'Без доступа'};
+    const labels={approved:'В команде',pending:'Заявки',rejected:'Отклонённые',revoked:'Без доступа'};
     panel.querySelectorAll('[data-status]').forEach(el=>{el.hidden=['rejected','revoked'].includes(el.dataset.status)&&!data.counts[el.dataset.status]&&status!==el.dataset.status;el.textContent=labels[el.dataset.status]+' '+data.counts[el.dataset.status];el.setAttribute('aria-pressed',String(el.dataset.status===status));});
     $('restaurant-rows').hidden=false;
     $('restaurant-rows').innerHTML=data.rows.length?rowsHtml(data.rows):`<p class="restaurant-empty">${status==='pending'?'Новых заявок нет.':status==='approved'?'Здесь появятся сотрудники, которых ты подтвердил.':'Список пока пуст.'}</p>`;
