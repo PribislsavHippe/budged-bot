@@ -110,12 +110,12 @@ async def register_name(message,state):
     try:
         result=await identity.request(message.from_user.id,data.get('invite_token',''),message.text)
         await state.clear()
-        await message.answer(f"Спасибо, {html.escape(result['report_name'])}! Теперь можно пользоваться ботом. "
-                             'Личные чаевые и расходы будут видны только тебе.')
+        await message.answer(f"Спасибо, {html.escape(result['report_name'])}! Заявку увидит менеджер ресторана.\n\n"
+                             'График смен составляет менеджер на сайте ресторана. Когда он опубликует график, я пришлю твои смены сообщением, а весь график будет в «Статистике» → «График». Если такой вкладки нет, менеджер ещё не подтвердил тебя или не опубликовал график.\n\n'
+                             'Ещё здесь можно записывать чаевые: пришли сумму, например <i>чай 1500</i>. '
+                             'Личные чаевые и расходы видишь только ты.')
         from ux_chat import begin
-        if await begin(message,prompt=False):
-            await message.answer('Можно сразу записать чаевые: пришли сумму, например <i>чай 1500</i>. '
-                                 'Если хочешь начать с графика, пришли его фото.')
+        await begin(message,prompt=False)
     except Exception as exc: await error(message,exc)
 
 

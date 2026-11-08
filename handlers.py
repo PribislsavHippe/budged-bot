@@ -117,8 +117,9 @@ def undo_kb(entry_ids: list[int], toggle_entry: dict | None = None,
 
 def _welcome_text(name: str) -> str:
     return (f"Привет, {html.escape(name)}! 💛\n\n"
-            "Можно сразу записать чаевые: пришли сумму, например <i>чай 1500</i>. "
-            "Если хочешь начать с графика, пришли его фото.")
+            "График смен составляет менеджер на сайте ресторана. Когда он опубликует график, я пришлю твои смены сообщением, а весь график будет в «Статистике» → «График». Если такой вкладки нет, менеджер ещё не подтвердил тебя или не опубликовал график.\n\n"
+            "Ещё здесь можно записывать чаевые: пришли сумму, например <i>чай 1500</i>. "
+            "Их видишь только ты.")
 
 
 
@@ -144,6 +145,12 @@ async def cmd_start(message: Message, state: FSMContext):
     research.track(message.from_user.id,'user_started')
     if (message.text or '').strip().endswith('help'):
         await cmd_help(message)
+        return
+    # Ссылка из приложения «Оставить пожелание».
+    if (message.text or '').strip().endswith('wish'):
+        if not user.get('onboarded'):await db.set_onboarded(message.from_user.id)
+        from ux_chat import ask_wish
+        await ask_wish(message,state)
         return
     # Deep-link из мини-апа: кнопка «Внести траты смены»
     if user.get("onboarded") and (message.text or "").strip().endswith("close_shift"):
@@ -244,7 +251,7 @@ async def cmd_reset(message: Message):
         return
     await message.answer(
         "Удалить <b>весь</b> журнал и начать заново?\n"
-        "<i>Профиль останется. Чтобы стереть вообще всё — /delete</i>",
+        "<i>Профиль останется.</i>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="Да, удалить всё", callback_data="reset:yes"),
             InlineKeyboardButton(text="Отмена", callback_data="reset:no"),
@@ -322,8 +329,8 @@ async def cmd_privacy(message: Message):
         "Для улучшения бота отдельно сохраняем действия: открытие раздела, успешную запись, "
         "шаг знакомства и код ошибки. Без сумм, сообщений и фотографий. "
         "Владелец бота видит эти пути под внутренними номерами, например U-0184. "
-        "Обращения, которые ты отправляешь через /feedback, он читает отдельно. "
-        "Свои события и обращения можно получить через /export и удалить через /delete.",
+        "Пожелания и обращения, которые ты отправляешь через «Оставить пожелание», он читает отдельно. "
+        "Свои данные, события и обращения можно забрать или удалить кнопками ниже.",
         "",
         "Я не считаю твой баланс и не знаю, сколько у тебя денег — "
         "чаевые и расходы смены; продажи ресторана хранятся отдельно.",
@@ -331,14 +338,25 @@ async def cmd_privacy(message: Message):
         "<b>Личные чаевые и расходы видишь только ты в своём кабинете.</b> "
         "Владелец серверного доступа к базе технически может прочитать хранимые данные — "
         "обещать абсолютную анонимность было бы неправильно.",
-        "",
-        "/export — забрать все свои записи файлом",
-        "/delete — удалить свои данные",
     ]
 
     if SOURCE_URL:
         lines.append(f"\nКод открыт, можно проверить: {SOURCE_URL}")
-    await message.answer("\n".join(lines))
+    await message.answer("\n".join(lines), reply_markup=data_buttons())
+
+
+def data_buttons():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Забрать мои данные", callback_data="priv:export")],
+        [InlineKeyboardButton(text="Удалить мои данные", callback_data="priv:delete")]])
+
+
+@router.callback_query(F.data.in_({"priv:export", "priv:delete"}))
+async def privacy_action(callback: CallbackQuery):
+    """Выгрузка и удаление кнопками: команды через «/» не используем."""
+    await callback.answer()
+    message = callback.message.model_copy(update={"from_user": callback.from_user})
+    await (cmd_export if callback.data == "priv:export" else cmd_delete)(message)
 
 
 @router.message(Command("export"))
@@ -439,13 +457,12 @@ async def cmd_delete(message: Message):
     await message.answer(
         "Стереть <b>всё</b>: записи, смены, планы продаж, отчёты, профиль, привязку сотрудника, календарную подписку, события использования и обращения?\n"
         "Если ты администратор ресторана, ресторан останется без администратора.\n\n"
-        "<i>Это навсегда. Восстановить не смогу — у меня не остаётся копии.\n"
-        "Хочешь сначала забрать данные — /export</i>"+
-        ("\n\nЛичный журнал на телефоне эта команда не затронет: очисти его отдельно в «Статистике»." if private else ""),
+        "<i>Это навсегда. Восстановить не смогу — у меня не остаётся копии.</i>"+
+        ("\n\nЛичный журнал на телефоне удаление не затронет: очисти его отдельно в «Статистике»." if private else ""),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="Да, удалить мои данные", callback_data="del:yes"),
             InlineKeyboardButton(text="Отмена", callback_data="del:no"),
-        ]]),
+        ], [InlineKeyboardButton(text="Сначала забрать данные", callback_data="priv:export")]]),
     )
 
 
@@ -456,7 +473,7 @@ async def delete_yes(callback: CallbackQuery, state: FSMContext,inbox_update_id:
     await state.clear()
     await callback.message.edit_text(
         "Стёр. В базе тебя больше нет.\n\n"
-        "Если вернёшься — начнём с чистого листа, /start."
+        "Если вернёшься, просто напиши мне — начнём с чистого листа."
     )
     await callback.answer()
 
@@ -1075,10 +1092,16 @@ async def handle_text(message: Message, state: FSMContext):
     try:
         items = p.parse_transactions(text)
     except p.AmountFormatError:
+        from ux_chat import looks_like_wish, offer_wish
+        if looks_like_wish(text):
+            await offer_wish(message,state);return
         await message.answer('Не стал записывать: сумма неоднозначна. '
                              'Напиши положительную сумму с копейками, например «чай 500,50».')
         return
     if not items:
+        from ux_chat import looks_like_wish, offer_wish
+        if looks_like_wish(text):
+            await offer_wish(message,state);return
         await message.answer(
             "Не нашёл сумму. Примеры:\n"
             "<i>чай 500</i> · <i>смена 2500</i>\n"

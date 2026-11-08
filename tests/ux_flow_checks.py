@@ -24,6 +24,9 @@ class Flows(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.answer.await_count,1)
         self.assertIn('чай 1500',message.answer.await_args.args[0])
         self.assertNotIn('Твои смены — в одном месте',message.answer.await_args.args[0])
+        # Фото графика больше не предлагаем: график составляет менеджер.
+        self.assertNotIn('фото',message.answer.await_args.args[0])
+        self.assertIn('составляет менеджер',message.answer.await_args.args[0])
         self.assertTrue(message.answer.await_args.kwargs['reply_markup'].remove_keyboard)
         recorded=AsyncMock(return_value={'first_value':True,'was_learning':True})
         message=await self.run_entry('чай 1500',recorded)
@@ -48,7 +51,8 @@ class Flows(unittest.IsolatedAsyncioTestCase):
         with patch.object(identity_chat.identity,'request',new=AsyncMock(return_value={'status':'pending','report_name':'Тест Имя'})),patch.object(handlers.db,'get_or_create_user',new=AsyncMock(return_value={'id':5,'tutorial_step':'new'})),patch.object(handlers.db,'_execute',new=AsyncMock()),patch.object(research,'record',new=AsyncMock(return_value=None)),patch.object(research,'track'):
             await identity_chat.register_name(message,state)
             state.clear.assert_awaited_once()
-            self.assertIn('Теперь можно пользоваться ботом',message.answer.await_args_list[0].args[0])
+            self.assertIn('Заявку увидит менеджер',message.answer.await_args_list[0].args[0])
+            self.assertNotIn('фото',message.answer.await_args_list[0].args[0])
             self.assertNotIn('подтверждения',message.answer.await_args_list[0].args[0])
             self.assertIn('чай 1500',message.answer.await_args.args[0])
 
@@ -59,9 +63,14 @@ class Flows(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.answer.await_count,1)
         self.assertNotIn('/reset',message.answer.await_args.args[0])
         markup=message.answer.await_args.kwargs['reply_markup']
-        self.assertEqual(markup.inline_keyboard[0][0].text,'Написать Леше')
-        self.assertEqual(markup.inline_keyboard[0][0].url,'https://t.me/lechatsergeev')
+        self.assertEqual(markup.inline_keyboard[0][0].text,'Оставить пожелание')
+        self.assertEqual(markup.inline_keyboard[0][0].callback_data,'ux:wish')
         self.assertEqual(markup.inline_keyboard[1][0].text,'Частые вопросы')
+        self.assertEqual(markup.inline_keyboard[2][0].url,'https://t.me/lechatsergeev')
+        callback=NS(data='ux:faq:schedule',message=message,answer=AsyncMock())
+        await ux_chat.faq_answer(callback)
+        self.assertIn('составляет менеджер',message.answer.await_args.args[0])
+        self.assertNotIn('фото',message.answer.await_args.args[0])
         callback=NS(data='ux:faq:tips',message=message,answer=AsyncMock())
         await ux_chat.faq_answer(callback)
         self.assertIn('чай 1500',message.answer.await_args.args[0])
@@ -74,8 +83,37 @@ class Flows(unittest.IsolatedAsyncioTestCase):
         message.edit_reply_markup.assert_awaited_once()
         message.answer.reset_mock();message.edit_reply_markup.reset_mock()
         await ux_chat.choose_schedule(callback)
-        self.assertIn('фото графика',message.answer.await_args.args[0])
+        self.assertIn('составляет менеджер',message.answer.await_args.args[0])
+        self.assertNotIn('фото',message.answer.await_args.args[0])
         self.assertNotIn('1500 ₽ записаны',message.answer.await_args.args[0])
+
+    async def test_free_text_wish_is_not_lost_and_is_passed_on_consent(self):
+        # Первый настоящий отзыв: фраза с «2/2» раньше получала ошибку про сумму и терялась.
+        text='Желательные воскресенья а так мне 2/2 нравится'
+        message=self.message(text);store={}
+        async def get_data():return dict(store)
+        async def update_data(**kw):store.update(kw)
+        async def set_data(data):store.clear();store.update(data)
+        state=NS(clear=AsyncMock(),get_data=get_data,update_data=update_data,set_data=set_data)
+        with patch.object(handlers.db,'get_or_create_user',new=AsyncMock(return_value={'id':5,'onboarded':True})),\
+             patch.object(handlers.db,'add_entries',new=AsyncMock()) as saved,patch.object(handlers.db,'add_shifts',new=AsyncMock()):
+            await handlers.handle_text(message,state)
+        saved.assert_not_awaited()
+        reply=message.answer.await_args
+        self.assertIn('пожелание',reply.args[0])
+        self.assertNotIn('сумма неоднозначна',reply.args[0])
+        self.assertEqual(store['wish_text'],text)
+        callback=NS(data='ux:wishsend',from_user=NS(id=5),answer=AsyncMock(),message=NS(edit_text=AsyncMock()))
+        with patch.object(research,'enabled',return_value=True),patch.object(ux_chat,'save_feedback',new=AsyncMock(return_value=True)) as feedback:
+            await ux_chat.wish_send(callback,state)
+        self.assertEqual(feedback.await_args.args[:3],(5,'idea',text))
+        self.assertNotIn('wish_text',store)
+        self.assertIn('Передал',callback.message.edit_text.await_args.args[0])
+        # Обычная ошибка в сумме по-прежнему объясняется как раньше.
+        message=self.message('чай 500.5.5')
+        with patch.object(handlers.db,'get_or_create_user',new=AsyncMock(return_value={'id':5,'onboarded':True})):
+            await handlers.handle_text(message,state)
+        self.assertNotIn('пожелание',message.answer.await_args.args[0])
 
     async def test_skip_then_normal_work(self):
         message=self.message('чай 1500');message.edit_reply_markup=AsyncMock()

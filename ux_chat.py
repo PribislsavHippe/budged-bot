@@ -19,9 +19,10 @@ FAQ={
     'edit':('Как исправить запись?',
             'Открой «Статистику» → «История и правки». Если запись относится к смене, '
             'выбери её день в календаре.'),
-    'schedule':('Как добавить график?',
-            'Пришли фото графика или ссылку на открытую Google Таблицу. '
-            'Перед сохранением проверь найденные смены.'),
+    'schedule':('Где мой график?',
+            'График смен составляет менеджер на сайте ресторана. Когда он опубликует график, я пришлю твои смены сообщением, а весь график будет в «Статистике» → «График». Если такой вкладки нет, менеджер ещё не подтвердил тебя или не опубликовал график.'),
+    'wish':('Как передать пожелание?',
+            'Нажми «Оставить пожелание» и напиши его одним сообщением. Его прочитает Леша.'),
 }
 
 class Feedback(StatesGroup):
@@ -30,14 +31,16 @@ class Feedback(StatesGroup):
 
 def help_buttons():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text='Написать Леше',url=SUPPORT_URL)],
-        [InlineKeyboardButton(text='Частые вопросы',callback_data='ux:faq')]])
+        [InlineKeyboardButton(text='Оставить пожелание',callback_data='ux:wish')],
+        [InlineKeyboardButton(text='Частые вопросы',callback_data='ux:faq')],
+        [InlineKeyboardButton(text='Написать Леше',url=SUPPORT_URL)]])
 
 
 def faq_buttons():
     return InlineKeyboardMarkup(inline_keyboard=[
         *[[InlineKeyboardButton(text=title,callback_data=f'ux:faq:{key}')]
           for key,(title,_) in FAQ.items()],
+        [InlineKeyboardButton(text='Оставить пожелание',callback_data='ux:wish')],
         [InlineKeyboardButton(text='Написать Леше',url=SUPPORT_URL)]])
 
 
@@ -51,7 +54,7 @@ def feedback_cancel_button():
 def first_action_buttons():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text='💸 Записать чаевые',callback_data='ux:tip')],
-        [InlineKeyboardButton(text='🗓 Как добавить график',callback_data='ux:schedule')],
+        [InlineKeyboardButton(text='🗓 Где мой график',callback_data='ux:schedule')],
         [InlineKeyboardButton(text='Не сейчас',callback_data='ux:skip')]])
 
 
@@ -81,8 +84,7 @@ async def choose_tip(callback):
 async def choose_schedule(callback):
     await callback.answer()
     await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer('Пришли фото графика или ссылку на открытую для просмотра Google Таблицу. '
-                                  'Я помогу выбрать твою строку и покажу смены перед сохранением.\n\n'
+    await callback.message.answer('График смен составляет менеджер на сайте ресторана. Когда он опубликует график, я пришлю твои смены сообщением, а весь график будет в «Статистике» → «График». Если такой вкладки нет, менеджер ещё не подтвердил тебя или не опубликовал график.\n\n'
                                   'Когда захочешь, можно записать чаевые сообщением <b>чай 1500</b>.',
                                   reply_markup=skip_button())
 
@@ -175,7 +177,7 @@ async def categories(message,state):
     await state.clear()
     await message.answer('Чем помочь?',reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=label,callback_data='ux:feedback:'+key)] for key,label in
-        [('broken','Что-то сломалось'),('confusing','Не понимаю, как пользоваться'),('idea','Есть идея')]]))
+        [('idea','Есть идея или пожелание'),('broken','Что-то сломалось'),('confusing','Не понимаю, как пользоваться')]]))
 
 
 @router.message(Command('feedback'))
@@ -228,21 +230,95 @@ async def feedback_text(message,state):
     if not allowed(message.from_user.id,'feedback',5):
         await message.answer('Слишком много обращений подряд. Попробуй через минуту.');return
     data=await state.get_data()
+    if not await save_feedback(message.from_user.id,data['feedback_category'],text,data['feedback_id']):
+        await message.answer('Обращение пока не сохранилось. Отправь его ещё раз.',reply_markup=feedback_cancel_button());return
+    await state.clear()
+    await message.answer('Спасибо! Сохранил. Леша прочитает.')
+
+
+async def save_feedback(uid,category,text,feedback_id):
+    """Обращение или пожелание в таблицу feedback. Его читает только владелец бота."""
     try:
         import db
-        await db.get_or_create_user(message.from_user.id)
-        s=await research.subject(message.from_user.id)
+        await db.get_or_create_user(uid)
+        s=await research.subject(uid)
         if not s:raise RuntimeError('subject unavailable')
         await research.execute(research.client().table('feedback').upsert(
-            {'id':data['feedback_id'],'subject_id':s['id'],'category':data['feedback_category'],
+            {'id':feedback_id,'subject_id':s['id'],'category':category,
              'body':text,'screen':'chat','app_version':research.version()},on_conflict='id',ignore_duplicates=True))
     except Exception as error:
         from diagnostics import failure
         failure(error,area='feedback',stage='save')
-        await message.answer('Обращение пока не сохранилось. Отправь его ещё раз.',reply_markup=feedback_cancel_button());return
+        return False
+    research.track(uid,'problem_reported',screen='help',operation=feedback_id)
+    return True
+
+
+def contact_button():
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Написать Леше',url=SUPPORT_URL)]])
+
+
+async def ask_wish(message,state,uid=None):
+    """Пожелание одним сообщением, без выбора категории."""
+    uid=uid or message.from_user.id
     await state.clear()
-    research.track(message.from_user.id,'problem_reported',screen='help',operation=data['feedback_id'])
-    await message.answer('Спасибо! Обращение сохранилось. Оно поможет улучшить бота.')
+    if not research.enabled():
+        await message.answer('Пожелания пока принимает Леша напрямую — напиши ему.',reply_markup=contact_button());return
+    await state.set_state(Feedback.text)
+    await state.update_data(feedback_category='idea',feedback_id=str(uuid5(NAMESPACE_URL,f'wish:{uid}:{message.message_id}')))
+    await message.answer('Напиши пожелание одним сообщением: что удобно, чего не хватает, что мешает. '
+                         'Его прочитает Леша.',reply_markup=feedback_cancel_button())
+
+
+@router.callback_query(F.data=='ux:wish')
+async def wish_open(callback,state):
+    await callback.answer()
+    await ask_wish(callback.message,state,uid=callback.from_user.id)
+
+
+def looks_like_wish(text):
+    """Обычная фраза, а не запись денег: несколько слов из букв."""
+    import re
+    return len(text.strip())>=12 and len(re.findall(r'[а-яёa-z]{2,}',text.lower()))>=3
+
+
+async def offer_wish(message,state):
+    """Фраза не похожа на запись: не теряем её, а спрашиваем, передать ли как пожелание."""
+    await state.update_data(wish_text=(message.text or '').strip()[:2000],wish_message=message.message_id)
+    await message.answer('Это не похоже на запись чаевых или расхода, поэтому ничего не записал. '
+                         'Передать это сообщение Леше как пожелание?',
+                         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                             InlineKeyboardButton(text='Да, передать',callback_data='ux:wishsend'),
+                             InlineKeyboardButton(text='Нет',callback_data='ux:wishdrop')]]))
+
+
+async def _forget_wish(state):
+    data=await state.get_data()
+    data.pop('wish_text',None);data.pop('wish_message',None)
+    await state.set_data(data)
+    return data
+
+
+@router.callback_query(F.data=='ux:wishsend')
+async def wish_send(callback,state):
+    data=await state.get_data()
+    text=data.get('wish_text')
+    if not text:
+        await callback.answer('Это сообщение уже не найти. Нажми «Оставить пожелание» и напиши ещё раз.',show_alert=True);return
+    await callback.answer()
+    uid=callback.from_user.id
+    saved=research.enabled() and await save_feedback(uid,'idea',text,str(uuid5(NAMESPACE_URL,f"wish:{uid}:{data.get('wish_message')}")))
+    if not saved:
+        await callback.message.edit_text('Пожелание не сохранилось в боте. Напиши его Леше напрямую.',reply_markup=contact_button());return
+    await _forget_wish(state)
+    await callback.message.edit_text('Спасибо! Передал Леше.')
+
+
+@router.callback_query(F.data=='ux:wishdrop')
+async def wish_drop(callback,state):
+    await _forget_wish(state)
+    await callback.answer()
+    await callback.message.edit_text('Хорошо, не передаю.')
 
 
 class ActivityMiddleware(BaseMiddleware):

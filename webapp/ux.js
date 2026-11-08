@@ -1,7 +1,7 @@
 /* Explicit enum-only telemetry. Never examines messages, request bodies or amounts. */
 (() => {
   const tg=window.Telegram?.WebApp;
-  let enabled=false;
+  let enabled=false,botName=null;
   const pending=[];
   function operationId(){
     const random=window.crypto;
@@ -51,6 +51,15 @@
       else window.open(url,'_blank','noopener');
     }catch(_){status.textContent='Не получилось открыть чат. Нажми ссылку ниже.';status.classList.add('error');}
   }
+  // Пожелание пишется в чате с ботом: ссылка открывает чат и сразу просит написать одним сообщением.
+  function wish(){
+    if(!botName)return contact();
+    const url=`https://t.me/${botName}?start=wish`;
+    const status=document.getElementById('help-status');
+    status.classList.remove('error');status.textContent='Открываю чат с ботом. Напиши пожелание одним сообщением.';
+    try{if(tg?.openTelegramLink)tg.openTelegramLink(url);else window.open(url,'_blank','noopener');}
+    catch(_){status.textContent='Не получилось открыть чат. Напиши пожелание боту сообщением.';status.classList.add('error');}
+  }
   window.showResearchTab=()=>{const tab=document.getElementById('tab-research');if(tab)tab.hidden=false;};
   let checking=false;
   async function checkAccess(){
@@ -59,7 +68,7 @@
     try{
       const r=await fetch('/api/research/access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initData:tg?.initData||''}),signal:AbortSignal.timeout(20000)});
       if(!r.ok)throw new Error('access');
-      const data=await r.json();const wasEnabled=enabled;enabled=!!data.enabled;
+      const data=await r.json();const wasEnabled=enabled;enabled=!!data.enabled;botName=data.bot_username||botName;
       if(data.available)window.showResearchTab();
       if(enabled&&!wasEnabled){send('cabinet_opened','earnings');for(const args of pending.splice(0))send(...args);}
       else if(!enabled)pending.length=0;
@@ -76,6 +85,7 @@
     document.getElementById('help-faq-open').onclick=()=>{helpView(true);document.getElementById('help-faq-back').focus();};
     document.getElementById('help-faq-back').onclick=()=>{helpView(false);document.getElementById('help-faq-open').focus();};
     document.getElementById('help-contact').onclick=contact;
+    document.getElementById('help-wish').onclick=wish;
     document.getElementById('help-faq-contact').onclick=contact;
     document.querySelector('.app-tabs')?.addEventListener('click',e=>{
       const b=e.target.closest('[role=tab]');if(!b)return;
