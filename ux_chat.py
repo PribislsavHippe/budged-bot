@@ -234,7 +234,7 @@ async def feedback_text(message,state):
     if not allowed(message.from_user.id,'feedback',5):
         await message.answer('Слишком много обращений подряд. Попробуй через минуту.');return
     data=await state.get_data()
-    if not await deliver(message.bot,message.from_user,data['feedback_category'],text,data['feedback_id']):
+    if not await deliver(getattr(message,'bot',None),message.from_user,data['feedback_category'],text,data['feedback_id']):
         await message.answer('Обращение пока не сохранилось. Отправь его ещё раз.',reply_markup=feedback_cancel_button());return
     await state.clear()
     await message.answer('Спасибо! Сохранил. Леша прочитает.')
@@ -335,7 +335,7 @@ async def wish_send(callback,state):
         await callback.answer('Это сообщение уже не найти. Нажми «Оставить пожелание» и напиши ещё раз.',show_alert=True);return
     await callback.answer()
     uid=callback.from_user.id
-    saved=await deliver(callback.bot,callback.from_user,'idea',text,str(uuid5(NAMESPACE_URL,f"wish:{uid}:{data.get('wish_message')}")))
+    saved=await deliver(getattr(callback,'bot',None),callback.from_user,'idea',text,str(uuid5(NAMESPACE_URL,f"wish:{uid}:{data.get('wish_message')}")))
     if not saved:
         await callback.message.edit_text('Пожелание не сохранилось в боте. Напиши его Леше напрямую.',reply_markup=contact_button());return
     await _forget_wish(state)
