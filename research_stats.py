@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 TZ=ZoneInfo('Europe/Moscow')
 ACTIVE={'activity','user_started','cabinet_opened','cabinet_loaded','tab_opened','help_opened','tip_added','expense_added',
         'shift_planned','shift_closed','hours_recorded','sales_report_started','vision_started','problem_reported',
-        'schedule_import_started','schedule_previewed','schedule_imported'}
+        'schedule_import_started','schedule_previewed','schedule_imported','days_off_answered','roster_viewed'}
 ERROR_EVENTS={'cabinet_load_error','sales_report_error','vision_failed'}
 STAGES=[('user_started','Пришли'),('onboarding_completed','Завершили знакомство'),
         ('first_value_action','Первое полезное действие'),('cabinet_opened','Открыли кабинет'),
@@ -39,6 +39,8 @@ def task_metrics(selected,window,today):
     schedule_events={'shift_planned','vision_started','vision_completed','vision_failed',
                      'schedule_import_started','schedule_previewed','schedule_imported'}
     tip_events={'tip_added','tab_opened','cabinet_opened'}
+    roster_events={'roster_viewed','days_off_answered'}
+    def count(kind):return sum(1 for e in window if e['event']==kind)
     def recent(kind):
         relevant=[e for e in window if e['event'] in kind and
                   (e['event'] not in {'tab_opened','cabinet_opened'} or e.get('screen')=='earnings') and
@@ -55,6 +57,12 @@ def task_metrics(selected,window,today):
                 'miniapp_opened':len(people('tab_opened','earnings')|people('cabinet_opened','earnings')),
                 'sources':{key:len(sources[key]) for key in ('bot','miniapp')},
                 'recent':recent(tip_events)},
+        # График смен: действия менеджеров (сколько раз) и официантов (сколько человек). Содержимого нет.
+        'roster':{'created':count('roster_created'),'built':count('roster_built'),'picked':count('roster_variant_picked'),
+                  'dates_changed':count('roster_dates_changed'),'published':count('roster_published'),
+                  'republished':count('roster_republished'),'asked':count('days_off_asked'),
+                  'answered_people':len(people('days_off_answered')),'answers':count('days_off_answered'),
+                  'viewed_people':len(people('roster_viewed')),'recent':recent(roster_events)},
         'schedule':{'saved':len(people('shift_planned')),'imported':len(imports_by_day),
                     'repeat':len(import_repeated),'repeat_eligible':len(import_eligible),
                     'import_started':len(people('schedule_import_started','calendar')),

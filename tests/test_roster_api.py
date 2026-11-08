@@ -558,7 +558,10 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await self.said('привет'))
         # Четыре дня — больше нормы.
         self.assertIn('до 3', (await self.said('17 18 24 25')).args[0])
-        done = await self.said('17, 18')
+        with patch('research.track') as track:
+            done = await self.said('17, 18')
+        self.assertEqual([(c.args[1], c.kwargs) for c in track.call_args_list],
+                         [('days_off_answered', {'source': 'bot', 'screen': 'schedule'})])
         self.assertIn('Записал выходные: 17, 18 ноября', done.args[0])
         self.assertEqual(done.kwargs['reply_markup'].inline_keyboard[0][0].text, 'Изменить')
         # Ответ записан: числа снова обычное сообщение, пока не нажали «Изменить».
@@ -630,6 +633,36 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         published = await self.roster('publish', MANAGER, id=moved['id'], revision=moved['revision'])
         refused = await self.roster('dates', MANAGER, 400, id=moved['id'], revision=published['revision'], start='2026-11-14', end='2026-11-23')
         self.assertIn('не меняются', refused['error'])
+
+    async def test_schedule_steps_are_recorded_for_research_without_content(self):
+        class Bot:
+            async def send_message(self, chat, text, reply_markup=None, **_):
+                pass
+        self.client.server.app['bot'] = Bot()
+        with patch('research.track') as track:
+            made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
+            draft = dict(made['draft'], picked=True)
+            saved = await self.roster('save', MANAGER, id=made['id'], revision=made['revision'], draft=draft)
+            # Повторное сохранение того же выбора ничего не добавляет.
+            saved = await self.roster('save', MANAGER, id=made['id'], revision=saved['revision'], draft=saved['draft'])
+            rebuilt = await self.roster('build', MANAGER, id=made['id'], revision=saved['revision'], draft=saved['draft'])
+            moved = await self.roster('dates', MANAGER, id=made['id'], revision=rebuilt['revision'], start='2026-11-16', end='2026-11-21')
+            await self.roster('ask_offs', MANAGER, id=made['id'])
+            published = await self.roster('publish', MANAGER, id=made['id'], revision=moved['revision'])
+            await self.roster('publish', MANAGER, id=made['id'], revision=published['revision'])
+            await self.post('/api/schedule/view', WAITER)
+            await self.post('/api/schedule/view', WAITER)
+            await self.post('/api/schedule/view', MANAGER)
+        kinds = [c.args[1] for c in track.call_args_list]
+        self.assertEqual(kinds, ['roster_created', 'roster_variant_picked', 'roster_built', 'roster_dates_changed',
+                                 'days_off_asked', 'roster_published', 'roster_republished', 'roster_viewed', 'roster_viewed'])
+        # Только факт и этап: ни имён, ни дат, ни смен.
+        for c in track.call_args_list:
+            self.assertLessEqual(set(c.kwargs), {'source', 'screen', 'operation'})
+        self.assertNotIn('Аня', str(track.call_args_list))
+        views = [c for c in track.call_args_list if c.args[1] == 'roster_viewed']
+        self.assertEqual(views[0].kwargs['operation'], views[1].kwargs['operation'])
+        self.assertEqual({c.args[0] for c in views}, {WAITER})
 
     async def test_periods_do_not_overlap_and_drafts_can_be_deleted(self):
         made = await self.roster('create', OWNER, restaurant_id=PLACE, start='2026-11-01', end='2026-11-15')

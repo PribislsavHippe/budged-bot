@@ -364,6 +364,15 @@ async def _save(row, uid, revision, values):
     return saved[0]
 
 
+def _track(uid, event, **extra):
+    """Исследование: только факт и этап, без имён, дат, смен и чисел. Сбой телеметрии ничего не ломает."""
+    try:
+        import research
+        research.track(uid, event, source='server', screen='schedule', **extra)
+    except Exception:
+        pass
+
+
 async def handle(request):
     from webapp_api import _auth, NO_CACHE
     from identity_chat import enabled
@@ -424,6 +433,7 @@ async def handle(request):
                 if error.code == '23505':
                     raise ValueError('График с этой даты начала уже есть — открой его в списке.') from None
                 raise
+            _track(uid, 'roster_created')
             return response(_opened(created))
         row = await _load(body.get('id', ''), allowed)
         if not row:
@@ -438,7 +448,10 @@ async def handle(request):
             await db._execute(db.supabase.table('rosters').delete().eq('id', row['id']).is_('published_at', 'null'))
             return response({'ok': True})
         if action in ('offs', 'ask_offs'):
-            return response(await offs_action(request, uid, row, start, end, action == 'ask_offs'))
+            result = await offs_action(request, uid, row, start, end, action == 'ask_offs')
+            if action == 'ask_offs' and result.get('sent'):
+                _track(uid, 'days_off_asked')
+            return response(result)
         revision = body.get('revision')
         if type(revision) is not int:
             raise ValueError('Обнови страницу: версия черновика неизвестна.')
@@ -460,7 +473,12 @@ async def handle(request):
                 async with _building:
                     await asyncio.to_thread(build_all, draft, start, end, asked)
             stage = 'save'
-            return response(_opened(await _save(row, uid, revision, {'draft': draft})))
+            saved = await _save(row, uid, revision, {'draft': draft})
+            if action == 'build':
+                _track(uid, 'roster_built')
+            elif draft.get('picked') and not (row['draft'] or {}).get('picked'):
+                _track(uid, 'roster_variant_picked')
+            return response(_opened(saved))
         if action == 'dates':
             # Даты черновика меняются на месте: лишние дни отбрасываются, новые остаются пустыми.
             if row.get('published_at'):
@@ -477,14 +495,17 @@ async def handle(request):
                 a, b = date.fromisoformat(clash[0]['start_date']), date.fromisoformat(clash[0]['end_date'])
                 raise ValueError(f'Даты пересекаются с графиком {a.day}.{a.month:02d}–{b.day}.{b.month:02d}.')
             draft = normalize(trim(row['draft'], new_start, new_end), new_start, new_end)
-            return response(_opened(await _save(row, uid, revision, {
-                'start_date': new_start.isoformat(), 'end_date': new_end.isoformat(), 'draft': draft})))
+            saved = await _save(row, uid, revision, {
+                'start_date': new_start.isoformat(), 'end_date': new_end.isoformat(), 'draft': draft})
+            _track(uid, 'roster_dates_changed')
+            return response(_opened(saved))
         if action == 'publish':
             if revision != row['revision']:
                 raise Stale()
             stage = 'publish'
             now = datetime.now(timezone.utc).isoformat()
             saved = await _save(row, uid, revision, {'published': row['draft'], 'published_at': now})
+            _track(uid, 'roster_republished' if row.get('published_at') else 'roster_published')
             stage = 'notify'
             told = await notify(request.app.get('bot'), uid, row['published'], row['draft'], start, end, row['restaurant_id'])
             return response({**_opened(saved), 'notified': told})
@@ -664,6 +685,10 @@ async def view(request):
                     or next((r for r in rows if r['start_date'] <= today <= r['end_date']), None)
                     or next((r for r in rows if r['start_date'] > today), None) or rows[-1])
             result['period'] = published_view(pick, link if link and link['restaurant_id'] == restaurant_id else None)
+            if restaurant_id not in managing:
+                # Не чаще раза в день на человека: считаем, кто открывал график, а не сколько раз загрузилась страница.
+                from uuid import NAMESPACE_URL, uuid5
+                _track(uid, 'roster_viewed', operation=str(uuid5(NAMESPACE_URL, f'roster-viewed:{uid}:{op_today()}')))
         return response(result)
     except ValueError:
         return response({'error': 'Ресторан не найден. Открой приложение заново.'}, 400)

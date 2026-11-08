@@ -131,6 +131,19 @@ class ResearchMetricsTests(unittest.TestCase):
         self.assertEqual(s['repeat_eligible'],1)
         self.assertEqual(s['saved'],1)
 
+    def test_roster_steps_count_managers_by_times_and_waiters_by_people(self):
+        events=[event('1','roster_created',20,screen='schedule'),event('1','roster_published',21,screen='schedule'),
+                event('1','roster_republished',22,screen='schedule'),event('1','days_off_asked',20,screen='schedule'),
+                event('2','roster_viewed',22,screen='schedule'),event('2','roster_viewed',23,screen='schedule'),
+                event('3','days_off_answered',21,screen='schedule'),event('3','days_off_answered',21,11,screen='schedule')]
+        d=summarize(self.subjects(),events,now=NOW)
+        r=d['tasks']['roster']
+        self.assertEqual((r['created'],r['published'],r['republished'],r['asked']),(1,1,1,1))
+        self.assertEqual((r['viewed_people'],r['answered_people'],r['answers']),(1,1,2))
+        self.assertEqual({u['last_event'] for u in r['recent']},{'roster_viewed','days_off_answered'})
+        # Активность у официантов: открыл график, записал выходные. Шаги менеджера её не раздувают.
+        self.assertEqual(d['active_users'],2)
+
     def test_analysis_export_matches_summary_and_excludes_private_fields(self):
         subjects=self.subjects()
         events=[event('1','cabinet_loaded',28,screen='earnings',source='miniapp',

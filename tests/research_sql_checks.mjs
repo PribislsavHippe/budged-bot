@@ -9,6 +9,7 @@ await db.exec(await fs.readFile(new URL('../migration_v9.sql',import.meta.url),'
 await db.exec(await fs.readFile(new URL('../migration_v10.sql',import.meta.url),'utf8'));
 await db.exec(await fs.readFile(new URL('../migration_v16.sql',import.meta.url),'utf8'));
 await db.exec(await fs.readFile(new URL('../migration_v18.sql',import.meta.url),'utf8'));
+await db.exec(await fs.readFile(new URL('../migration_v34.sql',import.meta.url),'utf8'));
 let q=await db.query('SELECT cohort,onboarding_state,onboarding_version FROM research_subjects WHERE user_id=1');
 assert.deepEqual(q.rows,[{cohort:'existing',onboarding_state:'legacy',onboarding_version:0}]);
 await db.exec('INSERT INTO users VALUES(2),(3),(4)');
@@ -36,8 +37,17 @@ for(const role of ['anon','authenticated']){
 }
 await db.exec('SET ROLE service_role');await record(2,'shift_closed');await db.exec('RESET ROLE');
 await assert.rejects(record(2,'financial_amount'),/check constraint/);
+// v34: шаги графика смен и экран «schedule»; содержимого в событии нет.
+await db.exec('SET ROLE service_role');
+for(const kind of ['roster_created','roster_variant_picked','roster_built','roster_dates_changed','roster_published','roster_republished','days_off_asked','days_off_answered','roster_viewed'])
+  await db.query(`SELECT record_ux_event($1,$2,'server','schedule',NULL,NULL,'test',NULL)`,[2,kind]);
+await db.query(`SELECT record_ux_event($1,'roster_viewed','server','schedule',NULL,NULL,'test','11111111-1111-1111-1111-111111111111')`,[2]);
+await db.query(`SELECT record_ux_event($1,'roster_viewed','server','schedule',NULL,NULL,'test','11111111-1111-1111-1111-111111111111')`,[2]);
+q=await db.query(`SELECT count(*)::int n FROM analytics_events e JOIN research_subjects s ON s.id=e.subject_id WHERE s.user_id=2 AND e.event='roster_viewed' AND e.screen='schedule'`);
+assert.equal(q.rows[0].n,2); // одна запись без ключа и одна с ключом дня: повтор того же дня не дублируется
+await db.exec('RESET ROLE');
 await db.exec(`INSERT INTO feedback(subject_id,category,body,screen,app_version) SELECT id,'idea','Test only','help','test' FROM research_subjects WHERE user_id=2`);
 await db.exec('DELETE FROM users WHERE id=2');
 q=await db.query('SELECT count(*)::int n FROM feedback');assert.equal(q.rows[0].n,0);
-console.log('Research SQL checks passed: v18, baseline, milestones, dedupe, skip, service role, RLS, cascade deletion.');
+console.log('Research SQL checks passed: v18, v34 schedule steps, baseline, milestones, dedupe, skip, service role, RLS, cascade deletion.');
 await db.close();

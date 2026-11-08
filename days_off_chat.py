@@ -43,6 +43,8 @@ async def write(message, parsed, wait):
             await message.answer(problem)
             return
         await days_off.save(link, start, end, chosen)
+        import research
+        research.track(message.from_user.id, 'days_off_answered', source='bot', screen='schedule')
         await message.answer(days_off.summary_text(start, end, chosen), reply_markup=days_off.edit_markup(start, end))
     except Exception as error:
         from diagnostics import failure
