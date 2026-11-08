@@ -20,7 +20,7 @@
     month:'<input type="month" id="restaurant-month" aria-label="Месяц продаж">',
     select:'<select id="restaurant-select" aria-label="Ресторан" hidden></select>',
     tools:'<button id="restaurant-add" hidden>+ Добавить ресторан</button><button id="restaurant-site" hidden>Сайт ресторана</button><button id="restaurant-logout" hidden>Выйти</button>',
-    sections:'<nav class="restaurant-sections" id="restaurant-sections" hidden aria-label="Разделы кабинета"><button data-section="team" aria-pressed="true">Сотрудники</button><button data-section="pending" class="restaurant-section-pending" aria-pressed="false">Заявки</button><button data-section="schedule" aria-pressed="false">График</button></nav>',
+    sections:'<nav class="restaurant-sections" id="restaurant-sections" hidden aria-label="Разделы кабинета"><button data-section="team" aria-pressed="true">Сотрудники</button><button data-section="schedule" aria-pressed="false">График</button></nav>',
     status:'<section id="restaurant-login" hidden><h2>Кабинет ресторана</h2><div id="restaurant-login-box"></div></section><p id="restaurant-error" role="alert"></p><p id="restaurant-notice" role="status"></p><button id="restaurant-retry" class="btn btn-ghost" hidden>Попробовать ещё раз</button><form id="restaurant-create" hidden><label>Название ресторана<input id="restaurant-name" maxlength="80" minlength="2" required autocomplete="organization"></label><button class="btn">Создать ресторан</button><button type="button" id="restaurant-create-cancel">Отмена</button></form>',
     filters:'<div class="restaurant-filters" aria-label="Сотрудники"><button data-status="approved" aria-pressed="true">В команде</button><button data-status="pending" aria-pressed="false">Заявки</button><button data-status="rejected" aria-pressed="false">Отклонённые</button><button data-status="revoked" aria-pressed="false">Без доступа</button></div>',
     rows:'<div id="restaurant-rows"></div><div class="restaurant-pages"><button id="restaurant-prev">← Назад</button><span id="restaurant-page"></span><button id="restaurant-next">Далее →</button></div>',
@@ -91,7 +91,6 @@
     $('restaurant-month').hidden=!['owner','director'].includes(restaurant.role||'owner');
     $('restaurant-create').hidden=true;$('restaurant-content').hidden=false;
     const labels={approved:'В команде',pending:'Заявки',rejected:'Отклонённые',revoked:'Без доступа'};
-    const pend=panel.querySelector('[data-section=pending]');if(pend)pend.textContent='Заявки'+(data.counts.pending?' '+data.counts.pending:'');pressSections();
     panel.querySelectorAll('[data-status]').forEach(el=>{el.hidden=['rejected','revoked'].includes(el.dataset.status)&&!data.counts[el.dataset.status]&&status!==el.dataset.status;el.textContent=labels[el.dataset.status]+' '+data.counts[el.dataset.status];el.setAttribute('aria-pressed',String(el.dataset.status===status));});
     $('restaurant-rows').hidden=false;
     $('restaurant-rows').innerHTML=data.rows.length?rowsHtml(data.rows):`<p class="restaurant-empty">${status==='pending'?'Новых заявок нет.':status==='approved'?'Здесь появятся сотрудники, которых ты подтвердил.':'Список пока пуст.'}</p>`;
@@ -107,7 +106,6 @@
       // На сайте график — второй раздел кабинета; у менеджера графика он единственный.
       $('restaurant-sections').hidden=!standalone||!schedulePlaces.length;
       panel.querySelector('[data-section=team]').hidden=!restaurants.length;
-      panel.querySelector('[data-section=pending]').hidden=!restaurants.length;
       if(standalone&&schedulePlaces.length&&(section==='schedule'||!restaurants.length)){showSchedule();return;}
       if(!restaurants.length&&schedulePlaces.length&&!canCreate){placeSwitch([]);$('restaurant-title').textContent='График';$('restaurant-content').hidden=true;$('restaurant-create').hidden=true;
         $('restaurant-notice').textContent='График — на сайте ресторана.';return;}
@@ -133,14 +131,9 @@
     openSchedule();
   }
   const openSchedule=()=>window.RosterEditor?.open($('restaurant-schedule'),{places:schedulePlaces,placeId:selectedId,initData:tg?.initData||'',onAuth:()=>{if(site)showLogin();}});
-  // На телефоне «Заявки» — третья часть общего переключателя, чтобы не было двух рядов вкладок подряд.
-  function pressSections(){
-    panel.querySelectorAll('[data-section]').forEach(b=>b.setAttribute('aria-pressed',String(
-      section==='schedule'?b.dataset.section==='schedule':b.dataset.section===(status==='pending'?'pending':'team'))));
-  }
   function showTeam(){
     section='team';$('restaurant-schedule').hidden=true;
-    pressSections();
+    panel.querySelectorAll('[data-section]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.section==='team')));
     load();
   }
   function showLogin(){
@@ -211,11 +204,7 @@
   }
   panel.addEventListener('click',e=>{const b=e.target.closest('button');if(!b||busy)return;
     if(b.dataset.pick){picked=b.dataset.pick;render(lastData);return;}
-    if(b.dataset.section){
-      if(b.dataset.section==='schedule'){showSchedule();return;}
-      const want=b.dataset.section==='pending'?'pending':(status==='pending'?'approved':status);
-      if(want!==status){status=want;page=0;}
-      showTeam();return;}
+    if(b.dataset.section){if(b.dataset.section==='schedule')showSchedule();else showTeam();return;}
     if(b.dataset.action==='role'){
       if(b.dataset.role==='director'&&!confirm('Назначить управляющим? Он увидит продажи каждого и сможет ставить план.'))return;
       change('role',{id:b.dataset.id,role:b.dataset.role});return;}
