@@ -104,7 +104,8 @@ def resolve(parsed, start, end, today, limit):
     if past:
         return None, f'Эти дни уже прошли: {", ".join(map(str, past))}. Пришли числа ещё раз.'
     if len(chosen) > limit:
-        return None, f'Можно выбрать до {limit}, а в сообщении {len(chosen)}. Пришли числа ещё раз.'
+        return None, (f'Обязательных выходных можно до {limit}, а в сообщении {len(chosen)}: '
+                      f'{days_text(chosen)}. Выбери {limit} и пришли ещё раз.')
     return chosen, None
 
 
@@ -214,10 +215,12 @@ OFF_INTENT = re.compile(r'выходн|отдых|не\s+могу|не\s+раб�
 DATIVE = ('понедельникам', 'вторникам', 'средам', 'четвергам', 'пятницам', 'субботам', 'воскресеньям')
 
 
-# Число дня в обычной фразе: «17 и 19», «17-19». «2/2», «9:00», «17.11» и суммы от 100 не считаются.
+# Число дня в обычной фразе: «17 и 19», «16,17,20», «17-19». «2/2», «9:00», «17.11» и суммы от 100 не считаются.
 # Как удобно работать: «2/2», «5/2». Только одна цифра с каждой стороны, поэтому даты «17/11» сюда не попадают.
+# «не могу работать», «не смогу работать», «не буду работать» — это просьба о выходных, а не о работе.
+NOT_WORK = re.compile(r'не\s+(?:\w+\s+){0,2}работ')
 PATTERN = re.compile(r'(?<![\d/])([1-7])\s*/\s*([1-7])(?![\d/])')
-DAY_NUMBER = re.compile(r'(?<![\d/:.,])(\d{1,2})(?:\s*[-–—]\s*(\d{1,2}))?(?![\d/:]|[.,]\d)')
+DAY_NUMBER = re.compile(r'(?<![\d/:.])(\d{1,2})(?:\s*[-–—]\s*(\d{1,2}))?(?![\d/:]|\.\d)')
 
 
 def parse_request(text):
@@ -230,14 +233,17 @@ def parse_request(text):
     pattern = f'{found[1]}/{found[2]}' if found else None
     # «2/2» само по себе понятно: в коротком сообщении или рядом со словами «график», «нравится», «удобно».
     pattern_wish = bool(pattern) and (len(t) <= 24 or re.search(r'график|нрав|удобн|хоч|желательн|работ', t))
-    if not OFF_INTENT.search(t) and not pattern_wish:
+    if not OFF_INTENT.search(t) and not NOT_WORK.search(t) and not pattern_wish:
         return None
     # «хочу работать по вторникам» — наоборот, это не просьба о выходном (но «хочу работать 2/2» — пожелание).
-    working = 'работ' in t and not re.search(r'не\s+работ', t)
+    working = 'работ' in t and not NOT_WORK.search(t)
     if working and not pattern_wish:
         return None
     pattern = pattern if pattern_wish else None
-    plain = PATTERN.sub(' ', t)
+    # В сообщении из нескольких строк строки «могу работать», «рабочие … 18 ноября» — не про выходные:
+    # числа и дни недели берутся только из остальных строк.
+    plain = '\n'.join(line for line in PATTERN.sub(' ', t).splitlines()
+                      if not (re.search(r'рабо[тч]', line) and not NOT_WORK.search(line)))
     weekdays = [] if working else sorted({n for n, rule in WEEKDAY_WORDS if re.search(rf'\b(?:{rule})\b', plain)})
     numbers = []
     for first, second in ([] if working else DAY_NUMBER.findall(plain)):

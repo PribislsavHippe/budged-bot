@@ -201,8 +201,6 @@ async def feedback_category(callback,state):
     category=callback.data.rsplit(':',1)[-1]
     if category not in {'broken','confusing','idea'}:return
     await callback.answer()
-    if not research.enabled():
-        await callback.message.answer('Обратная связь пока не подключена. Попробуй чуть позже.');return
     await state.set_state(Feedback.text)
     await state.update_data(feedback_category=category,feedback_id=str(uuid5(NAMESPACE_URL,
                             f'feedback:{callback.from_user.id}:{callback.id}')))
@@ -236,7 +234,7 @@ async def feedback_text(message,state):
     if not allowed(message.from_user.id,'feedback',5):
         await message.answer('Слишком много обращений подряд. Попробуй через минуту.');return
     data=await state.get_data()
-    if not await save_feedback(message.from_user.id,data['feedback_category'],text,data['feedback_id']):
+    if not await deliver(message.bot,message.from_user,data['feedback_category'],text,data['feedback_id']):
         await message.answer('Обращение пока не сохранилось. Отправь его ещё раз.',reply_markup=feedback_cancel_button());return
     await state.clear()
     await message.answer('Спасибо! Сохранил. Леша прочитает.')
@@ -260,6 +258,33 @@ async def save_feedback(uid,category,text,feedback_id):
     return True
 
 
+LABELS={'idea':'Пожелание','broken':'Что-то сломалось','confusing':'Непонятно, как пользоваться'}
+
+
+async def deliver(bot,user,category,text,feedback_id):
+    """«Передать Леше»: сообщение сразу приходит владельцу бота в Telegram и, если исследование включено,
+    сохраняется в его панели. Человек сам нажал «передать», поэтому владелец видит, от кого оно."""
+    import html
+    stored=research.enabled() and await save_feedback(user.id,category,text,feedback_id)
+    sent=False
+    try:
+        from admin import ADMIN_ID
+        if ADMIN_ID and bot is not None:
+            who=html.escape(user.first_name or 'Сотрудник')
+            try:
+                import days_off
+                link=await days_off.member(user.id)
+                if link and link.get('report_name'):who=html.escape(link['report_name'])
+            except Exception:
+                pass
+            await bot.send_message(ADMIN_ID,f'💬 <b>{LABELS.get(category,"Пожелание")}</b> от {who}\n\n{html.escape(text)}')
+            sent=True
+    except Exception as error:
+        from diagnostics import failure
+        failure(error,area='feedback',stage='deliver')
+    return bool(stored or sent)
+
+
 def contact_button():
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Написать Леше',url=SUPPORT_URL)]])
 
@@ -268,8 +293,6 @@ async def ask_wish(message,state,uid=None):
     """Пожелание одним сообщением, без выбора категории."""
     uid=uid or message.from_user.id
     await state.clear()
-    if not research.enabled():
-        await message.answer('Пожелания пока принимает Леша напрямую — напиши ему.',reply_markup=contact_button());return
     await state.set_state(Feedback.text)
     await state.update_data(feedback_category='idea',feedback_id=str(uuid5(NAMESPACE_URL,f'wish:{uid}:{message.message_id}')))
     await message.answer('Напиши пожелание одним сообщением: что удобно, чего не хватает, что мешает. '
@@ -312,7 +335,7 @@ async def wish_send(callback,state):
         await callback.answer('Это сообщение уже не найти. Нажми «Оставить пожелание» и напиши ещё раз.',show_alert=True);return
     await callback.answer()
     uid=callback.from_user.id
-    saved=research.enabled() and await save_feedback(uid,'idea',text,str(uuid5(NAMESPACE_URL,f"wish:{uid}:{data.get('wish_message')}")))
+    saved=await deliver(callback.bot,callback.from_user,'idea',text,str(uuid5(NAMESPACE_URL,f"wish:{uid}:{data.get('wish_message')}")))
     if not saved:
         await callback.message.edit_text('Пожелание не сохранилось в боте. Напиши его Леше напрямую.',reply_markup=contact_button());return
     await _forget_wish(state)

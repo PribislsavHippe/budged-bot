@@ -103,10 +103,22 @@ class Flows(unittest.IsolatedAsyncioTestCase):
         self.assertIn('пожелание',reply.args[0])
         self.assertNotIn('сумма неоднозначна',reply.args[0])
         self.assertEqual(store['wish_text'],text)
-        callback=NS(data='ux:wishsend',from_user=NS(id=5),answer=AsyncMock(),message=NS(edit_text=AsyncMock()))
-        with patch.object(research,'enabled',return_value=True),patch.object(ux_chat,'save_feedback',new=AsyncMock(return_value=True)) as feedback:
+        bot=NS(send_message=AsyncMock())
+        callback=NS(data='ux:wishsend',from_user=NS(id=5,first_name='Аля'),answer=AsyncMock(),message=NS(edit_text=AsyncMock()),bot=bot)
+        import admin,days_off
+        with patch.object(research,'enabled',return_value=True),patch.object(ux_chat,'save_feedback',new=AsyncMock(return_value=True)) as feedback,\
+             patch.object(admin,'ADMIN_ID',777),patch.object(days_off,'member',new=AsyncMock(return_value=None)):
             await ux_chat.wish_send(callback,state)
         self.assertEqual(feedback.await_args.args[:3],(5,'idea',text))
+        # «Передать Леше» — значит Леша получает сообщение в Telegram, а не только запись в панели.
+        self.assertEqual(bot.send_message.await_args.args[0],777)
+        self.assertIn('Аля',bot.send_message.await_args.args[1])
+        self.assertIn('2/2',bot.send_message.await_args.args[1])
+        # Даже если исследование выключено, пожелание доходит до Леши.
+        store['wish_text']=text
+        with patch.object(research,'enabled',return_value=False),patch.object(admin,'ADMIN_ID',777),patch.object(days_off,'member',new=AsyncMock(return_value=None)):
+            await ux_chat.wish_send(callback,state)
+        self.assertIn('Передал',callback.message.edit_text.await_args.args[0])
         self.assertNotIn('wish_text',store)
         self.assertIn('Передал',callback.message.edit_text.await_args.args[0])
         # Обычная ошибка в сумме по-прежнему объясняется как раньше.

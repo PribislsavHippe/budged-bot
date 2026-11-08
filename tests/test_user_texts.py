@@ -57,7 +57,8 @@ class NeverMoney(unittest.IsolatedAsyncioTestCase):
     PHRASES = ('нужны выходные 17, 19', 'выходной 17 и 19', 'по вторникам не могу',
                'Желательные воскресенья а так мне 2/2 нравится',
                'Слушай, ну я хочу по понедельникам, ещё нужно 17 и 19',
-               'хочу отдыхать в субботу и воскресенье', 'хочу воскресенья и 2/2', '2/2', 'График', 'Блять')
+               'хочу отдыхать в субботу и воскресенье', 'хочу воскресенья и 2/2', '2/2', 'График', 'Блять',
+               'НЕ могу работать: 16,17,20, 24,27\n\nМогу работать: все остальные могу\n\nРабочие неполные ->18 ноября  -> С 9:00-17:00 !')
 
     async def test_day_off_phrases_and_wishes_are_not_recorded_as_money(self):
         with patch.dict(os.environ, {'SUPABASE_URL': 'https://example.invalid', 'SUPABASE_KEY': 'test'}), patch('supabase.create_client'):

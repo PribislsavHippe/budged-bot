@@ -323,6 +323,10 @@ class DraftTests(unittest.TestCase):
         both = request('хочу воскресенья и 2/2')
         self.assertEqual((both['weekdays'], both['pattern'], both['dates']), ([6], '2/2', None))
         self.assertIsNone(request('17/11'))
+        # Сообщение Али: «не могу работать» — выходные; строки «могу работать», «рабочие … 18 ноября» не в счёт.
+        alya = request('НЕ могу работать: 16,17,20, 24,27\n\nМогу работать: все остальные могу\n\nРабочие неполные ->18 ноября  -> С 9:00-17:00 !')
+        self.assertEqual(alya['dates']['numbers'], [16, 17, 20, 24, 27])
+        self.assertIsNone(request('могу работать 18'))
 
     def test_variants_from_the_site_are_checked(self):
         good = {'id': 'even', 'title': 'Поровну', 'cells': {'Аня': {'2026-11-16': '9'}, 'Чужой': {'2026-11-16': '9'}},
