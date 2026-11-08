@@ -77,11 +77,20 @@ async def write_request(message, found, link, state):
         return
     saved, problems, buttons = [], [], []
     try:
-        if found['weekdays']:
+        if found['weekdays'] or found['pattern']:
             try:
-                await days_off.save_weekdays(link, found['weekdays'])
-                saved.append(f"пожелание: выходные {days_off.weekdays_text(found['weekdays'])}")
-                buttons.append([Button(text='Убрать пожелание', callback_data=f'{days_off.PREFIX}:w')])
+                # Люди пишут по частям («воскресенья», потом «и 2/2»): новое добавляется к прежнему пожеланию.
+                before = await days_off.wish_of(link['id'])
+                days = sorted(set(before['days']) | set(found['weekdays']))
+                pattern = found['pattern'] or before['pattern']
+                full = await days_off.save_weekdays(link, days, pattern)
+                bits = ([f'выходные {days_off.weekdays_text(days)}'] if days else []) + \
+                       ([f'график {pattern}'] if pattern and full else [])
+                if bits:
+                    saved.append('пожелание: ' + ', '.join(bits))
+                    buttons.append([Button(text='Удалить пожелание', callback_data=f'{days_off.PREFIX}:w')])
+                if found['pattern'] and not full:
+                    problems.append(f"«{found['pattern']}» в боте пока не сохраняется — нажми «Передать Леше весь текст».")
             except APIError as error:
                 if error.code not in days_off.MISSING:
                     raise
@@ -103,9 +112,9 @@ async def write_request(message, found, link, state):
     lines = []
     if saved:
         lines.append('Записал ' + ' и '.join(saved) + '.')
-    if found['weekdays'] and saved and saved[0].startswith('пожелание'):
-        lines.append('По дням недели программа постарается ставить выходные, но если людей не хватит, может поставить смену. '
-                     'Менеджер увидит это в графике.')
+    if saved and saved[0].startswith('пожелание'):
+        lines.append('Это пожелание, а не обязательный выходной: программа постарается его учесть, менеджер увидит '
+                     'его в графике. Чтобы дополнить, просто напиши ещё; чтобы начать заново — «Удалить пожелание».')
     lines += problems
     # Целиком сообщение можно передать Леше: в нём может быть что-то ещё.
     await state.update_data(wish_text=(message.text or '').strip()[:2000], wish_message=message.message_id)
@@ -120,7 +129,7 @@ async def clear_weekday_wish(callback):
         if link:
             await days_off.save_weekdays(link, [])
         await callback.answer()
-        await callback.message.edit_text('Пожелание по дням недели убрал.')
+        await callback.message.edit_text('Пожелание удалил. Напиши новое, когда захочешь.')
     except Exception as error:
         from diagnostics import failure
         failure(error, area='days_off', stage='weekday_clear')

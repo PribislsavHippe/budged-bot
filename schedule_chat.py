@@ -146,7 +146,7 @@ async def photo_action(callback):
                 row=draft.report['rows'][index]
                 if row['invalid']:
                     await callback.message.answer('В этой строке есть непонятные записи за дни: '+
-                        ', '.join(map(str,row['invalid']))+'. Пришли фото своего графика.');return
+                        ', '.join(map(str,row['invalid']))+'. Исправь их в таблице и пришли ссылку ещё раз или отметь смены в календаре приложения.');return
                 month_key=draft.report['month']
                 cells=schedule.clean_cells(row['cells'],month_key)
             except (ValueError,IndexError,KeyError) as error:
@@ -256,7 +256,7 @@ async def hours_command(message,state):
         day=parse_date(parts[1],op_today()) if len(parts)>1 else op_today()
         if day>op_today():raise ValueError()
     except ValueError:
-        await message.answer('Укажи прошедший день: /hours вчера или /hours 28 сентября.');return
+        await message.answer('Не понял день. Нужен прошедший день, например: вчера или 28 сентября.');return
     await ask_end(message,message.from_user.id,day.isoformat(),state)
 
 

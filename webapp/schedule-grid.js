@@ -16,13 +16,15 @@
   }
   const works=v=>!!v&&v.start!=null;
   function shift(person,iso){
-    const v=parse(person.cells?.[iso]),off=(person.off||[]).includes(iso);
+    const v=parse(person.cells?.[iso]),off=(person.off||[]).includes(iso),asked=!off&&(person.asked||[]).includes(iso);
     if(works(v)){
       // Выход в обязательный выходной — тоже «необычное», но цветом выходного.
+      // Смена в день, когда человек просит выходной (ещё не учтённый сборкой), обведена пунктиром.
       const cls=off?'off':v.note||v.end!=null?'note':'';
-      return `<span class="sg-s ${cls}${v.end!=null?' rng':''}"><b>${v.start}${v.end!=null?'–'+v.end:''}</b></span>`;
+      return `<span class="sg-s ${cls}${v.end!=null?' rng':''}${asked?' clash':''}"${asked?' title="Просит выходной"':''}><b>${v.start}${v.end!=null?'–'+v.end:''}</b></span>`;
     }
     if(off)return '<span class="sg-s off">вых</span>';
+    if(asked)return '<span class="sg-s ask" title="Просит выходной">вых</span>';
     if(v&&v.note)return '<span class="sg-s note"></span>';
     return '<span class="sg-e"></span>';
   }

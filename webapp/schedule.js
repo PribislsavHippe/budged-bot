@@ -36,8 +36,8 @@
     $('sg-prev').disabled=index<=0;$('sg-next').disabled=index<0||index>=list.length-1;
     $('sg-site').hidden=!(data.can_edit&&data.site_url);
     sheet.hidden=!p;$('sg-empty').hidden=!!p;
-    if(!p){$('sg-empty').textContent='График ещё не опубликован.';return;}
     renderMine(p);
+    if(!p){$('sg-empty').textContent='График ещё не опубликован.';return;}
     const near=phone.matches;
     grid.className=near?'sg-near':'';
     grid.innerHTML=G.table({...options(),near,scrolls:true});
@@ -61,20 +61,32 @@
     grid.style.setProperty('--rh',rh+'px');
   }
   // Свои ближайшие смены над таблицей: искать себя глазами не нужно.
+  // Свои обязательные выходные (записанные в боте) и пожелание по дням недели видны сразу, ещё до публикации.
+  const WD=['понедельникам','вторникам','средам','четвергам','пятницам','субботам','воскресеньям'];
+  function daysText(list){
+    const by={};list.forEach(d=>{const x=G.at(d);(by[x.getMonth()]=by[x.getMonth()]||[]).push(x.getDate());});
+    return Object.entries(by).map(([m,ds])=>`${ds.join(', ')} ${G.MONTHS[m]}`).join(', ');
+  }
+  function offsText(){
+    const mine=data.mine||{},days=(mine.requests||[]).flatMap(r=>r.days),wd=mine.weekdays||[];
+    const wish=[wd.length?`выходные по ${wd.map(d=>WD[d]).join(', ')}`:'',mine.pattern?`график ${mine.pattern}`:''].filter(Boolean).join(', ');
+    const parts=[days.length?`Твои обязательные выходные: ${daysText(days)}`:'',wish?`Пожелание: ${wish}`:''].filter(Boolean);
+    return parts.length?`<p class="sg-mine-off">${parts.map(G.esc).join('<br>')}</p>`:'';
+  }
   function renderMine(p){
-    const box=$('sg-mine'),me=p.people.find(x=>x.me);
-    if(!me){box.hidden=true;return;}
+    const box=$('sg-mine'),me=p?.people.find(x=>x.me),offs=offsText();
+    if(!me){box.hidden=!offs;box.innerHTML=offs;return;}
     const today=data.today,rel=['Сегодня','Завтра'];
     const next=p.days.filter(d=>d>=today&&G.works(G.parse(me.cells[d]))).slice(0,3);
     const label=d=>{const k=Math.round((G.at(d)-G.at(today))/864e5);return rel[k]||G.dayName(d).replace(/^(\S+), (\d+).*/,'$1, $2');};
     box.hidden=false;
-    box.innerHTML=next.length?`<p>Твои смены</p><ul>${next.map(d=>{const v=G.parse(me.cells[d]);
+    box.innerHTML=(next.length?`<p>Твои смены</p><ul>${next.map(d=>{const v=G.parse(me.cells[d]);
         return `<li><span>${G.esc(label(d))}</span><b>${v.start}:00${v.end!=null?'–'+v.end+':00':''}</b></li>`;}).join('')}</ul>`
-      :'<p>Смен больше нет</p>';
+      :'<p>Смен больше нет</p>')+offs;
   }
   async function load(start){
     if(busy)return;busy=true;$('sg-error').textContent='';
-    try{data=await api(start?{start,restaurant_id:data?.restaurant_id}:{});tab.hidden=!data.available||(!data.periods.length&&!data.can_edit);if(tab.hidden)return;render();window.dispatchEvent(new Event('schedule-tab-ready'));}
+    try{data=await api(start?{start,restaurant_id:data?.restaurant_id}:{});const mine=data.mine||{};tab.hidden=!data.available||(!data.periods.length&&!data.can_edit&&!(mine.requests||[]).length&&!(mine.weekdays||[]).length&&!mine.pattern);if(tab.hidden)return;render();window.dispatchEvent(new Event('schedule-tab-ready'));}
     catch(e){$('sg-error').textContent=e.name==='TimeoutError'?'Ответ задерживается. Попробуй ещё раз.':e.message;}
     finally{busy=false;}
   }

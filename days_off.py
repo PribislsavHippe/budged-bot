@@ -215,6 +215,8 @@ DATIVE = ('понедельникам', 'вторникам', 'средам', '�
 
 
 # Число дня в обычной фразе: «17 и 19», «17-19». «2/2», «9:00», «17.11» и суммы от 100 не считаются.
+# Как удобно работать: «2/2», «5/2». Только одна цифра с каждой стороны, поэтому даты «17/11» сюда не попадают.
+PATTERN = re.compile(r'(?<![\d/])([1-7])\s*/\s*([1-7])(?![\d/])')
 DAY_NUMBER = re.compile(r'(?<![\d/:.,])(\d{1,2})(?:\s*[-–—]\s*(\d{1,2}))?(?![\d/:]|[.,]\d)')
 
 
@@ -222,21 +224,31 @@ def parse_request(text):
     """Просьба о выходных обычной фразой: дни недели (пожелание надолго) и числа (обязательные выходные
     на график). {'weekdays': [...], 'dates': {'numbers': [...], 'months': {...}} или None} или None."""
     t = (text or '').lower().replace('ё', 'е')
-    if not t or len(t) > 300 or not OFF_INTENT.search(t):
+    if not t or len(t) > 300:
         return None
-    # «хочу работать по вторникам» — наоборот, это не просьба о выходном.
-    if 'работ' in t and not re.search(r'не\s+работ', t):
+    found = PATTERN.search(t)
+    pattern = f'{found[1]}/{found[2]}' if found else None
+    # «2/2» само по себе понятно: в коротком сообщении или рядом со словами «график», «нравится», «удобно».
+    pattern_wish = bool(pattern) and (len(t) <= 24 or re.search(r'график|нрав|удобн|хоч|желательн|работ', t))
+    if not OFF_INTENT.search(t) and not pattern_wish:
         return None
-    weekdays = sorted({n for n, pattern in WEEKDAY_WORDS if re.search(rf'\b(?:{pattern})\b', t)})
+    # «хочу работать по вторникам» — наоборот, это не просьба о выходном (но «хочу работать 2/2» — пожелание).
+    working = 'работ' in t and not re.search(r'не\s+работ', t)
+    if working and not pattern_wish:
+        return None
+    pattern = pattern if pattern_wish else None
+    plain = PATTERN.sub(' ', t)
+    weekdays = [] if working else sorted({n for n, rule in WEEKDAY_WORDS if re.search(rf'\b(?:{rule})\b', plain)})
     numbers = []
-    for first, second in DAY_NUMBER.findall(t):
+    for first, second in ([] if working else DAY_NUMBER.findall(plain)):
         lo, hi = int(first), int(second or first)
         if 1 <= lo <= hi <= 31 and hi - lo <= 14:
             numbers += range(lo, hi + 1)
-    if not weekdays and not numbers:
+    if not weekdays and not numbers and not pattern:
         return None
     months = {roster.MONTHS.index(m) + 1 for m in MONTH.findall(t)}
-    return {'weekdays': weekdays, 'dates': {'numbers': sorted(set(numbers)), 'months': months} if numbers else None}
+    return {'weekdays': weekdays, 'pattern': pattern,
+            'dates': {'numbers': sorted(set(numbers)), 'months': months} if numbers else None}
 
 
 def parse_weekdays(text):
@@ -272,24 +284,81 @@ def weekdays_text(days):
     return 'по ' + (names[0] if len(names) == 1 else ', '.join(names[:-1]) + ' и ' + names[-1])
 
 
-async def save_weekdays(link, days):
+async def save_weekdays(link, days, pattern=None):
+    """Пожелание целиком: дни недели и как удобно работать («2/2»). Пустое — удаляется.
+    Возвращает False, если «2/2» сохранить нельзя (база без migration_v36): дни недели тогда сохраняются."""
     from datetime import datetime, timezone
     table = db.supabase.table('weekday_wishes')
-    if not days:
+    if not days and not pattern:
         await db._execute(table.delete().eq('link_id', link['id']), retries=1)
-        return
+        return True
     row = {'link_id': link['id'], 'restaurant_id': link['restaurant_id'], 'days': sorted(set(days)),
            'updated_at': datetime.now(timezone.utc).isoformat()}
-    await db._execute(table.upsert(row, on_conflict='link_id'), retries=1)
-
-
-async def weekdays_for(restaurant_id):
-    """Пожелания ресторана: {id сотрудника: [дни недели]}. Без migration_v35 пожеланий нет."""
     try:
-        rows = await db._pages(lambda: db.supabase.table('weekday_wishes').select('link_id,days')
-                               .eq('restaurant_id', restaurant_id).order('link_id'))
+        await db._execute(table.upsert({**row, 'pattern': pattern}, on_conflict='link_id'), retries=1)
+        return True
+    except APIError as error:
+        if error.code not in MISSING:
+            raise
+    if days:
+        await db._execute(table.upsert(row, on_conflict='link_id'), retries=1)
+    return False
+
+
+async def wishes_for(restaurant_id):
+    """Пожелания ресторана: {id сотрудника: {'days': [дни недели], 'pattern': '2/2' или None}}."""
+    query = lambda fields: db._pages(lambda: db.supabase.table('weekday_wishes').select(fields)
+                                     .eq('restaurant_id', restaurant_id).order('link_id'))
+    try:
+        try:
+            rows = await query('link_id,days,pattern')
+        except APIError as error:
+            if error.code not in ('42703', 'PGRST204'):
+                raise
+            rows = await query('link_id,days')
     except APIError as error:
         if error.code in MISSING:
             return {}
         raise
-    return {r['link_id']: [int(d) for d in r['days'] if 0 <= int(d) <= 6] for r in rows}
+    return {r['link_id']: {'days': [int(d) for d in r['days'] if 0 <= int(d) <= 6], 'pattern': r.get('pattern')}
+            for r in rows}
+
+
+async def weekdays_for(restaurant_id):
+    """Только дни недели: {id сотрудника: [дни]} (для сборки графика)."""
+    return {link: w['days'] for link, w in (await wishes_for(restaurant_id)).items() if w['days']}
+
+
+async def mine(link_id):
+    """Что человек сам записал: обязательные выходные на текущие и будущие графики и пожелание по дням недели."""
+    today = roster_today().isoformat()
+    result = {'requests': [], 'weekdays': [], 'pattern': None}
+    try:
+        rows = (await db._execute(db.supabase.table('day_off_requests').select('start_date,end_date,days')
+                                  .eq('link_id', link_id).eq('answered', True).gte('end_date', today)
+                                  .order('start_date'))).data
+        result['requests'] = [{'start': r['start_date'], 'end': r['end_date'], 'days': sorted(r['days'])}
+                              for r in rows if r['days']]
+    except APIError as error:
+        if error.code not in MISSING:
+            raise
+    wish = await wish_of(link_id)
+    result['weekdays'], result['pattern'] = wish['days'], wish['pattern']
+    return result
+
+
+async def wish_of(link_id):
+    """Текущее пожелание человека: {'days': [...], 'pattern': '2/2' или None}."""
+    table = lambda: db.supabase.table('weekday_wishes')
+    try:
+        try:
+            rows = (await db._execute(table().select('days,pattern').eq('link_id', link_id))).data
+        except APIError as error:
+            if error.code not in ('42703', 'PGRST204'):
+                raise
+            rows = (await db._execute(table().select('days').eq('link_id', link_id))).data
+    except APIError as error:
+        if error.code in MISSING:
+            return {'days': [], 'pattern': None}
+        raise
+    return {'days': sorted(rows[0]['days']), 'pattern': rows[0].get('pattern')} if rows else {'days': [], 'pattern': None}

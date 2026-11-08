@@ -317,6 +317,12 @@ class DraftTests(unittest.TestCase):
         self.assertIsNone(request('Желательные воскресенья а так мне 2/2 нравится')['dates'])
         self.assertIsNone(request('отдых в 9:00'))
         self.assertIsNone(request('такси 430'))
+        # «2/2» — как удобно работать; даты через косую черту так не читаются.
+        self.assertEqual(request('2/2')['pattern'], '2/2')
+        self.assertEqual(request('хочу работать 2/2')['pattern'], '2/2')
+        both = request('хочу воскресенья и 2/2')
+        self.assertEqual((both['weekdays'], both['pattern'], both['dates']), ([6], '2/2', None))
+        self.assertIsNone(request('17/11'))
 
     def test_variants_from_the_site_are_checked(self):
         good = {'id': 'even', 'title': 'Поровну', 'cells': {'Аня': {'2026-11-16': '9'}, 'Чужой': {'2026-11-16': '9'}},
@@ -706,11 +712,11 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         # Обязательный выходной у Ани ставится на вторник во всех вариантах.
         self.assertTrue(all('2026-11-17' in v['off'].get('Аня', []) for v in made['draft']['variants']))
         opened = await self.roster('open', MANAGER, id=made['id'])
-        self.assertEqual(list(opened['wishes'].values()), [[1]])
+        self.assertEqual(list(opened['wishes'].values()), [{'days': [1], 'pattern': None}])
         # «Убрать пожелание» стирает его; следующая сборка его уже не учитывает.
         callback = self.callback('off:w')
         await days_off_chat.clear_weekday_wish(callback)
-        self.assertIn('убрал', callback.message.edit_text.await_args.args[0])
+        self.assertIn('удалил', callback.message.edit_text.await_args.args[0])
         rebuilt = await self.roster('build', MANAGER, id=made['id'], revision=made['revision'], draft=made['draft'])
         self.assertEqual(rebuilt['draft']['wish_off'], {})
 
@@ -728,10 +734,42 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('17, 19 ноября', reply)
         status = await self.roster('offs', MANAGER, id=made['id'])
         self.assertEqual(status['answered'], 1)
+        # Менеджер видит, что именно просят, ещё до сборки; сотрудник видит свои выходные до публикации.
+        self.assertEqual(status['requests'], {'Аня': ['2026-11-17', '2026-11-19']})
+        self.assertEqual(status['weekdays'], {'Аня': [0]})
+        mine = (await self.post('/api/schedule/view', WAITER))['mine']
+        self.assertEqual(mine, {'requests': [{'start': '2026-11-16', 'end': '2026-11-30', 'days': ['2026-11-17', '2026-11-19']}],
+                                'weekdays': [0], 'pattern': None})
+        # Другой человек видит только своё: чужие выходные не показываются.
+        self.assertEqual((await self.post('/api/schedule/view', STRANGER))['mine'], {'requests': [], 'weekdays': [], 'pattern': None})
         # Числа вне графика не записываются и объясняются.
         wrong = self.text('выходные 3 и 5')
         await days_off_chat.write_request(wrong, state=state, **(await days_off_chat.off_request(wrong)))
         self.assertIn('16–30 ноября', wrong.answer.await_args.args[0])
+
+    async def test_colleague_wish_sundays_and_two_two_is_kept_whole_and_in_parts(self):
+        import days_off_chat
+        store = {}
+        async def update_data(**kw): store.update(kw)
+        state = NS(update_data=update_data)
+        async def say(text):
+            message = self.text(text)
+            await days_off_chat.write_request(message, state=state, **(await days_off_chat.off_request(message)))
+            return message.answer.await_args.args[0]
+        reply = await say('хочу воскресенья и 2/2')
+        self.assertIn('по воскресеньям', reply)
+        self.assertIn('график 2/2', reply)
+        self.assertIn('а не обязательный выходной', reply)
+        # По частям: сначала дни, потом «2/2» — пожелание дополняется, а не заменяется.
+        await days_off_chat.clear_weekday_wish(self.callback('off:w'))
+        await say('Желательные воскресенья')
+        reply = await say('2/2')
+        self.assertIn('по воскресеньям', reply)
+        self.assertIn('график 2/2', reply)
+        made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
+        status = await self.roster('offs', MANAGER, id=made['id'])
+        self.assertEqual((status['weekdays'], status['patterns']), ({'Аня': [6]}, {'Аня': '2/2'}))
+        self.assertEqual((await self.post('/api/schedule/view', WAITER))['mine']['pattern'], '2/2')
 
     async def test_periods_do_not_overlap_and_drafts_can_be_deleted(self):
         made = await self.roster('create', OWNER, restaurant_id=PLACE, start='2026-11-01', end='2026-11-15')

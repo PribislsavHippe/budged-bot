@@ -1011,6 +1011,15 @@ async def handle_text(message: Message, state: FSMContext):
             await message.answer('Не нашёл понятную сумму чаевых в уведомлении. Ничего не записал. Можно написать «чай 500».')
         return
 
+    # Фраза о выходных («нужны выходные 17, 19») никогда не становится деньгами. Обычно её разбирает
+    # days_off_chat; сюда она доходит, если человек не сотрудник ресторана или разбор не сработал.
+    import days_off
+    if days_off.parse_request(text):
+        from ux_chat import offer_wish
+        await offer_wish(message,state,lead='Похоже на просьбу о выходных, поэтому деньгами не записываю. '
+                         'Выходные в график записывают сотрудники ресторана, которых подтвердил менеджер.')
+        return
+
     # Sales use their own journal; malformed sales must never become expenses.
     from sales_chat import parse_sales_message
     from sales_service import chat_write
@@ -1092,14 +1101,18 @@ async def handle_text(message: Message, state: FSMContext):
     try:
         items = p.parse_transactions(text)
     except p.AmountFormatError:
-        from ux_chat import looks_like_wish, offer_wish
+        from ux_chat import looks_like_wish, offer_wish, understand
+        if await understand(message,state,text):
+            return
         if looks_like_wish(text):
             await offer_wish(message,state);return
         await message.answer('Не стал записывать: сумма неоднозначна. '
                              'Напиши положительную сумму с копейками, например «чай 500,50».')
         return
     if not items:
-        from ux_chat import looks_like_wish, offer_wish
+        from ux_chat import looks_like_wish, offer_wish, understand
+        if await understand(message,state,text):
+            return
         if looks_like_wish(text):
             await offer_wish(message,state);return
         await message.answer(

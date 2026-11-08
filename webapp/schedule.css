@@ -324,3 +324,14 @@ html.sg-land-open body>*:not(.sg-land):not(#bg){visibility:hidden}
 
 .re-wish{margin:0 0 12px;font-size:13px;color:var(--sg-ink)}
 .re-wish small{color:var(--sg-muted);font-size:12px}
+
+/* Просьба о выходном из Telegram, ещё не учтённая сборкой: пунктир вместо заливки. */
+.sg-s.ask{justify-content:center;padding:0 6px;font-size:12px;font-weight:400;color:color-mix(in srgb,var(--sg-off-ink) 75%,transparent);
+  border:1.5px dashed color-mix(in srgb,var(--sg-off-ink) 45%,transparent)}
+.sg-s.clash{outline:1.5px dashed color-mix(in srgb,var(--sg-off-ink) 60%,transparent);outline-offset:-1px}
+.re-asks{margin:0 0 14px;font-size:13px;line-height:1.5}
+.re-asks h4{margin:0 0 4px;font-size:12px;font-weight:600;color:var(--sg-muted)}
+.re-asks p{margin:0}
+.re-asks small{color:var(--sg-muted)}
+
+.sg-mine-off{margin-top:10px!important;color:var(--sg-ink)!important;font-size:14px!important;line-height:1.45}

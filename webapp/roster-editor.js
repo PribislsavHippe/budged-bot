@@ -56,7 +56,7 @@
           <aside class="re-aside">
             <section class="re-card re-panel" aria-live="polite" hidden><header class="re-panel-head"><h3 class="re-who"></h3><button type="button" class="re-close" aria-label="Закрыть" title="Закрыть (Esc)">×</button></header>
               <div class="re-block re-person"></div><div class="re-block re-cell"></div><div class="re-block re-day"></div></section>
-            <section class="re-card re-check" aria-label="Проверка правил"><h3>Проверка <span class="re-badge"></span></h3><div class="re-report"></div></section>
+            <section class="re-card re-check" aria-label="Проверка правил"><h3>Проверка <span class="re-badge"></span></h3><div class="re-asks" hidden></div><div class="re-report"></div></section>
           </aside>
         </div>
       </div>
@@ -202,7 +202,7 @@
     }
     function people(){
       const d=D();
-      return d.people.map(p=>({name:p.name,cells:d.cells[p.name]||{},off:d.off[p.name]||[]}));
+      return d.people.map(p=>({name:p.name,cells:d.cells[p.name]||{},off:d.off[p.name]||[],asked:offsInfo?.requests?.[p.name]||[]}));
     }
     // Весь график помещается на экране: ширина колонок подбирается под место, а не наоборот.
     // Совсем узкое окно прокручивается, но без ползунка.
@@ -362,9 +362,10 @@
     }
     function blockPerson(p){
       const dis=p?'':' disabled',wish=p?(D().wish_starts[p.name]||[]).join(', '):'';
-      const WD=['пн','вт','ср','чт','пт','сб','вс'],asks=p?.link?wishes[p.link]||[]:[];
+      const WD=['пн','вт','ср','чт','пт','сб','вс'],w=p?.link?wishes[p.link]||{}:{},asks=w.days||[];
+      const wishText=[asks.length?`выходные по ${asks.map(d=>WD[d]).join(', ')}`:'',w.pattern?`график ${w.pattern}`:''].filter(Boolean).join(', ');
       q('.re-person').innerHTML=`<h4 class="re-sub">Сотрудник</h4>
-        ${asks.length?`<p class="re-wish">Просит выходные по ${asks.map(d=>WD[d]).join(', ')} <small>из Telegram</small></p>`:''}
+        ${wishText?`<p class="re-wish">Пожелание: ${esc(wishText)} <small>из Telegram</small></p>`:''}
         <label class="re-check-row"><input type="checkbox" data-student${dis} ${p?.student?'checked':''}> Учёба</label>
         <label>Удобный приход<input data-starts${dis} value="${esc(wish)}" placeholder="например, 9, 10"></label>
         <div class="re-row"><button type="button" data-move="-1"${dis}>Выше</button><button type="button" data-move="1"${dis}>Ниже</button><button type="button" data-remove${dis}>Убрать из графика</button></div>`;
@@ -514,7 +515,23 @@
     async function refreshOffs(){
       if(!cur)return;
       try{offsInfo=await api('offs',{id:cur.id});}catch(e){offsInfo=null;}
-      renderState();
+      renderState();renderAsks();
+      if(!showPick())renderGrid();
+    }
+    // Что люди записали в Telegram: видно до сборки, в таблице — пунктиром, здесь — списком.
+    const WD=['пн','вт','ср','чт','пт','сб','вс'];
+    function daysText(list){
+      const by={};list.forEach(d=>{const x=G.at(d);(by[x.getMonth()]=by[x.getMonth()]||[]).push(x.getDate());});
+      return Object.entries(by).map(([m,ds])=>`${ds.join(', ')} ${G.MONTHS[m]}`).join(', ');
+    }
+    function renderAsks(){
+      const box=q('.re-asks'),req=offsInfo?.requests||{},wd=offsInfo?.weekdays||{},pt=offsInfo?.patterns||{};
+      const names=D().people.map(p=>p.name).filter(n=>req[n]?.length||wd[n]?.length||pt[n]);
+      box.hidden=!names.length;
+      box.innerHTML=names.length?`<h4>Выходные из Telegram</h4>${names.map(n=>`<p>${esc(n)} — ${[
+        req[n]?.length?esc(daysText(req[n])):'',wd[n]?.length?`<small>по ${wd[n].map(d=>WD[d]).join(', ')}</small>`:'',
+        pt[n]?`<small>график ${esc(pt[n])}</small>`:''].filter(Boolean).join(' · ')}</p>`).join('')}
+        ${offsInfo?.fresh?'<p><small>Есть новые: «Собрать заново» учтёт их.</small></p>':''}`:'';
     }
     document.addEventListener('visibilitychange',()=>{if(!document.hidden&&cur&&!root.closest('[hidden]'))refreshOffs();});
     q('.re-ask').onclick=async()=>{

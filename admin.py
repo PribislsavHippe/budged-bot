@@ -188,7 +188,7 @@ async def broadcast_yes(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     if not text:
         await callback.message.edit_text(
-            "Текст рассылки потерялся (бот перезапускался). Набери /broadcast заново."
+            "Текст рассылки потерялся (бот перезапускался). Начни рассылку заново."
         )
         await callback.answer()
         return

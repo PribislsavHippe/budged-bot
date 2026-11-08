@@ -455,7 +455,7 @@ async def handle(request):
         start, end = _period(row)
         if action == 'open':
             return response({**_opened(row), 'team': await team(row['restaurant_id']),
-                             'wishes': await days_off.weekdays_for(row['restaurant_id'])})
+                             'wishes': await days_off.wishes_for(row['restaurant_id'])})
         if action == 'delete':
             if row.get('published_at'):
                 raise ValueError('Опубликованный график не удаляется.')
@@ -563,7 +563,12 @@ async def offs_action(request, uid, row, start, end, send):
     asked_before = draft.get('off_requested', {})
     # Новое: ответ расходится с тем, что учтено при последней сборке.
     fresh = sum(1 for link in answered if sorted(got[link]) != sorted(asked_before.get(links[link], [])))
-    return {'total': len(links), 'answered': len(answered), 'fresh': fresh, 'sent': sent}
+    # Что именно просят: менеджер видит это в таблице ещё до сборки.
+    wishes = await days_off.wishes_for(row['restaurant_id'])
+    return {'total': len(links), 'answered': len(answered), 'fresh': fresh, 'sent': sent,
+            'requests': {links[link]: sorted(got[link]) for link in answered if got[link]},
+            'weekdays': {links[link]: w['days'] for link, w in wishes.items() if link in links and w['days']},
+            'patterns': {links[link]: w['pattern'] for link, w in wishes.items() if link in links and w['pattern']}}
 
 
 # ─── сообщения команде ───────────────────────────────────────────────────────
@@ -694,6 +699,9 @@ async def view(request):
                   'today': op_today().isoformat(), 'can_edit': restaurant_id in managing,
                   'site_url': base + '/restaurant#schedule' if base else None,
                   'periods': [{'start': r['start_date'], 'end': r['end_date']} for r in rows], 'period': None}
+        if link and link['restaurant_id'] == restaurant_id:
+            # Свои обязательные выходные и пожелание видны сразу, ещё до публикации графика.
+            result['mine'] = await days_off.mine(link['id'])
         if rows:
             wanted = body.get('start')
             today = op_today().isoformat()

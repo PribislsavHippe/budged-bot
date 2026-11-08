@@ -63,7 +63,7 @@ async def handle(request):
         if not restaurant:return response({'error':'Этот раздел доступен администратору ресторана.'},403)
         if action=='invite':
             username=request.app.get('bot_username')
-            if not username:return response({'error':'Приглашение пока можно получить в боте: /invite.'},503)
+            if not username:return response({'error':'Приглашение сейчас не создаётся. Попробуй через минуту.'},503)
             _,token=await identity.invite(uid,restaurant['id'])
             return response({'url':f'https://t.me/{username}?start=team_{token}'})
         if action=='role':

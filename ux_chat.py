@@ -21,6 +21,10 @@ FAQ={
             'выбери её день в календаре.'),
     'schedule':('Где мой график?',
             'График смен составляет менеджер на сайте ресторана. Когда он опубликует график, я пришлю твои смены сообщением, а весь график будет в «Статистике» → «График». Если такой вкладки нет, менеджер ещё не подтвердил тебя или не опубликовал график.'),
+    'offs':('Как записать выходные?',
+            'Напиши мне обычным сообщением, например: <b>выходные 17 и 19</b>. Числа запишу в график, '
+            'который составляет менеджер. Если хочешь отдыхать в определённые дни недели — '
+            '<b>выходной по вторникам</b>.'),
     'wish':('Как передать пожелание?',
             'Нажми «Оставить пожелание» и напиши его одним сообщением. Его прочитает Леша. '
             'Если хочешь выходные в определённые дни недели, просто напиши мне, например: '
@@ -284,11 +288,10 @@ def looks_like_wish(text):
     return len(text.strip())>=12 and len(re.findall(r'[а-яёa-z]{2,}',text.lower()))>=3
 
 
-async def offer_wish(message,state):
+async def offer_wish(message,state,lead='Это не похоже на запись чаевых или расхода, поэтому ничего не записал.'):
     """Фраза не похожа на запись: не теряем её, а спрашиваем, передать ли как пожелание."""
     await state.update_data(wish_text=(message.text or '').strip()[:2000],wish_message=message.message_id)
-    await message.answer('Это не похоже на запись чаевых или расхода, поэтому ничего не записал. '
-                         'Передать это сообщение Леше как пожелание?',
+    await message.answer(lead+' Передать это сообщение Леше как пожелание?',
                          reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                              InlineKeyboardButton(text='Да, передать',callback_data='ux:wishsend'),
                              InlineKeyboardButton(text='Нет',callback_data='ux:wishdrop')]]))
@@ -321,6 +324,39 @@ async def wish_drop(callback,state):
     await _forget_wish(state)
     await callback.answer()
     await callback.message.edit_text('Хорошо, не передаю.')
+
+
+SCHEDULE_WORDS=('график','смен','расписан','вкладк')
+PATTERN=r'(?<![\d/])[1-7]\s*/\s*[1-7](?![\d/])'
+
+
+def menu_buttons():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='🗓 Где мой график',callback_data='ux:faq:schedule')],
+        [InlineKeyboardButton(text='Как записать выходные',callback_data='ux:faq:offs')],
+        [InlineKeyboardButton(text='Оставить пожелание',callback_data='ux:wish')]])
+
+
+async def understand(message,state,text):
+    """Сообщение, которое не стало записью денег: понять, о чём оно, вместо ответа про сумму.
+    Возвращает True, если ответил сам."""
+    import re
+    t=text.lower().replace('ё','е').strip()
+    # «2/2», «5/2» — это про то, как человек хочет работать, а не сумма.
+    if re.search(PATTERN,t):
+        await offer_wish(message,state,lead='Похоже, это про то, как тебе удобно работать, а не сумма — ничего не записал.')
+        return True
+    if re.search(r'\d',t):
+        return False
+    if any(word in t for word in SCHEDULE_WORDS) and len(t)<=60:
+        await message.answer(FAQ['schedule'][1],reply_markup=menu_buttons());return True
+    if 'выходн' in t and len(t)<=60:
+        await message.answer(FAQ['offs'][1],reply_markup=menu_buttons());return True
+    if looks_like_wish(text):
+        await offer_wish(message,state);return True
+    await message.answer('Не понял сообщение. Если это чаевые или расход, пришли сумму, например <i>чай 1500</i>. '
+                         'Или выбери, чем помочь:',reply_markup=menu_buttons())
+    return True
 
 
 class ActivityMiddleware(BaseMiddleware):
