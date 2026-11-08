@@ -308,6 +308,15 @@ class DraftTests(unittest.TestCase):
         for text in ('хочу работать по вторникам', 'вторник', 'чай 500', 'среди недели выходной', ''):
             self.assertIsNone(parse(text), text)
         self.assertEqual(self.api.days_off.weekdays_text([6, 1]), 'по вторникам и воскресеньям')
+        request = self.api.days_off.parse_request
+        both = request('Слушай, ну я хочу по понедельникам, ещё нужно 17 и 19')
+        self.assertEqual((both['weekdays'], both['dates']['numbers']), ([0], [17, 19]))
+        self.assertEqual(request('нужны выходные 17, 19')['dates']['numbers'], [17, 19])
+        self.assertEqual(request('выходные 17-19 ноября')['dates'], {'numbers': [17, 18, 19], 'months': {11}})
+        # «2/2», время и суммы — не числа дней.
+        self.assertIsNone(request('Желательные воскресенья а так мне 2/2 нравится')['dates'])
+        self.assertIsNone(request('отдых в 9:00'))
+        self.assertIsNone(request('такси 430'))
 
     def test_variants_from_the_site_are_checked(self):
         good = {'id': 'even', 'title': 'Поровну', 'cells': {'Аня': {'2026-11-16': '9'}, 'Чужой': {'2026-11-16': '9'}},
@@ -681,13 +690,17 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         async def update_data(**kw): store.update(kw)
         state = NS(get_data=get_data, update_data=update_data, clear=AsyncMock())
         message = self.text('выходной по вторникам')
-        taken = await days_off_chat.weekday_wish(message)
-        self.assertEqual(taken['days'], [1])
-        await days_off_chat.save_weekday_wish(message, state=state, **taken)
+        taken = await days_off_chat.off_request(message)
+        self.assertEqual(taken['found']['weekdays'], [1])
+        await days_off_chat.write_request(message, state=state, **taken)
         self.assertIn('по вторникам', message.answer.await_args.args[0])
         self.assertEqual(store['wish_text'], 'выходной по вторникам')
-        # Не сотрудник ресторана — обычная обработка сообщения.
-        self.assertFalse(await days_off_chat.weekday_wish(self.text('выходной по вторникам', uid=555)))
+        # Не сотрудник ресторана: ничего не записывается и деньгами фраза тоже не становится.
+        stranger = self.text('нужны выходные 17, 19', uid=555)
+        taken = await days_off_chat.off_request(stranger)
+        self.assertIsNone(taken['link'])
+        await days_off_chat.write_request(stranger, state=state, **taken)
+        self.assertIn('сотрудники ресторана', stranger.answer.await_args.args[0])
         made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
         self.assertEqual(made['draft']['wish_off'], {'Аня': ['2026-11-17']})
         # Обязательный выходной у Ани ставится на вторник во всех вариантах.
@@ -700,6 +713,25 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('убрал', callback.message.edit_text.await_args.args[0])
         rebuilt = await self.roster('build', MANAGER, id=made['id'], revision=made['revision'], draft=made['draft'])
         self.assertEqual(rebuilt['draft']['wish_off'], {})
+
+    async def test_one_message_with_weekdays_and_dates_records_both(self):
+        import days_off_chat
+        store = {}
+        async def update_data(**kw): store.update(kw)
+        state = NS(update_data=update_data)
+        made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-30')
+        message = self.text('Слушай, ну я хочу по понедельникам, ещё нужно 17 и 19')
+        taken = await days_off_chat.off_request(message)
+        await days_off_chat.write_request(message, state=state, **taken)
+        reply = message.answer.await_args.args[0]
+        self.assertIn('по понедельникам', reply)
+        self.assertIn('17, 19 ноября', reply)
+        status = await self.roster('offs', MANAGER, id=made['id'])
+        self.assertEqual(status['answered'], 1)
+        # Числа вне графика не записываются и объясняются.
+        wrong = self.text('выходные 3 и 5')
+        await days_off_chat.write_request(wrong, state=state, **(await days_off_chat.off_request(wrong)))
+        self.assertIn('16–30 ноября', wrong.answer.await_args.args[0])
 
     async def test_periods_do_not_overlap_and_drafts_can_be_deleted(self):
         made = await self.roster('create', OWNER, restaurant_id=PLACE, start='2026-11-01', end='2026-11-15')

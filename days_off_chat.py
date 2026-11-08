@@ -53,45 +53,64 @@ async def write(message, parsed, wait):
         await message.answer('Сейчас не получается сохранить. Попробуй чуть позже.')
 
 
-async def weekday_wish(message):
-    """Фильтр: «выходной по вторникам» от сотрудника ресторана."""
-    days = days_off.parse_weekdays(message.text)
-    if not days:
+async def off_request(message):
+    """Фильтр: просьба о выходных обычной фразой — «выходной по вторникам», «нужно 17 и 19»."""
+    found = days_off.parse_request(message.text)
+    if not found:
         return False
     try:
         link = await days_off.member(message.from_user.id)
     except Exception as error:
         from diagnostics import failure
-        failure(error, area='days_off', stage='weekday_member')
+        failure(error, area='days_off', stage='request_member')
         return False
-    return {'days': days, 'link': link} if link else False
+    return {'found': found, 'link': link}
 
 
-@router.message(weekday_wish)
-async def save_weekday_wish(message, days, link, state):
+@router.message(off_request)
+async def write_request(message, found, link, state):
     from postgrest.exceptions import APIError
     from aiogram.types import InlineKeyboardButton as Button, InlineKeyboardMarkup as Markup
-    try:
-        await days_off.save_weekdays(link, days)
-    except APIError as error:
-        if error.code not in days_off.MISSING:
-            raise
-        from ux_chat import offer_wish
-        await offer_wish(message, state)
+    # Такую фразу нельзя принимать за деньги («нужны выходные 17, 19» — не расход 17 ₽).
+    if not link:
+        await message.answer('Выходные записывают сотрудники ресторана. Когда менеджер подтвердит тебя, напиши ещё раз.')
         return
+    saved, problems, buttons = [], [], []
+    try:
+        if found['weekdays']:
+            try:
+                await days_off.save_weekdays(link, found['weekdays'])
+                saved.append(f"пожелание: выходные {days_off.weekdays_text(found['weekdays'])}")
+                buttons.append([Button(text='Убрать пожелание', callback_data=f'{days_off.PREFIX}:w')])
+            except APIError as error:
+                if error.code not in days_off.MISSING:
+                    raise
+                problems.append('Пожелания по дням недели пока не подключены.')
+        if found['dates']:
+            start, end, chosen, problem = await days_off.place_dates(link, message.from_user.id, found['dates'])
+            if chosen:
+                await days_off.save(link, start, end, chosen)
+                import research
+                research.track(message.from_user.id, 'days_off_answered', source='bot', screen='schedule')
+                saved.append(f'обязательные выходные {days_off.days_text(chosen)}')
+            else:
+                problems.append(problem)
     except Exception as error:
         from diagnostics import failure
-        failure(error, area='days_off', stage='weekday_save')
+        failure(error, area='days_off', stage='request_save')
         await message.answer('Сейчас не получается сохранить. Попробуй чуть позже.')
         return
-    # Целиком сообщение можно передать Леше: в нём может быть что-то ещё, кроме дней недели.
+    lines = []
+    if saved:
+        lines.append('Записал ' + ' и '.join(saved) + '.')
+    if found['weekdays'] and saved and saved[0].startswith('пожелание'):
+        lines.append('По дням недели программа постарается ставить выходные, но если людей не хватит, может поставить смену. '
+                     'Менеджер увидит это в графике.')
+    lines += problems
+    # Целиком сообщение можно передать Леше: в нём может быть что-то ещё.
     await state.update_data(wish_text=(message.text or '').strip()[:2000], wish_message=message.message_id)
-    await message.answer(
-        f'Записал пожелание: выходные {days_off.weekdays_text(days)}. Программа постарается ставить '
-        'обязательные выходные в эти дни; если людей не хватит, может поставить смену. '
-        'Менеджер увидит пожелание в графике. Новое сообщение заменит это пожелание.',
-        reply_markup=Markup(inline_keyboard=[[Button(text='Убрать пожелание', callback_data=f'{days_off.PREFIX}:w')],
-                                             [Button(text='Передать Леше весь текст', callback_data='ux:wishsend')]]))
+    buttons.append([Button(text='Передать Леше весь текст', callback_data='ux:wishsend')])
+    await message.answer('\n\n'.join(lines), reply_markup=Markup(inline_keyboard=buttons))
 
 
 @router.callback_query(F.data == f'{days_off.PREFIX}:w')

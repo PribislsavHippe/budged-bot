@@ -214,18 +214,57 @@ OFF_INTENT = re.compile(r'выходн|отдых|не\s+могу|не\s+раб�
 DATIVE = ('понедельникам', 'вторникам', 'средам', 'четвергам', 'пятницам', 'субботам', 'воскресеньям')
 
 
-def parse_weekdays(text):
-    """Дни недели, в которые человек просит выходной, или None, если это не такое пожелание."""
+# Число дня в обычной фразе: «17 и 19», «17-19». «2/2», «9:00», «17.11» и суммы от 100 не считаются.
+DAY_NUMBER = re.compile(r'(?<![\d/:.,])(\d{1,2})(?:\s*[-–—]\s*(\d{1,2}))?(?![\d/:]|[.,]\d)')
+
+
+def parse_request(text):
+    """Просьба о выходных обычной фразой: дни недели (пожелание надолго) и числа (обязательные выходные
+    на график). {'weekdays': [...], 'dates': {'numbers': [...], 'months': {...}} или None} или None."""
     t = (text or '').lower().replace('ё', 'е')
-    if not t or len(t) > 300:
-        return None
-    days = sorted({n for n, pattern in WEEKDAY_WORDS if re.search(rf'\b(?:{pattern})\b', t)})
-    if not days or not OFF_INTENT.search(t):
+    if not t or len(t) > 300 or not OFF_INTENT.search(t):
         return None
     # «хочу работать по вторникам» — наоборот, это не просьба о выходном.
     if 'работ' in t and not re.search(r'не\s+работ', t):
         return None
-    return days
+    weekdays = sorted({n for n, pattern in WEEKDAY_WORDS if re.search(rf'\b(?:{pattern})\b', t)})
+    numbers = []
+    for first, second in DAY_NUMBER.findall(t):
+        lo, hi = int(first), int(second or first)
+        if 1 <= lo <= hi <= 31 and hi - lo <= 14:
+            numbers += range(lo, hi + 1)
+    if not weekdays and not numbers:
+        return None
+    months = {roster.MONTHS.index(m) + 1 for m in MONTH.findall(t)}
+    return {'weekdays': weekdays, 'dates': {'numbers': sorted(set(numbers)), 'months': months} if numbers else None}
+
+
+def parse_weekdays(text):
+    """Дни недели, в которые человек просит выходной, или None."""
+    found = parse_request(text)
+    return found['weekdays'] or None if found else None
+
+
+async def place_dates(link, uid, dates):
+    """Куда записать числа: в график, на который бот ждёт ответ, иначе в ближайший график, куда они
+    попадают. Возвращает (начало, конец, даты, None) или (None, None, None, что ответить)."""
+    today = roster_today()
+    rows = (await db._execute(db.supabase.table('rosters').select('start_date,end_date')
+                              .eq('restaurant_id', link['restaurant_id']).gte('end_date', today.isoformat())
+                              .order('start_date'))).data
+    periods = [(date.fromisoformat(r['start_date']), date.fromisoformat(r['end_date'])) for r in rows]
+    wait = await waiting(uid)
+    if wait:
+        periods.sort(key=lambda p: p[0] != wait['start'])
+    first_problem = None
+    for start, end in periods:
+        limit = roster.off_limit((end - start).days + 1, await is_student(link['restaurant_id'], link['id']))
+        chosen, problem = resolve(dates, start, end, today, limit)
+        if chosen:
+            return start, end, chosen, None
+        first_problem = first_problem or problem
+    return None, None, None, first_problem or ('Графика на эти числа пока нет. Когда менеджер попросит выходные, '
+                                               'бот напишет — ответь ему числами.')
 
 
 def weekdays_text(days):
