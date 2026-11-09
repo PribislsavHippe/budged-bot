@@ -76,6 +76,9 @@ def setup_scheduler(bot) -> AsyncIOScheduler:
     scheduler.add_job(tomorrow_shift_reminder, "cron", hour=19, minute=0, args=[bot],max_instances=1)
     scheduler.add_job(retry_tomorrow_shift_reminder, "interval", minutes=10, args=[bot],max_instances=1)
     scheduler.add_job(retry_tomorrow_shift_reminder, args=[bot],max_instances=1)
+    # Графики, опубликованные до появления записи смен в личный календарь, догоняются при каждом запуске.
+    import roster_sync
+    scheduler.add_job(roster_sync.resync_all, max_instances=1)
     from schedule_chat import prompt_work_end
     scheduler.add_job(prompt_work_end,"interval",minutes=5,args=[bot],max_instances=1)
     scheduler.add_job(self_ping, "interval", minutes=10)

@@ -417,6 +417,10 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         import days_off
         self.today = patch.object(days_off, 'roster_today', return_value=date(2026, 11, 10))
         self.today.start()
+        # Запись смен в личный календарь при публикации: в обычных тестах настоящей базы нет.
+        self.sync = patch('schedule.save', new=AsyncMock())
+        self.sync.start()
+        self.addCleanup(self.sync.stop)
         import db
         import webapp_api
         from aiohttp import web
@@ -801,6 +805,35 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         # Сборка сама ставит только норму; остальное менеджер добавляет вручную после согласования.
         rebuilt = await self.roster('build', MANAGER, id=made['id'], revision=made['revision'], draft=made['draft'])
         self.assertEqual(len(rebuilt['draft']['off_requested']['Аня']), 3)
+
+    async def test_publishing_writes_waiters_shifts_into_their_personal_calendar(self):
+        import asyncio
+        import roster_sync
+        saved = []
+        async def save(uid, cells): saved.append((uid, cells))
+        fake_user = AsyncMock(return_value={})
+        made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
+        draft = dict(made['draft'], cells={'Аня': {'2026-11-16': '9', '2026-11-18': '10-18*', '2026-11-19': '14'}}, off={}, off_auto={})
+        saved_draft = await self.roster('save', MANAGER, id=made['id'], revision=made['revision'], draft=draft)
+        # У Ани уже стоят личные смены: на 20-е (старая, из графика исчезла) и на прошлое число.
+        shifts = self.fake.rows.setdefault('shifts', [])
+        shifts += [{'user_id': WAITER, 'shift_date': '2026-11-20'}, {'user_id': WAITER, 'shift_date': '2026-11-08'},
+                   {'user_id': WAITER, 'shift_date': '2026-11-16'}]
+        with patch('schedule.save', new=save), patch('db.get_or_create_user', new=fake_user):
+            await self.roster('publish', MANAGER, id=made['id'], revision=saved_draft['revision'])
+            await asyncio.sleep(0.3)
+        mine = [cells for uid, cells in saved if uid == WAITER]
+        self.assertEqual(mine, [[{'date': '2026-11-16', 'start': '09:00', 'end': '21:00'},
+                                 {'date': '2026-11-18', 'start': '10:00', 'end': '18:00'},
+                                 {'date': '2026-11-19', 'start': '14:00', 'end': '23:00'}]])
+        # Будущая смена, которой в графике нет, убрана; прошлая и та, что в графике, остались.
+        left = sorted(r['shift_date'] for r in self.fake.rows['shifts'] if r['user_id'] == WAITER)
+        self.assertEqual(left, ['2026-11-08', '2026-11-16'])
+        # Менеджер, которого в графике нет, личных смен не получает.
+        self.assertNotIn(MANAGER, {uid for uid, _ in saved})
+        # Повторная синхронизация ничего не ломает.
+        with patch('schedule.save', new=save), patch('db.get_or_create_user', new=fake_user):
+            self.assertGreaterEqual(await roster_sync.resync_all(), 1)
 
     async def test_periods_do_not_overlap_and_drafts_can_be_deleted(self):
         made = await self.roster('create', OWNER, restaurant_id=PLACE, start='2026-11-01', end='2026-11-15')

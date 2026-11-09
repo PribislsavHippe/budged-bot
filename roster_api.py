@@ -522,6 +522,12 @@ async def handle(request):
             now = datetime.now(timezone.utc).isoformat()
             saved = await _save(row, uid, revision, {'published': row['draft'], 'published_at': now})
             _track(uid, 'roster_republished' if row.get('published_at') else 'roster_published')
+            stage = 'sync'
+            # Смены попадают в личный календарь, подписку iPhone и напоминания; публикацию это не задерживает.
+            import roster_sync
+            task = asyncio.create_task(roster_sync.sync_published(row['restaurant_id'], start, end, row['draft'], row.get('published')))
+            _sending.add(task)
+            task.add_done_callback(_sending.discard)
             stage = 'notify'
             told = await notify(request.app.get('bot'), uid, row['published'], row['draft'], start, end, row['restaurant_id'])
             return response({**_opened(saved), 'notified': told})
@@ -607,7 +613,7 @@ def notices(old, new, start, end, links=None):
             continue
         shifts = own_shifts(new, name)
         head = f'Опубликован график на {period}.' if old is None else f'В графике на {period} изменились твои смены.'
-        body = 'Твои смены:\n' + '\n'.join(shifts) if shifts else 'Смен у тебя в этом графике нет.'
+        body = ('Твои смены:\n' + '\n'.join(shifts) + '\n\nОни уже в твоём календаре в приложении.') if shifts else 'Смен у тебя в этом графике нет.'
         result.append((link, f'{head}\n\n{body}'))
     return result
 
