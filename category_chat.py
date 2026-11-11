@@ -78,7 +78,7 @@ async def begin(message,text=None):
         await message.answer('Сначала заверши сохранение категорий.');return
     restaurants=await categories.planners(uid)
     if not restaurants:
-        await message.answer('Сначала создай ресторан в миниаппе.');return
+        await message.answer('Сначала создай ресторан на сайте ресторана.');return
     draft={'nonce':uuid4().hex[:12],'lock':asyncio.Lock(),'restaurants':restaurants,
            'phase':'restaurant','text':text,
            'oid':str(uuid5(NAMESPACE_URL,f'categories:{message.bot.id}:{message.chat.id}:{message.message_id}'))}

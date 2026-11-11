@@ -117,6 +117,13 @@ async def _entries_for_view(user_id: int, body: dict) -> tuple[list[dict],bool]:
     return ([] if private else await db.get_all_entries(user_id)),private
 
 
+async def _calendar_wishes(user_id, first, last):
+    if os.getenv('IDENTITY_ENABLED', '0') != '1':
+        return {}
+    import roster_wishes
+    return await roster_wishes.calendar(user_id, date.fromisoformat(first), date.fromisoformat(last))
+
+
 async def _stats_payload(app: web.Application, user_id: int, body: dict | None = None) -> dict:
     entries,private=await _entries_for_view(user_id,body or {})
     goal = await db.get_shift_goal(user_id)
@@ -139,6 +146,7 @@ async def _stats_payload(app: web.Application, user_id: int, body: dict | None =
     last=today.replace(day=monthrange(today.year,today.month)[1]).isoformat()
     payload['planned_times']=await db.get_shift_details(user_id,first,last)
     payload['worked_times']=await db.get_worked_shift_details(user_id,first,last)
+    payload['calendar_wishes']=await _calendar_wishes(user_id,first,last)
     payload['tip_entries']=[{'id':e['id'],'date':_entry_date(e).isoformat(),
                              'amount':float(e['signed_amount']),'account':e['account']}
                             for e in entries if e['kind']=='income' and e['category']=='Чаевые'
@@ -440,6 +448,7 @@ async def api_month(request: web.Request) -> web.Response:
     last=f'{year:04d}-{month:02d}-{monthrange(year,month)[1]:02d}'
     result['planned_times']=await db.get_shift_details(user_id,first,last)
     result['worked_times']=await db.get_worked_shift_details(user_id,first,last)
+    result['calendar_wishes']=await _calendar_wishes(user_id,first,last)
     result['tip_entries']=[{'id':e['id'],'date':_entry_date(e).isoformat(),
                             'amount':float(e['signed_amount']),'account':e['account']}
                            for e in entries if e['kind']=='income' and e['category']=='Чаевые'
@@ -453,6 +462,10 @@ async def api_calendar_edit(request: web.Request) -> web.Response:
     import schedule
     user_id, body = await _auth(request)
     if user_id is None:return body
+    if body.get('action') == 'wish_save':
+        import roster_wishes
+        result, status = await roster_wishes.edit(user_id, body)
+        return web.json_response(result, status=status, headers=NO_CACHE)
     try:
         day=date.fromisoformat(body.get('date',''))
         if not 2000<=day.year<=2100:raise ValueError()

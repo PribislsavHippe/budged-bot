@@ -6,7 +6,6 @@
 """
 import asyncio
 import re
-import re
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
@@ -18,6 +17,7 @@ import db
 import holidays_ru
 import identity
 import roster
+import roster_wishes
 from workday import op_today
 
 # Ошибки «таблицы или колонки нет»: база ещё не обновлена до migration_v30.
@@ -99,8 +99,19 @@ def normalize(draft, start, end):
               'off_auto': per_person('off_auto', in_period),
               'off_requested': per_person('off_requested', in_period),
               'wish_off': per_person('wish_off', in_period),
+              'wish_dates': per_person('wish_dates', in_period),
               'wish_starts': per_person('wish_starts', lambda h: _int(h, 6, 22, 'Удобный приход')),
               'days': {}, 'events': {}, 'cells': {}}
+    for key, rule in (('wish_patterns', r'[1-7]/[1-7]'), ('pattern_history', r'[01]{1,14}')):
+        source = draft.get(key) or {}
+        if not isinstance(source, dict):
+            raise ValueError('Черновик повреждён. Обнови страницу.')
+        result[key] = {name: value for name, value in source.items()
+                       if name in names and isinstance(value, str) and re.fullmatch(rule, value)}
+    revisions = draft.get('wish_revisions') or {}
+    if not isinstance(revisions, dict):
+        raise ValueError('Черновик повреждён. Обнови страницу.')
+    result['wish_revisions'] = {n: v for n, v in revisions.items() if n in names and type(v) is int and v >= 0}
     for key, setting in (draft.get('days') or {}).items():
         key = in_period(key)
         if not isinstance(setting, dict):
@@ -140,13 +151,14 @@ def trim(draft, start, end):
     """Оставляет в черновике только дни нового периода. Варианты считались на прежние даты, поэтому сбрасываются."""
     inside = {date.fromordinal(start.toordinal() + i).isoformat() for i in range((end - start).days + 1)}
     out = dict(draft)
-    for key in ('off', 'off_auto', 'off_requested', 'wish_off'):
+    for key in ('off', 'off_auto', 'off_requested', 'wish_off', 'wish_dates'):
         kept = {n: [d for d in days if d in inside] for n, days in (draft.get(key) or {}).items()}
         out[key] = {n: days for n, days in kept.items() if days}
     out['days'] = {d: s for d, s in (draft.get('days') or {}).items() if d in inside}
     out['events'] = {d: s for d, s in (draft.get('events') or {}).items() if d in inside}
     cells = {n: {d: v for d, v in row.items() if d in inside} for n, row in (draft.get('cells') or {}).items()}
     out['cells'] = {n: row for n, row in cells.items() if row}
+    out['pattern_history'] = {}
     out['variants'], out['variant'], out['picked'] = [], None, True
     return out
 
@@ -185,6 +197,9 @@ def to_request(draft, start, end):
     request.days_off = {n: dates(v) for n, v in draft['off'].items()}
     request.wish_off = {n: dates(v) for n, v in draft['wish_off'].items()}
     request.wish_starts = {n: set(v) for n, v in draft['wish_starts'].items()}
+    request.wish_dates = {n: dates(v) for n, v in draft.get('wish_dates', {}).items()}
+    request.wish_patterns = draft.get('wish_patterns', {})
+    request.pattern_history = draft.get('pattern_history', {})
     request.students = {p['name'] for p in draft['people'] if p['student']}
     for key, setting in draft['days'].items():
         day = date.fromisoformat(key)
@@ -225,7 +240,7 @@ def check(draft, start, end):
     flagged = {}
     for day, *_ in found.shortages + found.closers + found.openers:
         flagged[day.isoformat()] = True
-    text = roster.report(request, schedule, found)
+    text = roster.report(request, schedule, found, editor=True)
     # Нарушения тем же порядком, что в тексте разбора, но с днём и человеком:
     # на сайте строку можно нажать и перейти к нужной клетке.
     where = ([(day, None) for day, *_ in found.shortages] + [(day, name) for name, day in found.forced]
@@ -251,7 +266,7 @@ def apply_variant(draft, variant, manual):
     draft['variant'] = variant['id']
 
 
-def build_all(draft, start, end, requested=None, weekdays=None):
+def build_all(draft, start, end, requested=None, weekdays=None, *, preferred=None, patterns=None, history=None, revisions=None):
     """Обязательные выходные расставляются сами, затем собираются несколько вариантов графика;
     лучший сразу встаёт в таблицу. Выходные, которые менеджер поставил сам (отпуск), остаются.
     requested — выходные, которые люди выбрали в Telegram ({имя: [даты]}): они ставятся первыми,
@@ -262,6 +277,13 @@ def build_all(draft, start, end, requested=None, weekdays=None):
         span = [date.fromordinal(start.toordinal() + i) for i in range((end - start).days + 1)]
         draft['wish_off'] = {name: [d.isoformat() for d in span if d.weekday() in set(days)]
                              for name, days in weekdays.items() if name in names and days}
+    if preferred is not None:
+        draft['wish_dates'] = preferred
+    if patterns is not None:
+        draft['wish_patterns'] = patterns
+        draft['pattern_history'] = history or {}
+    if revisions is not None:
+        draft['wish_revisions'] = revisions
     previous, asked_before = draft.get('off_auto', {}), draft.get('off_requested', {})
     manual = {name: [d for d in days if d not in previous.get(name, []) and d not in asked_before.get(name, [])]
               for name, days in draft['off'].items()}
@@ -296,11 +318,38 @@ async def requested_offs(restaurant_id, start, draft):
     return {by_link[link]: days for link, days in got.items() if link in by_link}
 
 
-async def weekday_wishes(restaurant_id, draft):
-    """Пожелания по дням недели из Telegram, по именам из черновика."""
-    got = await days_off.weekdays_for(restaurant_id)
-    by_link = {p['link']: p['name'] for p in draft['people'] if p.get('link')}
-    return {by_link[link]: days for link, days in got.items() if link in by_link}
+async def build_inputs(restaurant_id, start, draft, row=None):
+    names = {p['link']: p['name'] for p in draft['people'] if p.get('link')}
+    permanent = await days_off.wishes_for(restaurant_id)
+    weekdays = {names[link]: wish['days'] for link, wish in permanent.items() if link in names and wish['days']}
+    patterns = {names[link]: wish['pattern'] for link, wish in permanent.items() if link in names and wish['pattern']}
+    if row is not None and roster_wishes.migrated(row):
+        saved = await roster_wishes.requests(row['id'])
+        required = {names[link]: answer['days'] for link, answer in saved.items() if link in names}
+        preferred = {names[link]: answer['desired_days'] for link, answer in saved.items()
+                     if link in names and answer['desired_days']}
+        revisions = {names[link]: answer['revision'] for link, answer in saved.items() if link in names}
+    else:
+        required = await requested_offs(restaurant_id, start, draft)
+        preferred, revisions = {}, {}
+    history = {}
+    if patterns:
+        previous_end = start - timedelta(days=1)
+        previous = (await db._execute(db.supabase.table('rosters').select('published,start_date')
+                                      .eq('restaurant_id', restaurant_id).eq('end_date', previous_end.isoformat())
+                                      .not_.is_('published', 'null').limit(1))).data
+        if previous:
+            snap = previous[0]['published']
+            first = max(start - timedelta(days=14), date.fromisoformat(previous[0]['start_date']))
+            span = [(first + timedelta(days=i)).isoformat() for i in range((start - first).days)]
+            for person in snap.get('people', []):
+                name = names.get(person.get('link'))
+                if name in patterns:
+                    cells = snap.get('cells', {}).get(person['name'], {})
+                    history[name] = ''.join('1' if str(cells.get(day, '')).strip()[:1].isdigit() else '0'
+                                            for day in span)
+    return (required, weekdays), {'preferred': preferred, 'patterns': patterns, 'history': history,
+                                  'revisions': revisions}
 
 
 async def schedulable(uid):
@@ -435,10 +484,9 @@ async def handle(request):
                 # Сразу несколько вариантов: менеджеру остаётся выбрать и поправить.
                 if _building.locked():
                     return response({'error': 'Сейчас собирается другой график. Попробуй через минуту.'}, 429)
-                asked = await requested_offs(restaurant_id, start, draft)
-                wishes = await weekday_wishes(restaurant_id, draft)
+                args, options = await build_inputs(restaurant_id, start, draft)
                 async with _building:
-                    await asyncio.to_thread(build_all, draft, start, end, asked, wishes)
+                    await asyncio.to_thread(build_all, draft, start, end, *args, **options)
             row = {'id': str(uuid4()), 'restaurant_id': restaurant_id, 'start_date': start.isoformat(),
                    'end_date': end.isoformat(), 'draft': draft, 'updated_by': uid}
             try:
@@ -461,7 +509,8 @@ async def handle(request):
                 raise ValueError('Опубликованный график не удаляется.')
             stage = 'delete'
             await db._execute(db.supabase.table('rosters').delete().eq('id', row['id']).is_('published_at', 'null'))
-            await days_off.close_period(row['restaurant_id'], start)
+            if not roster_wishes.migrated(row):
+                await days_off.close_period(row['restaurant_id'], start)
             return response({'ok': True})
         if action in ('offs', 'ask_offs'):
             result = await offs_action(request, uid, row, start, end, action == 'ask_offs')
@@ -485,10 +534,9 @@ async def handle(request):
                 stage = 'build'
                 if _building.locked():
                     return response({'error': 'Сейчас собирается другой график. Попробуй через минуту.'}, 429)
-                asked = await requested_offs(row['restaurant_id'], start, draft)
-                wishes = await weekday_wishes(row['restaurant_id'], draft)
+                args, options = await build_inputs(row['restaurant_id'], start, draft, row)
                 async with _building:
-                    await asyncio.to_thread(build_all, draft, start, end, asked, wishes)
+                    await asyncio.to_thread(build_all, draft, start, end, *args, **options)
             stage = 'save'
             saved = await _save(row, uid, revision, {'draft': draft})
             if action == 'build':
@@ -514,7 +562,8 @@ async def handle(request):
             draft = normalize(trim(row['draft'], new_start, new_end), new_start, new_end)
             saved = await _save(row, uid, revision, {
                 'start_date': new_start.isoformat(), 'end_date': new_end.isoformat(), 'draft': draft})
-            await days_off.move_period(row['restaurant_id'], start, new_start, new_end)
+            if not roster_wishes.migrated(row):
+                await days_off.move_period(row['restaurant_id'], start, new_start, new_end)
             _track(uid, 'roster_dates_changed')
             return response(_opened(saved))
         if action == 'publish':
@@ -557,13 +606,18 @@ async def offs_action(request, uid, row, start, end, send):
     people = [p for p in draft.get('people', []) if p.get('link') in approved]
     links = {p['link']: p['name'] for p in people}
     try:
-        got = await days_off.for_period(row['restaurant_id'], start)
+        modern = roster_wishes.migrated(row)
+        replies = await roster_wishes.requests(row['id']) if modern else {}
+        got = {link: answer['days'] for link, answer in replies.items()} if modern else await days_off.for_period(row['restaurant_id'], start)
         sent = 0
         if send:
             bot = request.app.get('bot')
             if not bot:
                 raise ValueError('Бот сейчас недоступен. Попробуй позже.')
-            sent = await days_off.ask(bot, row['restaurant_id'], start, end, links, set(got))
+            if modern:
+                sent = await roster_wishes.remind(bot, row['id'])
+            else:
+                sent = await days_off.ask(bot, row['restaurant_id'], start, end, links, set(got))
     except APIError as error:
         if error.code in MISSING:
             raise ValueError('Запись выходных пока недоступна: владельцу нужно обновить базу (migration_v33.sql).') from None
@@ -574,8 +628,21 @@ async def offs_action(request, uid, row, start, end, send):
     fresh = sum(1 for link in answered if sorted(got[link]) != sorted(asked_before.get(links[link], [])))
     # Что именно просят: менеджер видит это в таблице ещё до сборки.
     wishes = await days_off.wishes_for(row['restaurant_id'])
+    if modern:
+        span = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+        fresh = 0
+        for link, name in links.items():
+            reply = replies.get(link, {})
+            wish = wishes.get(link, {})
+            dates = [d.isoformat() for d in span if d.weekday() in wish.get('days', ())]
+            if (reply.get('revision') != draft.get('wish_revisions', {}).get(name)
+                or wish.get('pattern') != draft.get('wish_patterns', {}).get(name)
+                or dates != draft.get('wish_off', {}).get(name, [])):
+                fresh += 1
     return {'total': len(links), 'answered': len(answered), 'fresh': fresh, 'sent': sent,
             'requests': {links[link]: sorted(got[link]) for link in answered if got[link]},
+            'desired': {links[link]: replies[link]['desired_days'] for link in answered
+                        if link in replies and replies[link]['desired_days']},
             'weekdays': {links[link]: w['days'] for link, w in wishes.items() if link in links and w['days']},
             'patterns': {links[link]: w['pattern'] for link, w in wishes.items() if link in links and w['pattern']},
             # Больше нормы — согласовать: сборка сама ставит только норму, остальное решает менеджер.
@@ -616,8 +683,9 @@ def notices(old, new, start, end, links=None):
             continue
         shifts = own_shifts(new, name)
         head = f'Опубликован график на {period}.' if old is None else f'В графике на {period} изменились твои смены.'
-        body = ('Твои смены:\n' + '\n'.join(shifts) + '\n\nОни уже в твоём календаре в приложении.') if shifts else 'Смен у тебя в этом графике нет.'
-        result.append((link, f'{head}\n\n{body}'))
+        body = ('Твои смены:\n' + '\n'.join(shifts)) if shifts else 'Смен у тебя в этом графике нет.'
+        separator = '\n\n' if shifts else ' '
+        result.append((link, f'{head}{separator}{body}'))
     return result
 
 
@@ -630,7 +698,7 @@ async def notify(bot, publisher, old, new, start, end, restaurant_id):
     if not bot or not planned:
         return 0
     links = (await db._execute(db.supabase.table('employee_links').select('id,user_id,status')
-                               .in_('id', [link for link, _ in planned]))).data
+                               .in_('id', [link for link, _ in planned]).eq('restaurant_id', restaurant_id))).data
     users = {r['id']: r['user_id'] for r in links if r['status'] == 'approved' and r['user_id'] != publisher}
     messages = [(users[link], text) for link, text in planned if link in users]
 
@@ -715,7 +783,7 @@ async def view(request):
                   'periods': [{'start': r['start_date'], 'end': r['end_date']} for r in rows], 'period': None}
         if link and link['restaurant_id'] == restaurant_id:
             # Свои обязательные выходные и пожелание видны сразу, ещё до публикации графика.
-            result['mine'] = await days_off.mine(link['id'])
+            result['mine'] = await days_off.mine(link['id'], restaurant_id)
         if rows:
             wanted = body.get('start')
             today = op_today().isoformat()

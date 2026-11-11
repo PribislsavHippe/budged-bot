@@ -81,7 +81,7 @@ async def start_invite(message,command,state):
     await state.set_state(Identification.name)
     await state.update_data(invite_token=token)
     await message.answer('Как тебя зовут в рабочем отчёте? Напиши имя так, как оно там указано. '
-                         'Личные чаевые и расходы будешь видеть только ты.',
+                         'Менеджеру и коллегам твои личные чаевые и расходы не показываются.',
                          reply_markup=buttons([[('Отмена','ident:cancelname')]]))
 
 
@@ -110,10 +110,9 @@ async def register_name(message,state):
     try:
         result=await identity.request(message.from_user.id,data.get('invite_token',''),message.text)
         await state.clear()
-        await message.answer(f"Спасибо, {html.escape(result['report_name'])}! Заявку увидит менеджер ресторана.\n\n"
-                             'График смен составляет менеджер на сайте ресторана. Когда он опубликует график, я пришлю твои смены сообщением, а весь график будет в «Статистике» → «График». Если такой вкладки нет, менеджер ещё не подтвердил тебя или не опубликовал график.\n\n'
-                             'Ещё здесь можно записывать чаевые: пришли сумму, например <i>чай 1500</i>. '
-                             'Личные чаевые и расходы видишь только ты.')
+        await message.answer(f"Спасибо, {html.escape(result['report_name'])}! Заявка отправлена менеджеру. "
+                             "Когда он подтвердит тебя в ресторане, сможешь записывать пожелания к графику. "
+                             "Чаевые и расходы уже можно записывать здесь.")
         from ux_chat import begin
         await begin(message,prompt=False)
     except Exception as exc: await error(message,exc)

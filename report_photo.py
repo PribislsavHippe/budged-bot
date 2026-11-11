@@ -121,7 +121,7 @@ async def reset_draft(message):
 @router.message(F.photo | (F.document.mime_type.in_({'image/jpeg', 'image/png'})))
 async def receive_photo(message):
     if not vision.configured():
-        await message.answer('Читать фото пока не умею. Можно записать отчёт сообщением.')
+        await message.answer('Распознавание фото сейчас недоступно. Результаты можно внести вручную в разделе «План».')
         return
     import report_auto
     if await report_auto.receive(message):return
@@ -144,9 +144,8 @@ async def receive_photo(message):
     draft = Draft(uuid4().hex[:12], oid, image.file_id)
     drafts[message.from_user.id] = draft
     asyncio.get_running_loop().call_later(DRAFT_TTL, expire, message.from_user.id, draft)
-    import schedule
-    options=[('Отчёт продаж','read')]+([('График смен','schedule')] if schedule.enabled() else [])+[('Отмена','cancel')]
-    await message.answer('Что на фото? Для распознавания отправлю изображение в Groq.',reply_markup=kb(draft,options))
+    await message.answer('Чтобы читать отчёты, буду отправлять твои фото в Groq',
+                         reply_markup=kb(draft, [('Разрешить', 'read'), ('Отмена', 'cancel')]))
 
 
 async def ask_date_or_preview(message, draft):
@@ -219,8 +218,9 @@ async def photo_callback(callback):
             expire(callback.from_user.id, draft)
             await callback.message.edit_text('Хорошо, этот отчёт не сохраняю.')
         elif action == 'schedule' and draft.phase == 'consent':
-            from schedule_chat import start_photo
-            await start_photo(callback,draft)
+            from ux_chat import FAQ
+            expire(callback.from_user.id, draft)
+            await callback.message.edit_text(FAQ['schedule'][1])
         elif action == 'read' and draft.phase == 'consent':
             import research
             research.track(callback.from_user.id,'sales_report_started')
@@ -266,7 +266,11 @@ async def photo_callback(callback):
                     await report_failure(callback.message,draft,ValueError('category_photo_read'))
                     return
                 text = str(error) if isinstance(error, vision.VisionError) else 'Не удалось скачать фото. Попробуй ещё раз.'
-                await callback.message.edit_text(text, reply_markup=kb(draft, [('Повторить', 'read'), ('Отмена', 'cancel')]))
+                markup = kb(draft, [('Повторить', 'read'), ('Отмена', 'cancel')])
+                if text == 'Не получилось прочитать фото. Попробуй позже или напиши Лёше.':
+                    from report_auto import contact
+                    markup.inline_keyboard.extend(contact().inline_keyboard)
+                await callback.message.edit_text(text, reply_markup=markup)
                 return
             research.track(callback.from_user.id,'vision_completed')
             draft.phase = 'row'

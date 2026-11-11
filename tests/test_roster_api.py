@@ -446,6 +446,32 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
     async def roster(self, action, uid, status=200, **body):
         return await self.post('/api/restaurant/roster/' + action, uid, status, **body)
 
+    async def test_calendar_wish_edit_checks_signed_actor_and_period(self):
+        import roster_wishes
+        await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
+        row = self.fake.rows['rosters'][0]
+        row['collect_wishes_at'] = '2026-11-11T09:00:00Z'
+        payload = {'action':'wish_save', 'date':'2026-11-18', 'kind':'preferred', 'roster_id':row['id'],
+                   'revision':0, 'operation_id':str(uuid4())}
+        with patch.object(roster_wishes, 'save', new=AsyncMock(return_value={
+            'status':'ok', 'revision':1, 'days':[], 'desired_days':['2026-11-18'],
+        })) as save:
+            await self.post('/api/calendar_edit', WAITER, 401, initData='wrong', **payload)
+            await self.post('/api/calendar_edit', MANAGER, 403, **payload)
+            await self.post('/api/calendar_edit', WAITER, 404, **{**payload, 'roster_id':str(uuid4())})
+            save.assert_not_awaited()
+            result = await self.post('/api/calendar_edit', WAITER, user_id=MANAGER, **payload)
+            self.assertEqual(result['revision'], 1)
+            self.assertIn('желательные выходные', result['message'])
+            uid, link, saved_row, _, changes = save.await_args.args
+            self.assertEqual(uid, WAITER)
+            self.assertEqual(link['restaurant_id'], PLACE)
+            self.assertEqual(saved_row['id'], row['id'])
+            self.assertEqual(changes, {'2026-11-18':'preferred'})
+            save.return_value = {'status':'conflict'}
+            conflict = await self.post('/api/calendar_edit', WAITER, 409, **payload)
+            self.assertIn('уже изменилось', conflict['error'])
+
     async def test_creating_a_schedule_builds_variants_and_the_rest_follows(self):
         made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
         # Менеджер в график смен не попадает: в нём только официанты.

@@ -46,8 +46,8 @@ def prompt_text(start, end, limit, today=None, again=False):
     example = ', '.join(str(d.day) for d in (days[1], days[8])) if len(days) > 8 else ''
     head = 'Напиши числа заново' if again else f'График на {period_text(start, end)}. Напиши числа обязательных выходных'
     tail = f' Например: {example}.' if example else ''
-    return (f'{head}.{tail} Обязательных — {limit}; если нужно больше, менеджер согласует.\n'
-            'Если выходные не нужны, напиши «нет».')
+    return (f'{head}.{tail} Обязательных — {limit}; если нужно больше, менеджер решит, получится ли учесть эти даты.\n'
+            'Если пожеланий нет, напиши «пожеланий нет».')
 
 
 def over_note(chosen, limit):
@@ -64,7 +64,7 @@ def summary_text(start, end, chosen, limit=None):
     return f'График на {period_text(start, end)}. Записал выходные: {days_text(chosen)}.' + over_note(chosen, limit)
 
 
-NONE = re.compile(r'(нет|без выходных|не нужно|не надо|ничего|пропустить)[.!]?')
+NONE = re.compile(r'(нет|пожеланий нет|без выходных|не нужно|не надо|ничего|пропустить)[.!]?')
 FILLER = re.compile(r'\b(и|числа|число|выходные|выходной|мои)\b')
 MONTH = re.compile(r'\b(' + '|'.join(roster.MONTHS) + r')\b')
 
@@ -206,14 +206,20 @@ async def save(link, start, end, days):
 async def for_period(restaurant_id, start):
     """Ответы сотрудников на период: {id сотрудника: [даты]}. Без migration_v32 ответов нет."""
     try:
-        rows = await db._pages(lambda: db.supabase.table('day_off_requests').select('link_id,days')
+        rows = await db._pages(lambda: db.supabase.table('day_off_requests').select('*')
                                .eq('restaurant_id', restaurant_id).eq('start_date', start.isoformat())
                                .eq('answered', True).order('link_id'))
     except APIError as error:
         if error.code in MISSING:
             return {}
         raise
-    return {r['link_id']: list(r['days']) for r in rows}
+    return {r['link_id']: list(r['days']) for r in rows if _active_request(r)}
+
+
+def _active_request(row):
+    # Before v37 there is no roster_id. Afterwards a NULL roster_id means the
+    # old answer has no matching roster and must not enter a new draft.
+    return 'roster_id' not in row or row['roster_id'] is not None
 
 
 async def ask(bot, restaurant_id, start, end, links, answered):
@@ -336,7 +342,7 @@ async def save_weekdays(link, days, pattern=None):
     from datetime import datetime, timezone
     table = db.supabase.table('weekday_wishes')
     if not days and not pattern:
-        await db._execute(table.delete().eq('link_id', link['id']), retries=1)
+        await db._execute(table.delete().eq('link_id', link['id']).eq('restaurant_id', link['restaurant_id']), retries=1)
         return True
     row = {'link_id': link['id'], 'restaurant_id': link['restaurant_id'], 'days': sorted(set(days)),
            'updated_at': datetime.now(timezone.utc).isoformat()}
@@ -375,35 +381,39 @@ async def weekdays_for(restaurant_id):
     return {link: w['days'] for link, w in (await wishes_for(restaurant_id)).items() if w['days']}
 
 
-async def mine(link_id):
+async def mine(link_id, restaurant_id=None):
     """Что человек сам записал: обязательные выходные на текущие и будущие графики и пожелание по дням недели."""
     today = roster_today().isoformat()
     result = {'requests': [], 'weekdays': [], 'pattern': None}
     try:
-        rows = (await db._execute(db.supabase.table('day_off_requests').select('start_date,end_date,days')
-                                  .eq('link_id', link_id).eq('answered', True).gte('end_date', today)
-                                  .order('start_date'))).data
+        query = (db.supabase.table('day_off_requests').select('*')
+                 .eq('link_id', link_id).eq('answered', True).gte('end_date', today))
+        if restaurant_id:
+            query = query.eq('restaurant_id', restaurant_id)
+        rows = (await db._execute(query.order('start_date'))).data
         result['requests'] = [{'start': r['start_date'], 'end': r['end_date'], 'days': sorted(r['days']),
                                'limit': roster.off_limit((date.fromisoformat(r['end_date']) - date.fromisoformat(r['start_date'])).days + 1)}
-                              for r in rows if r['days']]
+                              for r in rows if r['days'] and _active_request(r)]
     except APIError as error:
         if error.code not in MISSING:
             raise
-    wish = await wish_of(link_id)
+    wish = await wish_of(link_id, restaurant_id)
     result['weekdays'], result['pattern'] = wish['days'], wish['pattern']
     return result
 
 
-async def wish_of(link_id):
+async def wish_of(link_id, restaurant_id=None):
     """Текущее пожелание человека: {'days': [...], 'pattern': '2/2' или None}."""
-    table = lambda: db.supabase.table('weekday_wishes')
+    def query(fields):
+        q = db.supabase.table('weekday_wishes').select(fields).eq('link_id', link_id)
+        return q.eq('restaurant_id', restaurant_id) if restaurant_id else q
     try:
         try:
-            rows = (await db._execute(table().select('days,pattern').eq('link_id', link_id))).data
+            rows = (await db._execute(query('days,pattern'))).data
         except APIError as error:
             if error.code not in ('42703', 'PGRST204'):
                 raise
-            rows = (await db._execute(table().select('days').eq('link_id', link_id))).data
+            rows = (await db._execute(query('days'))).data
     except APIError as error:
         if error.code in MISSING:
             return {'days': [], 'pattern': None}
@@ -414,7 +424,7 @@ async def wish_of(link_id):
 async def upcoming_for(restaurant_id):
     """Записанные обязательные выходные ресторана на текущие и будущие графики: {id сотрудника: [даты]}."""
     try:
-        rows = await db._pages(lambda: db.supabase.table('day_off_requests').select('link_id,days')
+        rows = await db._pages(lambda: db.supabase.table('day_off_requests').select('*')
                                .eq('restaurant_id', restaurant_id).eq('answered', True)
                                .gte('end_date', roster_today().isoformat()).order('link_id'))
     except APIError as error:
@@ -422,6 +432,6 @@ async def upcoming_for(restaurant_id):
             return {}
         raise
     found = {}
-    for r in rows:
+    for r in filter(_active_request, rows):
         found.setdefault(r['link_id'], []).extend(r['days'])
     return {link: sorted(set(days)) for link, days in found.items() if days}

@@ -234,7 +234,7 @@ async def chat_json(make_body, prompt_tokens, max_tokens, timeout=60):
                     continue
                 raise quota
             if response.status_code in (401, 403):
-                denied = VisionError('Фото пока прочитать не получается. Сообщи администратору — он проверит подключение.')
+                denied = VisionError('Не получилось прочитать фото. Попробуй позже или напиши Лёше.')
                 denied.diagnostic = note
                 raise denied
             if response.status_code != 200:
@@ -258,7 +258,7 @@ async def chat_json(make_body, prompt_tokens, max_tokens, timeout=60):
 
 async def request_json(image, prompt, max_tokens=1800):
     if not configured():
-        raise VisionError('Читать фото пока не умею. Можно записать отчёт сообщением.')
+        raise VisionError('Распознавание фото сейчас недоступно. Результаты можно внести вручную в разделе «План».')
     if not image or len(image) > MAX_BYTES:
         raise VisionError('Пришли фото размером до 8 МБ.')
     if image.startswith(b'\xff\xd8\xff'):
@@ -319,7 +319,7 @@ async def recognize_directory(image):
             seen.add(index)
         return {'cutoff':None,'targets':{},'relaxed_grid':relaxed,'rows':[{'index':r['index'],'name':r['name'].strip()} for r in rows]}
     except (ValueError,KeyError,TypeError,OSError):
-        raise VisionError('Не удалось прочитать имена в отчёте. Пришли более чёткий файл. Если это график смен, выбери «График смен».') from None
+        raise VisionError('Не удалось прочитать имена в отчёте. Пришли более чёткий файл.') from None
 
 
 def printed_number(value, percent=False):

@@ -116,10 +116,9 @@ def undo_kb(entry_ids: list[int], toggle_entry: dict | None = None,
 # ─── /start и знакомство ─────────────────────────────────────────────────────
 
 def _welcome_text(name: str) -> str:
-    return (f"Привет, {html.escape(name)}! 💛\n\n"
-            "График смен составляет менеджер на сайте ресторана. Когда он опубликует график, я пришлю твои смены сообщением, а весь график будет в «Статистике» → «График». Если такой вкладки нет, менеджер ещё не подтвердил тебя или не опубликовал график.\n\n"
-            "Ещё здесь можно записывать чаевые: пришли сумму, например <i>чай 1500</i>. "
-            "Их видишь только ты.")
+    return (f"Привет, {html.escape(name)}! Здесь можно записывать пожелания к графику, чаевые и расходы.\n\n"
+            "График составляет менеджер. После публикации он появится в разделе «График». "
+            "Чаевые и календарь — в «Статистике».")
 
 
 
@@ -146,7 +145,7 @@ async def cmd_start(message: Message, state: FSMContext):
     if (message.text or '').strip().endswith('help'):
         await cmd_help(message)
         return
-    # Ссылка из приложения «Оставить пожелание».
+    # Ссылка из приложения «Обратная связь».
     if (message.text or '').strip().endswith('wish'):
         if not user.get('onboarded'):await db.set_onboarded(message.from_user.id)
         from ux_chat import ask_wish
@@ -196,9 +195,8 @@ async def send_help(message: Message,user_id: int):
 async def show_history(message: Message):
     import research
     research.track(message.from_user.id,"tab_opened",screen="history")
-    await message.answer('Нижнее меню убрал. История и правки есть в «Статистике».',
-                         reply_markup=hide_old_menu())
     if (await db.get_or_create_user(message.from_user.id)).get('private_money_mode'):
+        await message.answer('История и правки доступны в «Статистике».', reply_markup=hide_old_menu())
         return
     entries = await db.get_recent_entries(message.from_user.id, limit=15)
     if not entries:
@@ -314,7 +312,7 @@ async def cmd_privacy(message: Message):
         "• личные планы продаж, записи продаж и версии официальных отчётов",
         "• календарная подписка, если ты её подключил",
         "• отметки обработанных сообщений без сумм — они защищают от повторных записей",
-        "• Фото отчётов и графиков отправляются в Groq после твоего разрешения. "
+        "• Фото отчётов отправляются в Groq после твоего разрешения. "
         "Его спрашиваем один раз, перед первым распознаванием. "
         "Фото не сохраняется в базе, черновик распознавания хранится в памяти до 15 минут",
         "",
@@ -329,7 +327,7 @@ async def cmd_privacy(message: Message):
         "Для улучшения бота отдельно сохраняем действия: открытие раздела, успешную запись, "
         "шаг знакомства и код ошибки. Без сумм, сообщений и фотографий. "
         "Владелец бота видит эти пути под внутренними номерами, например U-0184. "
-        "Пожелания и обращения, которые ты отправляешь через «Оставить пожелание», он читает отдельно. "
+        "Обращения, которые ты отправляешь через «Обратная связь», он читает отдельно. "
         "Свои данные, события и обращения можно забрать или удалить кнопками ниже.",
         "",
         "Я не считаю твой баланс и не знаю, сколько у тебя денег — "
@@ -577,7 +575,7 @@ async def shift_plan(message: Message):
         await message.answer("План смены убрал.")
         return
     await db.set_shift_goal(message.from_user.id, goal)
-    await message.answer(f"План смены: <b>{fmt(goal)} ₽ чая</b>. Вечером посмотрим, как получилось.")
+    await message.answer(f"План чаевых на смену: <b>{fmt(goal)} ₽</b>. Результат виден в «Статистике».")
 
 
 # ─── закрытие смены: траты кнопками ──────────────────────────────────────────
@@ -607,7 +605,7 @@ async def send_shift_close_prompt(message: Message):
 
 @router.message(F.text.in_({"🧾 Записать расход", "🧾 Закрыть смену"}))
 async def shift_close_button(message: Message):
-    await message.answer('Нижнее меню убрал. Расходы можно записывать прямо сообщением.',
+    await message.answer('Расход можно записать сообщением, например «такси 430».',
                          reply_markup=hide_old_menu())
     await send_shift_close_prompt(message)
 
@@ -713,8 +711,7 @@ async def legacy_button(message: Message):
         await _greet(message, _name(message))
         return
     await message.answer(
-        "Я теперь считаю только чаевые.\n"
-        "Историю и правки можно открыть в «Статистике». Подсказки — по кнопке ниже.",
+        "Чаевые и расходы можно записать сообщением. История и правки доступны в «Статистике».",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Как пользоваться ботом",callback_data="ux:help")]]),
     )
 
@@ -901,14 +898,14 @@ async def _save_bank_tips(message: Message, notif: dict, source_messages=None):
     if notif.get("tip_percent"):
         details.append(f"{notif['tip_percent']:g}%")
     details_str = f" ({', '.join(details)})" if details else ""
-    await message.answer(
-        f"➕ Чаевые <b>{fmt(tips)} ₽</b>{details_str} → карта"+
-        (f" · {count} уведомлений" if count>1 else "")+"\n\n"
+    from ux_chat import entry_confirmation
+    await entry_confirmation(
+        message, [entry],
+        f"➕ Чаевые <b>{fmt(tips)} ₽</b>{details_str} → карта"
+        + (f" · {count} уведомлений" if count > 1 else "") + "\n\n"
         + await today_block(message.from_user.id),
-        reply_markup=undo_kb([entry["id"]], toggle_entry=entry),
+        undo_kb([entry["id"]], toggle_entry=entry),
     )
-    from ux_chat import value_saved
-    await value_saved(message,entry)
 
 
 # Telegram delivers a selection of forwarded text messages as separate updates.
@@ -1165,9 +1162,6 @@ async def handle_text(message: Message, state: FSMContext):
     except Exception as error:
         from diagnostics import failure
         failure(error,area='money_batch',stage='totals')
-    await message.answer(body,reply_markup=undo_kb([e['id'] for e in saved],toggle_entry=toggle,
-                         batch=(message.chat.id,message.message_id) if len(saved)>1 else None))
-
-    from ux_chat import value_saved
-    for entry in saved:
-        await value_saved(message,entry)
+    from ux_chat import entry_confirmation
+    await entry_confirmation(message, saved, body, undo_kb([e["id"] for e in saved], toggle_entry=toggle,
+                             batch=(message.chat.id, message.message_id) if len(saved) > 1 else None))

@@ -190,9 +190,10 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('Уже пишу',self.message.answer.call_args.args[0])
         self.assertNotIn('private error',' '.join(logs.output))
 
-    async def test_schedule_links_keep_existing_flow(self):
+    async def test_schedule_links_point_to_manager(self):
         with patch.object(chat,'op_today',return_value=TODAY),patch.object(sheet,'tabs',new=AsyncMock(return_value=['Октябрь 26'])),patch.object(sheet,'read',new=AsyncMock(return_value=[])),patch.object(sheet,'fetch',new=AsyncMock(return_value='grid')),patch('schedule_sheet.parse_rows',return_value=[{'name':'Тест'}]),patch('schedule.enabled',return_value=True),patch('schedule_chat.sheet_link',new=AsyncMock()) as old:
             await chat.receive_link(self.message)
-            old.assert_awaited_once_with(self.message)
+            old.assert_not_awaited()
+            self.assertIn('Менеджер публикует график',self.message.answer.await_args.args[0])
 
 if __name__=='__main__':unittest.main()

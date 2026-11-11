@@ -41,7 +41,7 @@ async def start_site_login(message, command):
         await message.answer('Сейчас не получается открыть данные ресторана. Попробуй чуть позже.')
         return
     if not allowed:
-        await message.answer('Кабинет доступен администратору ресторана.')
+        await message.answer('Кабинет доступен владельцу ресторана, управляющему и менеджерам.')
         return
     code = site_auth.claim(token, message.from_user.id)
     if code is None:

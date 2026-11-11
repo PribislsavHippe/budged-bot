@@ -75,6 +75,9 @@ class Request:
     openers: dict[date, int] = field(default_factory=dict)
     # Во сколько раз важнее та или иная цель; так получаются разные варианты графика.
     weights: dict[str, float] = field(default_factory=dict)
+    wish_dates: dict[str, set[date]] = field(default_factory=dict)
+    wish_patterns: dict[str, str] = field(default_factory=dict)
+    pattern_history: dict[str, str] = field(default_factory=dict)
 
     @property
     def days(self):
@@ -151,13 +154,34 @@ def _recall_price(request, name):
     return RECALL_PROTECTED_COST if protected else RECALL_COST
 
 
-def _person_cost(row, money, target, wish_off, wish_starts, off, recall_price, w=None):
+def pattern_masks(pattern, size, history=''):
+    """All cycle phases, scored against the end of the preceding published period."""
+    if not pattern:
+        return ()
+    work, rest = map(int, pattern.split('/'))
+    cycle = work + rest
+    masks = []
+    for phase in range(cycle):
+        mask = sum(1 << i for i in range(size) if (i + phase) % cycle < work)
+        prior = sum((bit == '1') != ((i - len(history) + phase) % cycle < work)
+                    for i, bit in enumerate(history))
+        masks.append((mask, prior))
+    best_prior = min(prior for _, prior in masks)
+    return tuple((mask, prior - best_prior) for mask, prior in masks)
+
+
+def pattern_misses(mask, patterns):
+    return min(((mask ^ desired).bit_count() + prior for desired, prior in patterns), default=0)
+
+
+def _person_cost(row, money, target, wish_off, wish_starts, off, recall_price, w=None, patterns=()):
     """Штраф одного человека. row — приход по дням или None. w — веса целей (1 по умолчанию)."""
     w = w or {}
     streak_c, lonely_c, rise_c = STREAK_COST * w.get('streak', 1), LONELY_COST * w.get('lonely', 1), RISE_COST * w.get('rise', 1)
     shift_c, money_c, hour_c = SHIFT_COST * w.get('shift', 1), MONEY_COST * w.get('money', 1), HOUR_COST * w.get('hour', 1)
     cost = streak = shifts = paid = hours = refused = recalled = 0
     previous = None
+    worked = 0
     for index, start in enumerate(row):
         if start is None:
             if streak > MAX_STREAK:
@@ -170,6 +194,8 @@ def _person_cost(row, money, target, wish_off, wish_starts, off, recall_price, w
         if previous is not None and start < previous:
             cost += rise_c
         previous = start
+        if patterns:
+            worked |= 1 << index
         streak += 1
         shifts += 1
         hours += min(SHIFT_HOURS, CLOSE_HOUR - start)
@@ -188,6 +214,8 @@ def _person_cost(row, money, target, wish_off, wish_starts, off, recall_price, w
     elif streak == 1:
         cost += lonely_c
     cost += recall_price * recalled + RECALL_SPREAD_COST * recalled * recalled
+    if patterns:
+        cost += 18 * pattern_misses(worked, patterns)
     # Каждый следующий отказ одному человеку дороже: отказывать лучше понемногу всем.
     return (cost + REFUSAL_COST * refused * refused + shift_c * (shifts - target[0]) ** 2 + money_c * (paid - target[1]) ** 2
             + hour_c * (hours - target[2]) ** 2)
@@ -242,13 +270,16 @@ def _search(request, iterations, seed):
     hours_per_shift = total_hours / total_shifts if total_shifts else 0
     targets = [(shift_share[p], money_share[p], shift_share[p] * hours_per_shift) for p in range(len(people))]
 
-    wish_off = [[day in request.wish_off.get(name, ()) for day in days] for name in people]
+    wish_off = [[day in request.wish_off.get(name, ()) or day in request.wish_dates.get(name, ())
+                 for day in days] for name in people]
     wish_starts = [request.wish_starts.get(name) or None for name in people]
     off = [[request.is_off(name, day) for day in days] for name in people]
     prices = [_recall_price(request, name) for name in people]
+    patterns = [pattern_masks(request.wish_patterns.get(name), len(days), request.pattern_history.get(name, ''))
+                for name in people]
 
     def person_cost(p):
-        return _person_cost(table[p], money, targets[p], wish_off[p], wish_starts[p], off[p], prices[p], request.weights)
+        return _person_cost(table[p], money, targets[p], wish_off[p], wish_starts[p], off[p], prices[p], request.weights, patterns[p])
 
     table = [[None] * len(days) for _ in people]
     for d in range(len(days)):
@@ -322,7 +353,8 @@ def auto_days_off(request, seed=0, pairs=False):
     wish = {name: request.wish_off.get(name, set()) for name in people}
 
     def free(name, d):
-        return days[d] not in off[name] and extra[d] < room[d]
+        return (days[d] not in off[name] and days[d] not in request.wish_dates.get(name, ())
+                and extra[d] < room[d])
 
     def cost(name, d):
         near = sum(days[i] in off[name] for i in (d - 1, d + 1) if 0 <= i < len(days))
@@ -469,6 +501,7 @@ class Audit:
     streaks: list = field(default_factory=list)     # (имя, первый день, длина)
     people: dict = field(default_factory=dict)      # имя → {'shifts', 'money', 'hours'}
     too_many_off: list = field(default_factory=list)  # (имя, сколько обязательных выходных)
+    pattern_misses: dict[str, int] = field(default_factory=dict)
     wish_total: int = 0                             # сколько пожеланий было
     missed_off: list = field(default_factory=list)  # (имя, день): просил выходной, стоит смена
     missed_starts: list = field(default_factory=list)  # (имя, день, приход): приход не тот, что просил
@@ -496,7 +529,12 @@ def audit(request, schedule):
             result.no_reserve.append(day)
     for name in request.people:
         own = schedule.get(name, {})
-        wanted_off = request.wish_off.get(name, set()) - request.days_off.get(name, set())
+        wanted_off = (request.wish_off.get(name, set()) | request.wish_dates.get(name, set())) - request.days_off.get(name, set())
+        if pattern := request.wish_patterns.get(name):
+            masks = pattern_masks(pattern, len(days), request.pattern_history.get(name, ''))
+            worked = sum(1 << i for i, day in enumerate(days) if day in own)
+            result.pattern_misses[name] = min(len(days), pattern_misses(worked, masks))
+            result.wish_total += len(days)
         wanted = request.wish_starts.get(name)
         off_count = len(request.days_off.get(name, ()))
         if off_count > request.mandatory_limit and name not in request.students:
@@ -540,7 +578,7 @@ def _spread(values, key):
     return high, low, [n for n, v in numbers.items() if v == high], [n for n, v in numbers.items() if v == low]
 
 
-def report(request, schedule, findings=None):
+def report(request, schedule, findings=None, *, editor=False):
     """Текст для владельца: сначала что мешает, потом как распределилась нагрузка."""
     found = findings or audit(request, schedule)
     lines = [f'График {_day(request.start)} – {_day(request.end)}: {len(request.people)} человек, '
@@ -572,9 +610,10 @@ def report(request, schedule, findings=None):
     if found.too_many_off:
         lines += ['', f'Обязательных выходных больше {request.mandatory_limit} за период: '
                   + ', '.join(f'{name} ({count})' for name, count in found.too_many_off)
-                  + '. Если это учёба, добавь в строку человека «; учёба».']
+                  + ('. Если причина в учёбе, отметь «Учёба» у сотрудника.' if editor else
+                     '. Если это учёба, добавь в строку человека «; учёба».')]
     if found.wish_total:
-        missed = len(found.missed_off) + len(found.missed_starts)
+        missed = len(found.missed_off) + len(found.missed_starts) + sum(found.pattern_misses.values())
         lines += ['', f'Пожелания: выполнено {found.wish_total - missed} из {found.wish_total}.']
         by_off = {}
         for name, day in found.missed_off:
@@ -585,7 +624,7 @@ def report(request, schedule, findings=None):
         for name, day, start in found.missed_starts:
             by_start.setdefault(name, []).append((day, start))
         for day in request.days:
-            asking = [n for n in request.people if day in request.wish_off.get(n, ()) and not request.is_off(n, day)]
+            asking = [n for n in request.people if day in (request.wish_off.get(n, set()) | request.wish_dates.get(n, set())) and not request.is_off(n, day)]
             free = sum(not request.is_off(n, day) for n in request.people)
             spare = max(0, free - request.count(day))
             if len(asking) > spare:

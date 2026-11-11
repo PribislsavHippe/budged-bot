@@ -12,10 +12,14 @@ from aiogram.filters import StateFilter
 
 import days_off
 import roster
+import roster_wish_chat
 
 router = Router()
 router.message.filter(F.chat.type == 'private', F.text, StateFilter(None))
 router.callback_query.filter(F.message.chat.type == 'private', F.data.startswith(days_off.PREFIX + ':'))
+router.message.register(roster_wish_chat.write_reply, roster_wish_chat.message_filter)
+router.callback_query.register(roster_wish_chat.callback_kind, F.data.startswith('off:kind:'))
+router.callback_query.register(roster_wish_chat.callback_keep, F.data.startswith('off:keep:'))
 
 
 async def expecting(message):
@@ -80,7 +84,7 @@ async def write_request(message, found, link, state):
         if found['weekdays'] or found['pattern']:
             try:
                 # Люди пишут по частям («воскресенья», потом «и 2/2»): новое добавляется к прежнему пожеланию.
-                before = await days_off.wish_of(link['id'])
+                before = await days_off.wish_of(link['id'], link['restaurant_id'])
                 days = sorted(set(before['days']) | set(found['weekdays']))
                 pattern = found['pattern'] or before['pattern']
                 full = await days_off.save_weekdays(link, days, pattern)
@@ -90,7 +94,7 @@ async def write_request(message, found, link, state):
                     saved.append('пожелание: ' + ', '.join(bits))
                     buttons.append([Button(text='Удалить пожелание', callback_data=f'{days_off.PREFIX}:w')])
                 if found['pattern'] and not full:
-                    problems.append(f"«{found['pattern']}» в боте пока не сохраняется — нажми «Передать Леше весь текст».")
+                    problems.append(f"«{found['pattern']}» в боте пока не сохраняется — нажми «Передать Лёше весь текст».")
             except APIError as error:
                 if error.code not in days_off.MISSING:
                     raise
@@ -121,7 +125,7 @@ async def write_request(message, found, link, state):
     lines += problems
     # Целиком сообщение можно передать Леше: в нём может быть что-то ещё.
     await state.update_data(wish_text=(message.text or '').strip()[:2000], wish_message=message.message_id)
-    buttons.append([Button(text='Передать Леше весь текст', callback_data='ux:wishsend')])
+    buttons.append([Button(text='Передать Лёше весь текст', callback_data='ux:wishsend')])
     await message.answer('\n\n'.join(lines), reply_markup=Markup(inline_keyboard=buttons))
 
 

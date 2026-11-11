@@ -28,7 +28,11 @@ def photo_buttons(draft,rows):return buttons([(label,f'sch:{draft.nonce}:{key}')
 
 
 @router.message(Command('sheet'))
-@router.message(F.text.regexp(r'https://docs\.google\.com/spreadsheets/d/'))
+async def schedule_import_help(message):
+    from ux_chat import FAQ
+    await message.answer(FAQ['schedule'][1])
+
+
 async def sheet_link(message):
     from report_photo import Draft,drafts,expire,DRAFT_TTL
     try:sheet_id,gid=schedule_sheet.link(message.text)
@@ -132,7 +136,9 @@ async def photo_action(callback):
     from report_photo import drafts,expire
     parts=callback.data.split(':');draft=drafts.get(callback.from_user.id)
     if len(parts)!=3 or not draft or draft.nonce!=parts[1]:
-        await callback.answer('Пришли график ещё раз.');return
+        from ux_chat import FAQ
+        await callback.answer()
+        await callback.message.answer(FAQ['schedule'][1]);return
     if draft.lock.locked():await callback.answer('Ещё обрабатываю…');return
     await callback.answer()
     async with draft.lock:
@@ -395,7 +401,7 @@ async def ask_rate(callback,state):
     try:day=date.fromisoformat(callback.data.rsplit(':',1)[-1]).isoformat()
     except ValueError:return
     await callback.answer();await state.set_state(Work.rate);await state.set_data({'rate_day':day})
-    await callback.message.answer('Сколько рублей в час? Например, 350. Ставку видишь только ты в боте.',
+    await callback.message.answer('Сколько рублей в час? Например, 350.',
                                   reply_markup=buttons([('Пропустить','work:cancel')]))
 
 
@@ -413,7 +419,7 @@ async def set_rate(message,state,value):
     except Exception as error:
         from diagnostics import failure
         failure(error,area='work_time',stage='rate')
-        await message.answer('Не получилось сохранить ставку. Пришли её ещё раз.')
+        await message.answer('Не получил подтверждение сохранения ставки. Пришли ту же ставку ещё раз.')
         return
     await state.clear();await message.answer('Ставка сохранена для следующих смен.'+(' Добавил её и к этой смене.' if data.get('rate_day') else ''))
     if data.get('rate_day'):

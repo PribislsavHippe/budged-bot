@@ -199,6 +199,10 @@
   .cal-cell.shift.dark { box-shadow:inset 0 0 0 1.5px #9ecbe8; }
   .cal-cell.today { box-shadow:inset 0 0 0 2px var(--ink);color:var(--ink);font-weight:400; }
   .cal-cell.today.dark { box-shadow:inset 0 0 0 2px #fff;color:#fff; }
+  .cal-cell[data-wish="required"],.cal-cell[data-wish="required"].today { box-shadow:inset 0 0 0 1.5px #a93232; }
+  .cal-cell[data-wish="preferred"],.cal-cell[data-wish="preferred"].today { box-shadow:inset 0 0 0 1.5px #b18400; }
+  #day-wish-actions { flex-wrap:wrap; }
+  #day-wish-actions[hidden] { display:none; }
   .cal-cell.empty { background:none;box-shadow:none; }
   .cal-time { font-size:11px;line-height:1.05;letter-spacing:0;white-space:normal;max-width:100%; }
   .cal-title { font-size:15px;font-weight:400; }
@@ -342,18 +346,19 @@
       <div class="help-head"><p class="sheet-title" id="help-title">Чем помочь?</p><button id="help-close" type="button">Закрыть</button></div>
       <div id="help-home">
         <p class="help-copy">Есть пожелание или что-то не получается? Напиши — Леша прочитает. Или посмотри ответы на частые вопросы.</p>
-        <button class="help-action primary" id="help-wish" type="button">Оставить пожелание ↗</button>
+        <button class="help-action primary" id="help-wish" type="button">Обратная связь ↗</button>
         <button class="help-action" id="help-faq-open" type="button">Частые вопросы ›</button>
-        <button class="help-action" id="help-contact" type="button">Написать Леше ↗</button>
+        <button class="help-action" id="help-contact" type="button">Написать Лёше ↗</button>
       </div>
       <div id="help-faq" hidden>
         <p class="help-copy">Короткие ответы на задачи, которые уже есть в боте.</p>
         <details class="help-question"><summary>Как записать чаевые или расход?</summary><p>Пришли боту сумму: <b>чай 1500</b>. Расход укажи с названием: <b>такси 430</b>. Бот покажет, сколько осталось чистыми.</p></details>
         <details class="help-question"><summary>Как исправить запись?</summary><p>Открой «История и правки» внизу миниаппа. Если запись относится к конкретной смене, выбери её день в календаре.</p></details>
-        <details class="help-question"><summary>Где мой график?</summary><p>График смен составляет менеджер на сайте ресторана. Когда он опубликует график, бот пришлёт твои смены сообщением, а весь график будет во вкладке «График». Если такой вкладки нет, менеджер ещё не подтвердил тебя или не опубликовал график.</p></details>
-        <details class="help-question"><summary>Как передать пожелание?</summary><p>Нажми «Оставить пожелание» и напиши его боту одним сообщением. Его прочитает Леша. Если хочешь выходные в определённые дни недели, просто напиши боту, например: <b>выходной по вторникам</b>. Программа постарается это учесть.</p></details>
+        <details class="help-question"><summary>Где мой график?</summary><p>Менеджер публикует график в разделе «График». Твои смены также появляются в календаре под чаевыми. Пожелания до публикации отмечены красной или жёлтой обводкой. После публикации календарь показывает рабочие смены.</p></details>
+        <details class="help-question"><summary>Как записать выходные?</summary><p>Открой календарь под чаевыми, выбери день и нажми «Обязательный» или «Желательный». Изменить или убрать просьбу можно там же. Можно написать и в чат: «не могу работать 18-го, желательно выходной 20-го». Режим 2/2 или 3/3 тоже можно прислать сообщением — это пожелание, которое может выполняться частично.</p></details>
+        <details class="help-question"><summary>Как отправить обратную связь?</summary><p>Чтобы сообщить об ошибке или предложить улучшение бота, нажми «Обратная связь». Обращение получит Лёша. Даты выходных меняются в календаре под чаевыми.</p></details>
         <button class="help-action" id="help-faq-back" type="button">← Назад</button>
-        <button class="help-action primary" id="help-faq-contact" type="button">Не нашёл ответ? Написать Леше ↗</button>
+        <button class="help-action primary" id="help-faq-contact" type="button">Не нашёл ответ? Написать Лёше ↗</button>
       </div>
       <p class="help-status" id="help-status" role="status"></p>
       <a class="help-manual" id="help-manual" hidden target="_blank" rel="noopener">Открыть чат в Telegram ↗</a>
@@ -381,6 +386,15 @@
     <div class="sheet">
       <div class="day-header"><p class="sheet-title" id="day-title">—</p><button id="day-close" type="button">Готово</button></div>
       <div id="day-body"></div>
+      <div id="day-wishes" hidden>
+        <p class="day-note" id="day-wish-text"></p>
+        <div class="day-shift-actions" id="day-wish-actions" hidden>
+          <button type="button" class="btn" data-wish-kind="required">Обязательный</button>
+          <button type="button" class="btn" data-wish-kind="preferred">Желательный</button>
+          <button type="button" class="btn btn-ghost" data-wish-kind="none">Убрать просьбу</button>
+        </div>
+        <p class="sheet-sub" id="day-wish-status" role="status"></p>
+      </div>
       <p class="sheet-sub" id="day-status" role="status"></p>
       <details class="day-edit" id="day-tips-details">
         <summary id="day-tips-summary">Добавить чаевые</summary>
@@ -504,7 +518,8 @@ function render(s) {
 
 
 // ── календарь: любой месяц, листается стрелками ──
-let calYear = null, calMonth = null;   // что сейчас на экране, month = 1..12
+let calYear = null, calMonth = null, calendarView = null;
+let monthRequest = 0;
 
 function calViewFromStats(s) {
   // Текущий месяц уже пришёл в /api/stats — лишний запрос не нужен.
@@ -514,7 +529,7 @@ function calViewFromStats(s) {
     days: s.month_days, days_in_month: s.days_in_month,
     scheduled_shifts: s.scheduled_shifts, today_day: s.today_day,
     planned_times: s.planned_times, worked_times: s.worked_times,
-    tip_entries: s.tip_entries,
+    tip_entries: s.tip_entries, calendar_wishes: s.calendar_wishes,
     shifts_count: s.shifts_count, tips_total: s.month_tips,
     has_prev: s.has_prev, has_next: s.has_next,
   };
@@ -524,6 +539,7 @@ function paintCalendar(view) {
   document.getElementById('cal-sum').classList.remove('error');
   calYear = view.year;
   calMonth = view.month;
+  calendarView = view;
 
   document.getElementById("cal-title").textContent =
     MONTHS_UP[view.month - 1] + " " + view.year;
@@ -571,18 +587,23 @@ function paintCalendar(view) {
       cell.style.fontWeight = "400";
       cell.title = d.day + ": " + rub(d.tips) + " ₽";
     }
-    if (shiftDays.has(d.day)) cell.classList.add("shift");
+    const wish = view.calendar_wishes?.days?.[calendarDate(view,d.day)];
+    if (wish?.kind && !wish.published) cell.dataset.wish=wish.kind;
+    else if (wish?.published && wish.working!=null ? wish.working : shiftDays.has(d.day)) cell.classList.add("shift");
     if (d.day === view.today_day) {
       cell.classList.add("today");   // null в чужих месяцах
       cell.setAttribute('aria-current','date');
     }
 
-    cell.setAttribute("aria-label", d.day + " " + MONTHS_GEN[view.month - 1] + ". Открыть день");
+    const wishLabel = cell.dataset.wish==='required' ? '. Планируемый обязательный выходной'
+      : cell.dataset.wish==='preferred' ? '. Планируемый желательный выходной' : '';
+    cell.setAttribute("aria-label", d.day + " " + MONTHS_GEN[view.month - 1] + wishLabel + ". Открыть день");
     cell.onclick = function () { openDay(view, d); };
     grid.appendChild(cell);
   });
 
   const sum = document.getElementById("cal-sum");
+
   const planned = (view.scheduled_shifts || []).length;
   if (window.privateMoney.state.lost) {
     sum.innerHTML=(planned ? "Запланировано " + shiftsWord(planned) + ". " : "График пуст. ") +
@@ -595,6 +616,10 @@ function paintCalendar(view) {
     sum.innerHTML = "Запланировано " + shiftsWord(planned);
   } else {
     sum.textContent = "Чаевые за месяц не записаны";
+  }
+  if (view.calendar_wishes?.error) {
+    sum.append(document.createElement('br'), view.calendar_wishes.error);
+    sum.classList.add('error');
   }
   if (selectedDayISO && selectedDayISO.slice(0,7) === view.year + "-" + String(view.month).padStart(2,"0")) {
     const day = Number(selectedDayISO.slice(8));
@@ -681,7 +706,88 @@ function openDay(view, d) {
     remove.onclick = function () { calendarEdit({action:"tip_delete",entry_id:e.id}); };
     row.append(label,amount,remove);list.appendChild(row);
   });
+  renderDayWishes(view);
   document.getElementById("day").classList.add("on");
+}
+
+function calendarDate(view,day) {
+  return `${view.year}-${String(view.month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+}
+
+let dayWishPending=null, dayWishNotice=null, dayWishBusy=false;
+function wishDayText(wish) {
+  if(wish.published) {
+    if(wish.working===false) return 'По опубликованному графику у тебя выходной.';
+    if(wish.kind && wish.changed) return 'Просьба записана. Менеджер увидит изменение. Пока действует опубликованный график.';
+    if(wish.working && wish.kind==='required') return 'На этот день опубликована смена, хотя ты просил обязательный выходной. Обсуди это с менеджером.';
+    if(wish.working && wish.kind==='preferred') return 'На этот день опубликована смена. Желательный выходной не получился.';
+    return '';
+  }
+  if(wish.kind==='required') return 'Планируемый обязательный выходной. Просьба записана, график ещё не опубликован.';
+  if(wish.kind==='preferred') return 'Планируемый желательный выходной. Просьба записана, график ещё не опубликован.';
+  return '';
+}
+
+function renderDayWishes(view) {
+  const wishes=view.calendar_wishes, wish=wishes?.days?.[selectedDayISO];
+  const panel=document.getElementById('day-wishes');
+  const actions=document.getElementById('day-wish-actions');
+  const buttons=actions.querySelectorAll('[data-wish-kind]');
+  panel.hidden=!(wish || wishes?.error);
+  actions.hidden=!wish?.editable;
+  document.getElementById('day-wish-text').textContent=wishes?.error || (wish ? wishDayText(wish) : '');
+  document.getElementById('day-wish-status').textContent=dayWishNotice?.date===selectedDayISO ? dayWishNotice.text : '';
+  for(const button of buttons) {
+    const kind=button.dataset.wishKind;
+    button.disabled=dayWishBusy || kind===wish?.kind || (kind==='none'&&!wish?.kind);
+    button.setAttribute('aria-pressed',String(kind===wish?.kind));
+    button.onclick=()=>saveCalendarWish(wish,kind);
+  }
+}
+
+async function saveCalendarWish(wish,kind) {
+  if(!wish?.editable || dayWishBusy || !selectedDayISO)return;
+  const date=selectedDayISO, year=calYear, month=calMonth;
+  const status=document.getElementById('day-wish-status');
+  const buttons=document.querySelectorAll('#day-wish-actions button');
+  const same=dayWishPending?.date===date && dayWishPending.kind===kind && dayWishPending.roster_id===wish.roster_id
+    && dayWishPending.revision===wish.revision;
+  const payload=same ? dayWishPending : {action:'wish_save',date,kind,roster_id:wish.roster_id,
+    revision:wish.revision,operation_id:crypto.randomUUID()};
+  dayWishPending=payload;
+  dayWishBusy=true;
+  buttons.forEach(button=>button.disabled=true);
+  status.textContent='';
+  let refresh=false;
+  try {
+    const response=await fetch('/api/calendar_edit',{method:'POST',headers:{'Content-Type':'application/json'},
+      cache:'no-store',signal:AbortSignal.timeout(20000),body:JSON.stringify({...payload,initData:tg?.initData||''})});
+    const result=await response.json();
+    if(response.ok && result.saved) {
+      dayWishPending=null;
+      refresh=true;
+      dayWishNotice={date,text:result.message};
+      const days=calendarView?.calendar_wishes?.days;
+      if(days?.[date]?.roster_id===wish.roster_id && days[date].revision<=result.revision) {
+        for(const entry of Object.values(days)) {
+          if(entry.roster_id===wish.roster_id)entry.revision=result.revision;
+        }
+        days[date].kind=kind==='none' ? null : kind;
+        days[date].changed=days[date].published && kind!=='none';
+        paintCalendar(calendarView);
+      }
+    } else {
+      if(response.status<500)dayWishPending=null;
+      refresh=response.status===409;
+      dayWishNotice={date,text:result.error||'Не получил подтверждение сохранения. Проверь пожелание перед повтором.'};
+    }
+  } catch {
+    dayWishNotice={date,text:'Не получил подтверждение сохранения. Проверь пожелание перед повтором.'};
+  } finally {
+    if(refresh && calYear===year && calMonth===month)await loadMonth(year,month);
+    dayWishBusy=false;
+    if(selectedDayISO && calendarView)renderDayWishes(calendarView);
+  }
 }
 
 let selectedDayISO = null;
@@ -778,21 +884,24 @@ document.getElementById("day").addEventListener("keydown", function (e) {
 });
 
 function loadMonth(year, month) {
+  const request=++monthRequest;
   const grid = document.getElementById("cal-grid");
   grid.classList.add("loading");
-  fetch("/api/month", {
+  return fetch("/api/month", {
     method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+    signal: AbortSignal.timeout(20000),
     body: JSON.stringify({ initData: tg ? tg.initData : "", year: year, month: month,
       ...window.privateMoney.payload }),
   })
     .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-    .then(data=>paintCalendar(window.PrivateFinance.view('/api/month',{year,month},data)))
-    .catch(function (e) {
+    .then(data=>{if(request===monthRequest)paintCalendar(window.PrivateFinance.view('/api/month',{year,month},data));})
+    .catch(function () {
+      if(request!==monthRequest)return;
       const error=document.getElementById("cal-sum");
       error.textContent = "Не получилось загрузить месяц. Попробуй ещё раз.";
       error.classList.add('error');
     })
-    .then(function () { grid.classList.remove("loading"); });
+    .finally(function () { if(request===monthRequest)grid.classList.remove("loading"); });
 }
 
 function calStep(delta) {

@@ -108,7 +108,7 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         message = self.message()
         with patch.object(self.chat, 'has_cabinet', AsyncMock(return_value=False)):
             await self.chat.start_site_login(message, NS(args='site_' + token))
-        self.assertIn('администратору ресторана', message.answer.await_args.args[0])
+        self.assertIn('управляющему и менеджерам', message.answer.await_args.args[0])
         self.assertFalse(site_auth.decide(token, 42, True))
         self.assertEqual(site_auth.poll(poll_id), ('pending',))
 

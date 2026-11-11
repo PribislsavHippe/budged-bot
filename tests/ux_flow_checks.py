@@ -22,17 +22,19 @@ class Flows(unittest.IsolatedAsyncioTestCase):
         with patch.object(handlers.db,'get_or_create_user',new=AsyncMock(return_value={'id':5,'onboarded':False,'tutorial_step':'new'})),patch.object(handlers.db,'set_onboarded',new=AsyncMock()),patch.object(research,'subject',new=AsyncMock(return_value={'cohort':'new','onboarding_state':'not_started'})),patch.object(research,'record',new=AsyncMock(return_value={'state':'started'})),patch.object(research,'track'):
             await handlers.cmd_start(message,state)
         self.assertEqual(message.answer.await_count,1)
-        self.assertIn('чай 1500',message.answer.await_args.args[0])
+        self.assertIn('Чаевые и календарь',message.answer.await_args.args[0])
         self.assertNotIn('Твои смены — в одном месте',message.answer.await_args.args[0])
         # Фото графика больше не предлагаем: график составляет менеджер.
         self.assertNotIn('фото',message.answer.await_args.args[0])
-        self.assertIn('составляет менеджер',message.answer.await_args.args[0])
+        self.assertIn('График составляет менеджер',message.answer.await_args.args[0])
         self.assertTrue(message.answer.await_args.kwargs['reply_markup'].remove_keyboard)
         recorded=AsyncMock(return_value={'first_value':True,'was_learning':True})
         message=await self.run_entry('чай 1500',recorded)
         self.assertEqual(recorded.await_args.args,(5,'tip_added'))
         self.assertNotIn('1500',str(recorded.await_args))
-        self.assertIn('такси 430',message.answer.await_args_list[-1].args[0])
+        self.assertEqual(message.answer.await_count,1)
+        self.assertIn('такси 430',message.answer.await_args.args[0])
+        self.assertIn('1 500',message.answer.await_args.args[0])
     async def test_existing_no_forced_onboarding(self):
         message=self.message('/start')
         with patch.object(handlers.db,'get_or_create_user',new=AsyncMock(return_value={'id':5,'onboarded':True,'tutorial_step':'tip'})),patch.object(handlers,'today_block',new=AsyncMock(return_value='Итог')),patch.object(ux_chat,'begin',new=AsyncMock()) as begin,patch.object(research,'track'):
@@ -51,10 +53,10 @@ class Flows(unittest.IsolatedAsyncioTestCase):
         with patch.object(identity_chat.identity,'request',new=AsyncMock(return_value={'status':'pending','report_name':'Тест Имя'})),patch.object(handlers.db,'get_or_create_user',new=AsyncMock(return_value={'id':5,'tutorial_step':'new'})),patch.object(handlers.db,'_execute',new=AsyncMock()),patch.object(research,'record',new=AsyncMock(return_value=None)),patch.object(research,'track'):
             await identity_chat.register_name(message,state)
             state.clear.assert_awaited_once()
-            self.assertIn('Заявку увидит менеджер',message.answer.await_args_list[0].args[0])
+            self.assertIn('Заявка отправлена менеджеру',message.answer.await_args_list[0].args[0])
             self.assertNotIn('фото',message.answer.await_args_list[0].args[0])
             self.assertNotIn('подтверждения',message.answer.await_args_list[0].args[0])
-            self.assertIn('чай 1500',message.answer.await_args.args[0])
+            self.assertIn('Чаевые и расходы уже можно записывать',message.answer.await_args.args[0])
 
     async def test_help_is_one_short_choice_and_faq_has_an_answer(self):
         message=self.message('/help')
@@ -63,13 +65,13 @@ class Flows(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.answer.await_count,1)
         self.assertNotIn('/reset',message.answer.await_args.args[0])
         markup=message.answer.await_args.kwargs['reply_markup']
-        self.assertEqual(markup.inline_keyboard[0][0].text,'Оставить пожелание')
+        self.assertEqual(markup.inline_keyboard[0][0].text,'Обратная связь')
         self.assertEqual(markup.inline_keyboard[0][0].callback_data,'ux:wish')
         self.assertEqual(markup.inline_keyboard[1][0].text,'Частые вопросы')
         self.assertEqual(markup.inline_keyboard[2][0].url,'https://t.me/lechatsergeev')
         callback=NS(data='ux:faq:schedule',message=message,answer=AsyncMock())
         await ux_chat.faq_answer(callback)
-        self.assertIn('составляет менеджер',message.answer.await_args.args[0])
+        self.assertIn('Менеджер публикует график',message.answer.await_args.args[0])
         self.assertNotIn('фото',message.answer.await_args.args[0])
         callback=NS(data='ux:faq:tips',message=message,answer=AsyncMock())
         await ux_chat.faq_answer(callback)
@@ -83,7 +85,7 @@ class Flows(unittest.IsolatedAsyncioTestCase):
         message.edit_reply_markup.assert_awaited_once()
         message.answer.reset_mock();message.edit_reply_markup.reset_mock()
         await ux_chat.choose_schedule(callback)
-        self.assertIn('составляет менеджер',message.answer.await_args.args[0])
+        self.assertIn('Менеджер публикует график',message.answer.await_args.args[0])
         self.assertNotIn('фото',message.answer.await_args.args[0])
         self.assertNotIn('1500 ₽ записаны',message.answer.await_args.args[0])
 
@@ -100,7 +102,7 @@ class Flows(unittest.IsolatedAsyncioTestCase):
             await handlers.handle_text(message,state)
         saved.assert_not_awaited()
         reply=message.answer.await_args
-        self.assertIn('пожелание',reply.args[0])
+        self.assertIn('Передать это сообщение Лёше?',reply.args[0])
         self.assertNotIn('сумма неоднозначна',reply.args[0])
         self.assertEqual(store['wish_text'],text)
         bot=NS(send_message=AsyncMock())
@@ -118,9 +120,9 @@ class Flows(unittest.IsolatedAsyncioTestCase):
         store['wish_text']=text
         with patch.object(research,'enabled',return_value=False),patch.object(admin,'ADMIN_ID',777),patch.object(days_off,'member',new=AsyncMock(return_value=None)):
             await ux_chat.wish_send(callback,state)
-        self.assertIn('Передал',callback.message.edit_text.await_args.args[0])
+        self.assertIn('Принял обращение для Лёши',callback.message.edit_text.await_args.args[0])
         self.assertNotIn('wish_text',store)
-        self.assertIn('Передал',callback.message.edit_text.await_args.args[0])
+        self.assertIn('Принял обращение для Лёши',callback.message.edit_text.await_args.args[0])
         # Обычная ошибка в сумме по-прежнему объясняется как раньше.
         message=self.message('чай 500.5.5')
         with patch.object(handlers.db,'get_or_create_user',new=AsyncMock(return_value={'id':5,'onboarded':True})):

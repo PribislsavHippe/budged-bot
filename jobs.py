@@ -73,6 +73,8 @@ def setup_scheduler(bot) -> AsyncIOScheduler:
     from category_notifications import send_pending
     scheduler.add_job(send_pending,"interval",minutes=2,args=[bot],max_instances=1)
     scheduler.add_job(send_pending,args=[bot],max_instances=1)
+    from roster_wishes import remind
+    scheduler.add_job(remind, 'interval', minutes=5, args=[bot], max_instances=1)
     scheduler.add_job(tomorrow_shift_reminder, "cron", hour=19, minute=0, args=[bot],max_instances=1)
     scheduler.add_job(retry_tomorrow_shift_reminder, "interval", minutes=10, args=[bot],max_instances=1)
     scheduler.add_job(retry_tomorrow_shift_reminder, args=[bot],max_instances=1)

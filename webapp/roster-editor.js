@@ -375,7 +375,7 @@
       const WD=['пн','вт','ср','чт','пт','сб','вс'],w=p?.link?wishes[p.link]||{}:{},asks=w.days||[];
       const wishText=[asks.length?`выходные по ${asks.map(d=>WD[d]).join(', ')}`:'',w.pattern?`график ${w.pattern}`:''].filter(Boolean).join(', ');
       q('.re-person').innerHTML=`<h4 class="re-sub">Сотрудник</h4>
-        ${wishText?`<p class="re-wish">Пожелание: ${esc(wishText)} <small>из Telegram</small></p>`:''}
+        ${wishText?`<p class="re-wish">Пожелание: ${esc(wishText)}</p>`:''}
         <label class="re-check-row"><input type="checkbox" data-student${dis} ${p?.student?'checked':''}> Учёба</label>
         <label>Удобный приход<input data-starts${dis} value="${esc(wish)}" placeholder="например, 9, 10"></label>
         <div class="re-row"><button type="button" data-move="-1"${dis}>Выше</button><button type="button" data-move="1"${dis}>Ниже</button><button type="button" data-remove${dis}>Убрать из графика</button></div>`;
@@ -546,17 +546,18 @@
       return Object.entries(by).map(([m,ds])=>`${ds.join(', ')} ${G.MONTHS[m]}`).join(', ');
     }
     function renderAsks(){
-      const box=q('.re-asks'),req=offsInfo?.requests||{},wd=offsInfo?.weekdays||{},pt=offsInfo?.patterns||{};
-      const names=D().people.map(p=>p.name).filter(n=>req[n]?.length||wd[n]?.length||pt[n]);
+      const box=q('.re-asks'),req=offsInfo?.requests||{},desired=offsInfo?.desired||{},wd=offsInfo?.weekdays||{},pt=offsInfo?.patterns||{};
+      const names=D().people.map(p=>p.name).filter(n=>req[n]?.length||desired[n]?.length||wd[n]?.length||pt[n]);
       box.hidden=!names.length;
-      box.innerHTML=names.length?`<h4>Выходные из Telegram</h4>${names.map(n=>`<p>${esc(n)} — ${[
-        req[n]?.length?esc(daysText(req[n])):'',wd[n]?.length?`<small>по ${wd[n].map(d=>WD[d]).join(', ')}</small>`:'',
+      box.innerHTML=names.length?`<h4>Пожелания к графику</h4>${names.map(n=>`<p>${esc(n)} — ${[
+        req[n]?.length?`Обязательные: ${esc(daysText(req[n]))}`:'',
+        desired[n]?.length?`Желательные: ${esc(daysText(desired[n]))}`:'',wd[n]?.length?`<small>по ${wd[n].map(d=>WD[d]).join(', ')}</small>`:'',
         pt[n]?`<small>график ${esc(pt[n])}</small>`:'',offsInfo?.over?.[n]?`<small class="re-over">больше ${offsInfo.over[n]} — согласовать</small>`:''].filter(Boolean).join(' · ')}</p>`).join('')}
         ${offsInfo?.fresh?'<p><small>Есть новые: «Собрать заново» учтёт их.</small></p>':''}`:'';
     }
     document.addEventListener('visibilitychange',()=>{if(!document.hidden&&cur&&!root.closest('[hidden]'))refreshOffs();});
     q('.re-ask').onclick=async()=>{
-      if(!cur||!confirm('Отправить сотрудникам просьбу выбрать обязательные выходные? Получат те, кто ещё не ответил.'))return;
+      if(!cur||!confirm('Отправить сотрудникам просьбу о пожеланиях к графику? Получат те, кто ещё не ответил.'))return;
       busy=true;renderState();error('');
       try{offsInfo=await api('ask_offs',{id:cur.id});toast(`Отправлено: ${offsInfo.sent}`);}
       catch(e){failed(e);}finally{busy=false;renderState();}

@@ -50,10 +50,11 @@ class AutoTests(unittest.IsolatedAsyncioTestCase):
   with patch.object(table.vision,'request_json',new=AsyncMock(side_effect=[copy.deepcopy(LAYOUT),*transcriptions()])) as read:
    await groq.recognize_person(image(),categories.empty_context(R,'2026-10',7),'Тест Имя')
    self.assertEqual(read.await_count,4);self.assertNotIn('Тест Имя',read.await_args_list[1].args[1])
- async def test_schedule_is_routed_without_sales_write(self):
-  m=message();m.answer.return_value=m;d=draft()
+ async def test_schedule_points_to_manager_without_sales_write(self):
+  m=message();status=NS(edit_text=AsyncMock());m.answer.return_value=status;d=draft()
   with patch.object(auto,'person',new=AsyncMock(return_value=PROFILE)),patch.object(auto,'configuration',new=AsyncMock(return_value=cfg())),patch.object(groq,'recognize_person',new=AsyncMock(return_value={'document_kind':'schedule'})),patch('schedule_chat.start_photo',new=AsyncMock()) as schedule,patch.object(categories,'save',new=AsyncMock()) as save:
-   await auto.process_photo(m,d);schedule.assert_awaited_once();save.assert_not_awaited()
+   await auto.process_photo(m,d);schedule.assert_not_awaited();save.assert_not_awaited()
+   self.assertIn('Менеджер публикует график',status.edit_text.await_args.args[0])
  async def test_long_or_stalled_queue_tells_the_sender_without_alerting_the_owner(self):
   import recognition_queue as rq
   for error in (rq.QueueFull(rq.TOO_LONG),rq.QueueStalled(rq.STALLED)):
@@ -68,9 +69,10 @@ class AutoTests(unittest.IsolatedAsyncioTestCase):
     self.assertNotIn(7,photo.drafts)
  async def test_known_schedule_grid_skips_sales_pipeline_and_its_model_calls(self):
   # Раньше такой график сначала тратил 1–3 запроса продажного разбора и упирался в минутный лимит.
-  m=message();m.answer.return_value=m;d=draft()
+  m=message();status=NS(edit_text=AsyncMock());m.answer.return_value=status;d=draft()
   with patch.object(auto,'person',new=AsyncMock(return_value=PROFILE)),patch.object(auto,'known_schedule_grid',new=AsyncMock(return_value=True)),patch.object(groq,'recognize_person',new=AsyncMock()) as sales,patch('schedule_chat.start_photo',new=AsyncMock()) as schedule:
-   await auto.process_photo(m,d);schedule.assert_awaited_once();sales.assert_not_awaited()
+   await auto.process_photo(m,d);schedule.assert_not_awaited();sales.assert_not_awaited()
+   self.assertIn('Менеджер публикует график',status.edit_text.await_args.args[0])
  async def test_grid_check_never_blocks_the_normal_path(self):
   self.assertFalse(await auto.known_schedule_grid(b'not an image'))
   self.assertFalse(await auto.known_schedule_grid(b''))
@@ -106,11 +108,11 @@ class AutoTests(unittest.IsolatedAsyncioTestCase):
    save.assert_not_awaited()
 
  async def test_missing_row_runs_automatic_error_path_without_save(self):
-  m=message();m.answer.return_value=m;d=draft();bad={**d.report,'cutoff':'2026-10-14','rows':[{'name':'Другой','totals':{d.report['category_config']['definitions'][0]['id']:999}}]}
+  m=message();status=NS(edit_text=AsyncMock());m.answer.return_value=status;d=draft();bad={**d.report,'cutoff':'2026-10-14','rows':[{'name':'Другой','totals':{d.report['category_config']['definitions'][0]['id']:999}}]}
   with patch.object(auto,'person',new=AsyncMock(return_value=PROFILE)),patch.object(auto,'configuration',new=AsyncMock(return_value=cfg())),patch.object(groq,'recognize_person',new=AsyncMock(return_value=bad)),patch.object(categories,'save',new=AsyncMock()) as save,patch.object(auto,'issue',new=AsyncMock()) as issue,self.assertLogs(level='ERROR'):
    await auto.process_photo(m,d);save.assert_not_awaited();issue.assert_awaited_once()
  async def test_uncertain_save_retains_original_operation_and_does_not_claim_success(self):
-  m=message();m.answer.return_value=m;d=draft();result={**d.report,'cutoff':'2026-10-14'}
+  m=message();status=NS(edit_text=AsyncMock());m.answer.return_value=status;d=draft();result={**d.report,'cutoff':'2026-10-14'}
   with patch.object(auto,'person',new=AsyncMock(return_value=PROFILE)),patch.object(auto,'configuration',new=AsyncMock(return_value=cfg())),patch.object(groq,'recognize_person',new=AsyncMock(return_value=result)),patch.object(categories,'save',new=AsyncMock(side_effect=RuntimeError('network'))),self.assertLogs(level='ERROR'):
    await auto.process_photo(m,d)
    self.assertEqual(d.phase,'uncertain');self.assertEqual(d.report['auto_profile']['report_name'],'Тест Имя')
@@ -124,7 +126,7 @@ class AutoTests(unittest.IsolatedAsyncioTestCase):
     await auto.process_photo(m,d)
     save.assert_not_awaited();issue.assert_not_awaited();m.bot.send_message.assert_not_awaited()
     self.assertNotIn(7,photo.drafts)
-    expected='У ИИ закончились токены — пока не могу прочитать отчёт. Ничего не записал. Попробуй позже или внеси данные вручную'
+    expected='Сейчас не получается прочитать фото отчёта. Попробуй позже или внеси результаты вручную в разделе «План». Ничего не записал.'
     status.edit_text.assert_awaited_once_with(expected)
     self.assertEqual(m.answer.await_count,2 if edit_fails else 1)
     if edit_fails:self.assertEqual(m.answer.call_args.args[0],expected)

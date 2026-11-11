@@ -123,13 +123,14 @@ async def start(message, draft, *, fallback=False):
             # positive schedule detector examine it before reporting a failure.
             if not fallback or str(error)!='no_matching_categories':raise
     if fallback:
-        import schedule, schedule_chat, schedule_sheet
+        import schedule, schedule_sheet
         if schedule.enabled():
             probe = candidates[0] if len(candidates) == 1 else names[0]
             text = await sheet.fetch(draft.report['sheet_source'], sheet=probe)
             if schedule_sheet.parse_rows(list(csv.reader(io.StringIO(text)))):
                 photo.expire(message.chat.id, draft)
-                await schedule_chat.sheet_link(message)
+                from ux_chat import FAQ
+                await message.answer(FAQ['schedule'][1])
                 return
     if len(candidates) == 1 and not draft.report.get('explicit_gid'):
         raise sheet.SheetParseError('unsupported_layout_or_no_results')

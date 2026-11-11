@@ -116,14 +116,15 @@ class CategoryTests(unittest.IsolatedAsyncioTestCase):
    self.assertEqual(draft.phase,'review');self.assertIn('Хлеб',photo.preview(draft))
    self.assertEqual(draft.report['category_values'][cid]['value'],123)
 
- async def test_configured_restaurant_schedule_link_still_routes_to_calendar(self):
+ async def test_configured_restaurant_schedule_link_points_to_manager(self):
   import report_sheet_chat as sheets
   photo.drafts.clear()
   message=NS(from_user=NS(id=42),chat=NS(id=42),bot=NS(id=10),message_id=20,
     text='https://docs.google.com/spreadsheets/d/'+'a'*25+'/edit',answer=AsyncMock())
   with patch.object(categories,'context',new=AsyncMock(return_value=cfg())),patch.object(report_sheet,'tabs',new=AsyncMock(return_value=['Октябрь 26'])),patch.object(report_sheet,'fetch',new=AsyncMock(return_value='CSV')),patch.object(report_sheet,'discover_rows',side_effect=report_sheet.SheetParseError('no_matching_categories')),patch('schedule_sheet.parse_rows',return_value=[{'name':'Тест'}]),patch('schedule.enabled',return_value=True),patch('schedule_chat.sheet_link',new=AsyncMock()) as calendar:
    await sheets.receive_link(message)
-   calendar.assert_awaited_once_with(message)
+   calendar.assert_not_awaited()
+   self.assertIn('Менеджер публикует график',message.answer.await_args.args[0])
 
  async def test_admin_natural_edit_preserves_other_categories_before_save(self):
   message=NS(from_user=NS(id=42),chat=NS(id=42),text='хлеба цель 60000',answer=AsyncMock())
