@@ -835,6 +835,82 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         with patch('schedule.save', new=save), patch('db.get_or_create_user', new=fake_user):
             self.assertGreaterEqual(await roster_sync.resync_all(), 1)
 
+    # ─── аудит 11 ноября: G04–G06 ───
+    async def test_employee_requests_follow_the_period(self):
+        import days_off
+        made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-30')
+        link = await days_off.member(WAITER)
+        await days_off.save(link, date(2026, 11, 16), date(2026, 11, 30), {date(2026, 11, 18), date(2026, 11, 28)})
+        # Начало сдвинули на 15-е: ответ не пропадает, его числа остаются.
+        moved = await self.roster('dates', MANAGER, id=made['id'], revision=made['revision'], start='2026-11-15', end='2026-11-30')
+        self.assertEqual((await self.roster('offs', MANAGER, id=made['id']))['requests'].get('Аня'), ['2026-11-18', '2026-11-28'])
+        # Период сократили: числа за новой границей отбрасываются, остальные остаются.
+        await self.roster('dates', MANAGER, id=made['id'], revision=moved['revision'], start='2026-11-15', end='2026-11-22')
+        self.assertEqual((await self.roster('offs', MANAGER, id=made['id']))['requests'].get('Аня'), ['2026-11-18'])
+
+    async def test_bot_waits_only_for_a_schedule_that_exists_with_the_same_dates(self):
+        import days_off
+        made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-30')
+        link = await days_off.member(WAITER)
+        await days_off.save(link, date(2026, 11, 16), date(2026, 11, 30), set())
+        await days_off.reopen(link, date(2026, 11, 16))
+        self.assertEqual((await days_off.waiting(WAITER))['end'], date(2026, 11, 30))
+        # Период сократили: бот ждёт числа уже для новых границ.
+        moved = await self.roster('dates', MANAGER, id=made['id'], revision=made['revision'], start='2026-11-16', end='2026-11-22')
+        self.assertEqual((await days_off.waiting(WAITER))['end'], date(2026, 11, 22))
+        # График удалили: бот больше ничего не ждёт.
+        await self.roster('delete', MANAGER, id=made['id'])
+        self.assertIsNone(await days_off.waiting(WAITER))
+        # Строка ожидания без графика (например, осталась после сбоя) тоже ничего не ждёт.
+        self.fake.rows['day_off_requests'] = [{'link_id': link['id'], 'restaurant_id': PLACE, 'start_date': '2026-11-16',
+                                               'end_date': '2026-11-30', 'days': [], 'answered': False, 'waiting': True, 'updated_at': 'x'}]
+        self.assertIsNone(await days_off.waiting(WAITER))
+
+    async def test_shift_after_restaurant_closing_is_rejected(self):
+        import roster_api
+        self.assertEqual(roster_api.parse_cell('12-23'), (12, 23, False))
+        with self.assertRaises(ValueError):
+            roster_api.parse_cell('12-24')
+        made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
+        draft = dict(made['draft'], cells={'Аня': {'2026-11-16': '12-24'}})
+        refused = await self.roster('save', MANAGER, 400, id=made['id'], revision=made['revision'], draft=draft)
+        self.assertIn('вне часов работы', refused['error'])
+
+    async def test_old_publication_cannot_overwrite_a_newer_one_and_bad_cells_keep_personal_shifts(self):
+        import asyncio
+        import roster_sync
+        import days_off
+        link = await days_off.member(WAITER)
+        old = {'people': [{'link': link['id'], 'name': 'Аня'}], 'cells': {'Аня': {'2026-11-18': '9'}}}
+        new = {'people': [{'link': link['id'], 'name': 'Аня'}], 'cells': {'Аня': {'2026-11-18': '14'}}}
+        entered, release = asyncio.Event(), asyncio.Event()
+        calendar = {}
+        async def delayed_save(uid, cells):
+            if cells[0]['start'] == '09:00':
+                entered.set()
+                await release.wait()
+            calendar[uid] = [dict(c) for c in cells]
+        start, end = date(2026, 11, 16), date(2026, 11, 30)
+        with patch('schedule.save', new=delayed_save), patch('db.get_or_create_user', new=AsyncMock(return_value={})):
+            first = asyncio.create_task(roster_sync.sync_published(PLACE, start, end, old, version=2, roster_id='r1'))
+            await asyncio.wait_for(entered.wait(), 2)
+            second = asyncio.create_task(roster_sync.sync_published(PLACE, start, end, new, old, version=3, roster_id='r1'))
+            await asyncio.sleep(0.05)
+            release.set()
+            await asyncio.gather(first, second)
+        self.assertEqual(calendar[WAITER][0]['start'], '14:00', calendar)
+        # Устаревшая версия, пришедшая позже, ничего не пишет.
+        calendar.clear()
+        with patch('schedule.save', new=delayed_save), patch('db.get_or_create_user', new=AsyncMock(return_value={})):
+            self.assertEqual(await roster_sync.sync_published(PLACE, start, end, old, version=2, roster_id='r1'), 0)
+        self.assertEqual(calendar, {})
+        # Непонятная клетка в старом снимке (интервал до 24) не стирает уже стоящую личную смену.
+        self.fake.rows['shifts'] = [{'user_id': WAITER, 'shift_date': '2026-11-19'}]
+        broken = {'people': [{'link': link['id'], 'name': 'Аня'}], 'cells': {'Аня': {'2026-11-19': '12-24'}}}
+        with patch('schedule.save', new=delayed_save), patch('db.get_or_create_user', new=AsyncMock(return_value={})):
+            await roster_sync.sync_published(PLACE, start, end, broken, version=4, roster_id='r1')
+        self.assertEqual([r['shift_date'] for r in self.fake.rows['shifts']], ['2026-11-19'])
+
     async def test_periods_do_not_overlap_and_drafts_can_be_deleted(self):
         made = await self.roster('create', OWNER, restaurant_id=PLACE, start='2026-11-01', end='2026-11-15')
         clash = await self.roster('create', OWNER, 400, restaurant_id=PLACE, start='2026-11-10', end='2026-11-25')

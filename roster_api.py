@@ -56,7 +56,7 @@ def parse_cell(value):
         return None, None, bool(note)
     start = int(start)
     end = int(end) if end else None
-    if not 6 <= start <= 22 or (end is not None and not start < end <= 24):
+    if not 6 <= start <= 22 or (end is not None and not start < end <= roster.CLOSE_HOUR):
         raise ValueError(f'Смена «{value}» вне часов работы ресторана.')
     return start, end, bool(note)
 
@@ -461,6 +461,7 @@ async def handle(request):
                 raise ValueError('Опубликованный график не удаляется.')
             stage = 'delete'
             await db._execute(db.supabase.table('rosters').delete().eq('id', row['id']).is_('published_at', 'null'))
+            await days_off.close_period(row['restaurant_id'], start)
             return response({'ok': True})
         if action in ('offs', 'ask_offs'):
             result = await offs_action(request, uid, row, start, end, action == 'ask_offs')
@@ -513,6 +514,7 @@ async def handle(request):
             draft = normalize(trim(row['draft'], new_start, new_end), new_start, new_end)
             saved = await _save(row, uid, revision, {
                 'start_date': new_start.isoformat(), 'end_date': new_end.isoformat(), 'draft': draft})
+            await days_off.move_period(row['restaurant_id'], start, new_start, new_end)
             _track(uid, 'roster_dates_changed')
             return response(_opened(saved))
         if action == 'publish':
@@ -525,7 +527,8 @@ async def handle(request):
             stage = 'sync'
             # Смены попадают в личный календарь, подписку iPhone и напоминания; публикацию это не задерживает.
             import roster_sync
-            task = asyncio.create_task(roster_sync.sync_published(row['restaurant_id'], start, end, row['draft'], row.get('published')))
+            task = asyncio.create_task(roster_sync.sync_published(row['restaurant_id'], start, end, row['draft'],
+                                                                  row.get('published'), version=saved['revision'], roster_id=row['id']))
             _sending.add(task)
             task.add_done_callback(_sending.discard)
             stage = 'notify'

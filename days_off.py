@@ -146,10 +146,41 @@ async def waiting(uid):
         return None
     rows = (await db._execute(db.supabase.table('day_off_requests').select('start_date,end_date')
                               .eq('link_id', link['id']).eq('waiting', True)
-                              .gte('end_date', roster_today().isoformat()).order('start_date').limit(1))).data
-    if not rows:
-        return None
-    return {'link': link, 'start': date.fromisoformat(rows[0]['start_date']), 'end': date.fromisoformat(rows[0]['end_date'])}
+                              .gte('end_date', roster_today().isoformat()).order('start_date').limit(5))).data
+    for row in rows:
+        start, end = date.fromisoformat(row['start_date']), date.fromisoformat(row['end_date'])
+        # Бот ждёт числа только для графика, который есть и с такими же границами (его могли удалить или сдвинуть).
+        if await period_exists(link['restaurant_id'], start, end):
+            return {'link': link, 'start': start, 'end': end}
+        await db._execute(db.supabase.table('day_off_requests').update({'waiting': False})
+                          .eq('link_id', link['id']).eq('start_date', row['start_date']), retries=1)
+    return None
+
+
+async def close_period(restaurant_id, start):
+    """График удалён: бот больше не ждёт по нему числа. Уже записанные ответы остаются на случай, если
+    график с теми же датами создадут заново."""
+    await db._execute(db.supabase.table('day_off_requests').update({'waiting': False})
+                      .eq('restaurant_id', restaurant_id).eq('start_date', start.isoformat()), retries=1)
+
+
+async def move_period(restaurant_id, old_start, new_start, new_end):
+    """Даты графика изменили: ответы сотрудников переезжают вместе с ним. Числа за новыми границами
+    отбрасываются, остальные остаются; ожидание ответа и «нет» сохраняются."""
+    rows = (await db._execute(db.supabase.table('day_off_requests').select('*').eq('restaurant_id', restaurant_id)
+                              .eq('start_date', old_start.isoformat()))).data
+    lo, hi = new_start.isoformat(), new_end.isoformat()
+    for r in rows:
+        days = [d for d in r['days'] if lo <= d <= hi]
+        if new_start != old_start:
+            # Чужая запись от удалённого когда-то графика с такой же датой начала не должна мешать переезду.
+            await db._execute(db.supabase.table('day_off_requests').delete().eq('link_id', r['link_id'])
+                              .eq('start_date', lo), retries=1)
+            await db._execute(db.supabase.table('day_off_requests').delete().eq('link_id', r['link_id'])
+                              .eq('start_date', old_start.isoformat()), retries=1)
+        await db._execute(db.supabase.table('day_off_requests').upsert(
+            {**{k: v for k, v in r.items() if k != 'updated_at'}, 'start_date': lo, 'end_date': hi, 'days': days,
+             'updated_at': r.get('updated_at')}, on_conflict='link_id,start_date'), retries=1)
 
 
 async def reopen(link, start):

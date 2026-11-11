@@ -26,7 +26,7 @@
     // Повторное открытие раздела не пересоздаёт редактор: правки и слушатели остаются.
     if(root._roster)return root._roster.refresh(opts.places,opts.placeId);
     let wishes={},places=opts.places||[],placeId=places.some(p=>p.id===opts.placeId)?opts.placeId:places[0]?.id,periods=[],cur=null,team=[],sel=null,side=null;
-    let edits=0,saved=0,saving=false,timer=null,busy=false;
+    let edits=0,saved=0,saving=false,timer=null,busy=false,conflict=false;
     // Отмена: снимки черновика до каждого изменения.
     let undo=[],redo=[],last=null,forcePick=false,offsInfo=null,toastTimer=null;
     root.innerHTML=`<div class="re sg">
@@ -158,7 +158,7 @@
     }
     q('.re-undo').onclick=()=>travel(undo,redo);q('.re-redo').onclick=()=>travel(redo,undo);
     document.addEventListener('keydown',e=>{
-      if(!cur||root.closest('[hidden]')||!(e.ctrlKey||e.metaKey)||e.key.toLowerCase()!=='z'&&e.key.toLowerCase()!=='я')return;
+      if(!cur||busy||root.closest('[hidden]')||!(e.ctrlKey||e.metaKey)||e.key.toLowerCase()!=='z'&&e.key.toLowerCase()!=='я')return;
       if(e.target.matches('input,textarea'))return;
       e.preventDefault();if(e.shiftKey)travel(redo,undo);else travel(undo,redo);
     });
@@ -168,15 +168,19 @@
       saving=true;const version=edits;renderState();
       try{const data=await api('save',{id:cur.id,revision:cur.revision,draft:D()});saved=version;
         accept(data,version===edits);if(version===edits)renderGrid();}
-      catch(e){failed(e);if(e.status===409)saved=edits;}
-      finally{saving=false;renderState();if(edits!==saved&&!q('.re-error').textContent)timer=setTimeout(save,900);}
+      catch(e){failed(e);
+        // Конфликт: правка не записана. Она остаётся несохранённой, пока страницу не обновят; сохранять её
+        // поверх чужой версии нельзя, поэтому автосохранение останавливается, а сменить период нельзя.
+        if(e.status===409)conflict=true;}
+      finally{saving=false;renderState();if(edits!==saved&&!conflict&&!q('.re-error').textContent)timer=setTimeout(save,900);}
     }
     // Перед сменой периода, сборкой и публикацией дописываем последнее изменение.
     async function flush(){
       if(!cur)return true;
       while(saving)await new Promise(r=>setTimeout(r,150));
+      if(conflict)return false;
       if(edits!==saved)await save();
-      return edits===saved;
+      return edits===saved&&!conflict;
     }
 
     // ─── отрисовка ───
@@ -184,7 +188,9 @@
       if(!cur)return;
       const pending=edits!==saved;
       q('.re-publish').textContent=cur.published_at?(cur.changed||pending?'Опубликовать правки':'Опубликован'):'Опубликовать';
-      q('.re-publish').disabled=busy||showPick()||(!!cur.published_at&&!cur.changed&&!pending);q('.re-build').disabled=busy;q('.re-ask').disabled=busy;
+      q('.re-publish').disabled=busy||conflict||showPick()||(!!cur.published_at&&!cur.changed&&!pending);q('.re-build').disabled=busy||conflict;q('.re-ask').disabled=busy;
+      // Пока идёт публикация или сборка, таблица заперта: правка во время запроса пропала бы с ответом сервера.
+      root.classList.toggle('re-working',busy);
       // Сколько человек уже записали выходные: подсказка к кнопке, а не строка под заголовком.
       q('.re-ask').title=offsInfo?.total?`Ответили: ${offsInfo.answered} из ${offsInfo.total}${offsInfo.fresh?', есть новые':''}`:'';
       q('.re-undo').disabled=!undo.length;q('.re-redo').disabled=!redo.length;
@@ -387,12 +393,16 @@
       if(!t||D().people.some(p=>p.link===t.id))return;
       D().people.push({name:t.report_name,student:false,link:t.id});error('');changed();renderPanel();
     });
-    function applyCell(raw){
-      const p=person(sel.r),old=G.parse(D().cells[p.name]?.[sel.day]);
-      if(raw===''){setCell(p.name,sel.day,old?.note?'*':'');}
+    // target — клетка, в которую пишем: отложенный ввод с клавиатуры привязан к клетке, где его начали,
+    // а не к той, что выделена к моменту срабатывания таймера.
+    function applyCell(raw,target=sel){
+      if(!target||!person(target.r))return;
+      const p=person(target.r),day=target.day,old=G.parse(D().cells[p.name]?.[day]);
+      if(raw===''){setCell(p.name,day,old?.note?'*':'');}
       else{
-        const v=G.parse(raw);if(!v||v.start==null||v.start<6||v.start>22||(v.end!=null&&!(v.end>v.start&&v.end<=24))){error(`Не понял смену «${raw}». Пиши час прихода (9) или интервал (9-17).`);return;}
-        error('');setCell(p.name,sel.day,v.start+(v.end!=null?'-'+v.end:'')+(old?.note||v.note?'*':''));
+        // Ресторан закрывается в 23: смена не может кончаться позже.
+        const v=G.parse(raw);if(!v||v.start==null||v.start<6||v.start>22||(v.end!=null&&!(v.end>v.start&&v.end<=23))){error(`Не понял смену «${raw}». Пиши час прихода (9) или интервал (9-17), конец не позже 23.`);return;}
+        error('');setCell(p.name,day,v.start+(v.end!=null?'-'+v.end:'')+(old?.note||v.note?'*':''));
       }
       changed();renderCell();
     }
@@ -411,6 +421,7 @@
     }
     const clearSel=()=>grid.querySelectorAll('.sg-sel').forEach(e=>e.classList.remove('sg-sel'));
     function select(r,day,focus=true){
+      commitTyped();
       sel={r,day};side={kind:'day',day};
       grid.querySelectorAll('.sg-sel').forEach(e=>e.classList.remove('sg-sel'));
       const cell=grid.querySelector(`td.sg-c[data-r="${r}"][data-day="${day}"]`);cell?.classList.add('sg-sel');if(focus)cell?.focus();
@@ -422,29 +433,35 @@
       else if('off' in b.dataset)toggleOff();
     });
     q('.re-cell').addEventListener('change',e=>{if(e.target.matches('.re-range input'))applyCell(e.target.value.trim());});
-    let typed='',typedAt=0;
+    let typed='',typedAt=0,pend=null;
+    // Набранное с клавиатуры дописывается в свою клетку при переходе, Enter и по таймеру; Esc его отменяет.
+    function commitTyped(){clearTimeout(grid._commit);if(!pend)return;const p=pend;pend=null;typed='';applyCell(p.value,{r:p.r,day:p.day});}
+    function dropTyped(){clearTimeout(grid._commit);pend=null;typed='';}
     grid.addEventListener('keydown',e=>{
+      if(busy)return;
       const cell=e.target.closest('td.sg-c');
       if(!cell){if((e.key==='Enter'||e.key===' ')&&e.target.closest('th')){e.preventDefault();e.target.click();}return;}
       const r=+cell.dataset.r,i=cur.days.indexOf(cell.dataset.day);
-      const move=(dr,di)=>{const nr=Math.min(Math.max(r+dr,0),D().people.length-1),ni=Math.min(Math.max(i+di,0),cur.days.length-1);e.preventDefault();select(nr,cur.days[ni]);};
+      const move=(dr,di)=>{const nr=Math.min(Math.max(r+dr,0),D().people.length-1),ni=Math.min(Math.max(i+di,0),cur.days.length-1);e.preventDefault();typed='';select(nr,cur.days[ni]);};
       if(e.key==='ArrowRight')return move(0,1);if(e.key==='ArrowLeft')return move(0,-1);
       if(e.key==='ArrowDown')return move(1,0);if(e.key==='ArrowUp')return move(-1,0);
       if(!sel||sel.r!==r||sel.day!==cell.dataset.day)select(r,cell.dataset.day,false);
       const key=e.key.toLowerCase();
-      if(key==='delete'||key==='backspace'){e.preventDefault();typed='';return applyCell('');}
+      if(key==='delete'||key==='backspace'){e.preventDefault();dropTyped();return applyCell('');}
       if(key==='в'||key==='d'){e.preventDefault();return toggleOff();}
       if(key==='*'){e.preventDefault();return toggleNote();}
       if(/^[0-9-]$/.test(key)){
         e.preventDefault();typed=Date.now()-typedAt<1200?typed+key:key;typedAt=Date.now();
         // «1» ждёт вторую цифру; одна цифра больше 2 или полный интервал — сразу в клетку.
-        if(/^(?:[3-9]|1\d|2[0-2])(?:-(?:1\d|2[0-4]|[3-9]))?$/.test(typed)&&!/-$/.test(typed)){
-          const v=typed;clearTimeout(grid._commit);grid._commit=setTimeout(()=>{applyCell(v);typed='';},typed.includes('-')||typed.length>=2?250:700);
+        clearTimeout(grid._commit);pend=null;
+        if(/^(?:[3-9]|1\d|2[0-2])(?:-(?:1\d|2[0-3]|[3-9]))?$/.test(typed)&&!/-$/.test(typed)){
+          pend={r,day:cell.dataset.day,value:typed};
+          grid._commit=setTimeout(commitTyped,typed.includes('-')||typed.length>=2?250:700);
         }
         return;
       }
-      if(e.key==='Enter'){e.preventDefault();if(typed){applyCell(typed);typed='';}else q('.re-cell button')?.focus();}
-      if(e.key==='Escape'){sel=null;side=null;clearSel();renderPanel();}
+      if(e.key==='Enter'){e.preventDefault();if(typed){pend={r,day:cell.dataset.day,value:typed};commitTyped();}else q('.re-cell button')?.focus();}
+      if(e.key==='Escape'){dropTyped();sel=null;side=null;clearSel();renderPanel();}
     });
     // Смену можно взять и перетащить на другую клетку: в пустую — переезжает, в занятую — меняются местами.
     // В обязательный выходной человека смена не переносится.
@@ -558,8 +575,10 @@
       if(!(await flush()))return;
       const problems=cur.check?.problems||0;
       if(!confirm(problems?`Нарушений: ${problems}. Всё равно опубликовать?`:'Опубликовать?'))return;
-      busy=true;renderState();error('');
-      try{const data=await api('publish',{id:cur.id,revision:cur.revision});accept(data,true);renderAll();
+      busy=true;renderState();error('');const version=edits;
+      try{const data=await api('publish',{id:cur.id,revision:cur.revision});
+        // Если всё же что-то изменилось за время запроса, локальный черновик остаётся и уйдёт следующим сохранением.
+        accept(data,version===edits);renderAll();
         toast(data.notified?`Опубликовано. Сообщение отправлено: ${data.notified}`:'Опубликовано');}
       catch(e){failed(e);}finally{busy=false;renderState();}
     };

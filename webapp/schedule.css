@@ -337,3 +337,6 @@ html.sg-land-open body>*:not(.sg-land):not(#bg){visibility:hidden}
 .sg-mine-off{margin-top:10px!important;color:var(--sg-ink)!important;font-size:14px!important;line-height:1.45}
 
 .re-asks small.re-over{color:var(--sg-off-ink)}
+
+/* Пока идёт публикация или сборка, правка недоступна (иначе она потерялась бы с ответом сервера). */
+.re.re-working .re-editor{pointer-events:none;opacity:.7}
