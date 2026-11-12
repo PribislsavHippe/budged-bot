@@ -198,7 +198,9 @@ class DraftTests(unittest.TestCase):
         with fast():
             found = roster.build_variants(request)
         self.assertEqual({v['id'] for v in found}, {'even', 'calm', 'weekend'})
-        self.assertLessEqual(found[0]['metrics']['problems'], found[-1]['metrics']['problems'])
+        scores = [(m['problems'] - m['streaks'], m['streak_penalty'], m['shifts'])
+                  for m in (v['metrics'] for v in found)]
+        self.assertEqual(scores, sorted(scores))
         self.assertTrue(all(v['schedule'] and v['metrics']['pairs'] > 0 for v in found))
         self.assertNotEqual(found[0]['schedule'], found[1]['schedule'])
         self.assertTrue(any(v['pros'] for v in found))
@@ -498,9 +500,6 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([p['name'] for p in made['draft']['people']], ['Аня', *NAMES[1:7]])
         draft = made['draft']
         self.assertEqual(len(draft['variants']), 3)
-        # Порядок совпадает с написанным: у лучшего минусов не больше, чем плюсов, чем у следующего.
-        balance = [len(v['cons']) - len(v['pros']) for v in draft['variants']]
-        self.assertEqual(balance, sorted(balance))
         self.assertEqual(draft['variant'], draft['variants'][0]['id'])
         self.assertFalse(draft['picked'])
         self.assertTrue(draft['cells'])
@@ -576,6 +575,21 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(next(p for p in people if p['name'] == 'Аня')['student'])
         self.assertEqual(later['draft']['wish_starts'], {'Аня': [9, 10]})
         self.assertEqual(later['draft']['off'], {})
+
+    async def test_new_schedule_keeps_previous_shifts_even_without_a_pattern_wish(self):
+        employee = {'name': 'Анна', 'link': self.fake.rows['employee_links'][1]['id']}
+        published = {'people': [employee], 'cells': {'Анна': {'2026-11-14': '9', '2026-11-15': '9'}}}
+        self.fake.rows['rosters'] = [{'id': str(uuid4()), 'restaurant_id': PLACE, 'start_date': '2026-11-13',
+                                     'end_date': '2026-11-15', 'draft': published, 'published': published}]
+        made = await self.roster('create', OWNER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
+        draft = made['draft']
+        self.assertEqual(draft['wish_patterns'], {})
+        self.assertEqual(draft['pattern_history'], {'Аня': '011'})
+
+        import roster_api
+        draft['cells']['Аня'] = {'2026-11-16': '9'}
+        self.assertIn({'day': '2026-11-16', 'name': 'Аня', 'text': 'Аня: смен подряд с 14 ноября: 3.'},
+                      roster_api.check(draft, START, END)['items'])
 
     async def test_publication_messages_each_person_in_the_bot(self):
         sent = []

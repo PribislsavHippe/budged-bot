@@ -5,10 +5,12 @@
 в закрытии всегда 3 (приход с 11 и позже); в пт–вс открывают двое, в будни один;
 обязательных выходных до 3 на 15 дней, у студентов больше; из обязательного выходного
 выходят, только если иначе не набрать людей; в смены подряд приход не раньше, чем накануне;
-денежные дни поровну.
+денежные дни поровну. Уточнение 12 ноября: стремимся к двум сменам и двум выходным
+подряд. Три и более смен подряд допустимы, если иначе график не сходится. Число
+смен распределяем примерно поровну с учётом доступных дней каждого сотрудника.
 
 Из таблицы выведено и ещё не подтверждено: часы открытия (8 в сб–вс, 9 в пн–пт),
-раскладка приходов по дням и мягкий предел в 3 смены подряд.
+раскладка приходов по дням.
 
 Имена живут только в сообщении владельца: модуль ничего не сохраняет и не пишет в логи.
 """
@@ -27,7 +29,7 @@ CLOSERS = 3
 LAST_CLOSER_START = 11
 WEEKDAY_COUNT = 5
 WEEKEND_COUNT = 6
-MAX_STREAK = 3
+MAX_STREAK = 2
 MAX_MANDATORY = 3
 MANDATORY_PERIOD_DAYS = 15
 MORNING_STARTS = {8, 9, 10}
@@ -44,12 +46,13 @@ RECALL_COST = 5000.0
 RECALL_PROTECTED_COST = 20000.0
 RECALL_SPREAD_COST = 400.0
 RISE_COST = 1000.0
-STREAK_COST = 80.0
-LONELY_COST = 3.0
-SHIFT_COST = 20.0
-MONEY_COST = 30.0
+STREAK_COST = 320.0
+LONELY_COST = 10.0
+SHIFT_COST = 150.0
+RHYTHM_COST = 40.0
+MONEY_COST = 60.0
 HOUR_COST = 0.4
-WISH_OFF_COST = 45.0
+WISH_OFF_COST = 85.0
 WISH_START_COST = 30.0
 REFUSAL_COST = 8.0
 
@@ -98,6 +101,10 @@ class Request:
     def is_present(self, person):
         """Кто выходной весь период, тот в отпуске: его не вызывают."""
         return any(not self.is_off(person, day) for day in self.days)
+
+    def prior_streak(self, person):
+        history = self.pattern_history.get(person, '')
+        return len(history) - len(history.rstrip('1'))
 
     def count(self, day):
         if day in self.counts:
@@ -176,12 +183,14 @@ def pattern_misses(mask, patterns):
     return min(((mask ^ desired).bit_count() + prior for desired, prior in patterns), default=0)
 
 
-def _person_cost(row, money, target, wish_off, wish_starts, off, recall_price, w=None, patterns=(), time_rules=()):
+def _person_cost(row, money, target, wish_off, wish_starts, off, recall_price, w=None, patterns=(), time_rules=(),
+                 rhythm=(), prior_streak=0):
     """Штраф одного человека. row — приход по дням или None. w — веса целей (1 по умолчанию)."""
     w = w or {}
     streak_c, lonely_c, rise_c = STREAK_COST * w.get('streak', 1), LONELY_COST * w.get('lonely', 1), RISE_COST * w.get('rise', 1)
     shift_c, money_c, hour_c = SHIFT_COST * w.get('shift', 1), MONEY_COST * w.get('money', 1), HOUR_COST * w.get('hour', 1)
-    cost = streak = shifts = paid = hours = refused = recalled = 0
+    cost = shifts = paid = hours = refused = recalled = 0
+    streak = prior_streak
     previous = None
     worked = 0
     for index, shift in enumerate(row):
@@ -197,7 +206,7 @@ def _person_cost(row, money, target, wish_off, wish_starts, off, recall_price, w
         if previous is not None and start < previous:
             cost += rise_c
         previous = start
-        if patterns:
+        if rhythm or patterns:
             worked |= 1 << index
         streak += 1
         shifts += 1
@@ -219,6 +228,8 @@ def _person_cost(row, money, target, wish_off, wish_starts, off, recall_price, w
     elif streak == 1:
         cost += lonely_c
     cost += recall_price * recalled + RECALL_SPREAD_COST * recalled * recalled
+    if rhythm:
+        cost += RHYTHM_COST * pattern_misses(worked, rhythm)
     if patterns:
         cost += 18 * pattern_misses(worked, patterns)
     # Каждый следующий отказ одному человеку дороже: отказывать лучше понемногу всем.
@@ -286,12 +297,16 @@ def _search(request, iterations, seed):
     wish_starts = [request.wish_starts.get(name) or None for name in people]
     off = [[request.is_off(name, day) for day in days] for name in people]
     prices = [_recall_price(request, name) for name in people]
-    patterns = [pattern_masks(request.wish_patterns.get(name), len(days), request.pattern_history.get(name, ''))
-                for name in people]
+    history = [request.pattern_history.get(name, '') for name in people]
+    prior_streaks = [request.prior_streak(name) for name in people]
+    rhythms = [pattern_masks('2/2', len(days), bits) for bits in history]
+    patterns = [pattern_masks(request.wish_patterns.get(name), len(days), bits)
+                for name, bits in zip(people, history)]
 
     def person_cost(p):
         return _person_cost(table[p], money, targets[p], wish_off[p], wish_starts[p], off[p], prices[p],
-                            request.weights, patterns[p], rules[p] if request.time_rules else ())
+                            request.weights, patterns[p], rules[p] if request.time_rules else (),
+                            rhythms[p], prior_streaks[p])
 
     def actual(d, person, slot):
         return realized[d].get(person, {}).get(slot, slot)
@@ -308,7 +323,13 @@ def _search(request, iterations, seed):
     assigned = [[None] * len(days) for _ in people] if request.time_rules else table
     counts = [(0, 0)] * len(days)
     for d in range(len(days)):
-        chosen = rng.sample(pool[d], len(slots[d]))
+        missing = len(slots[d]) - len(available[d])
+        if missing > 0:
+            standby = [p for p in pool[d] if off[p][d]]
+            chosen = available[d] + rng.sample(standby, missing)
+            rng.shuffle(chosen)
+        else:
+            chosen = rng.sample(pool[d], len(slots[d]))
         for person, start in zip(chosen, slots[d]):
             assigned[person][d] = start
             table[person][d] = actual(d, person, start)
@@ -325,7 +346,7 @@ def _search(request, iterations, seed):
     if not movable:
         return best_total, best
 
-    hot, cold = 60.0, 0.2
+    hot, cold = 200.0, 0.2
     for step in range(iterations):
         heat = hot * (cold / hot) ** (step / iterations)
         d = rng.choice(movable)
@@ -334,17 +355,26 @@ def _search(request, iterations, seed):
         sa, sb = assigned[a][d], assigned[b][d]
         if a == b or sa == sb:
             continue
+        adds_recall = (sa is None and off[a][d] and not off[b][d]
+                       or sb is None and off[b][d] and not off[a][d])
+        if adds_recall and not coverage[d]:
+            continue
         old_a, old_b = table[a][d], table[b][d]
         table[a][d], table[b][d] = (actual(d, a, sb), actual(d, b, sa)) if realized[d] else (sb, sa)
-        cost_a = person_cost(a)
-        cost_b = person_cost(b)
-        change = cost_a + cost_b - costs[a] - costs[b]
+        gap_change = 0
         next_counts = counts[d]
         if coverage[d]:
             oa, ob = role_delta(d, old_a), role_delta(d, old_b)
             na, nb = role_delta(d, table[a][d]), role_delta(d, table[b][d])
             next_counts = tuple(c - a - b + x + y for c, a, b, x, y in zip(counts[d], oa, ob, na, nb))
-            change += coverage_cost * (gap(d, next_counts) - gap(d, counts[d]))
+            gap_change = gap(d, next_counts) - gap(d, counts[d])
+            # Лишний вызов с выходного допустим только ради открытия или закрытия.
+            if adds_recall and gap_change >= 0:
+                table[a][d], table[b][d] = old_a, old_b
+                continue
+        cost_a = person_cost(a)
+        cost_b = person_cost(b)
+        change = cost_a + cost_b - costs[a] - costs[b] + coverage_cost * gap_change
         if change <= 0 or rng.random() < math.exp(-change / heat):
             assigned[a][d], assigned[b][d] = sb, sa
             counts[d] = next_counts
@@ -384,7 +414,9 @@ def metrics(request, found, schedule=None):
     return {'problems': len(found.shortages) + len(found.closers) + len(found.openers) + len(found.rises)
                         + len(found.forced) + len(found.streaks),
             'hours': spread('hours'), 'shifts': spread('shifts'), 'money': spread('money'),
-            'rises': len(found.rises), 'streaks': len(found.streaks), **_rest(request, schedule)}
+            'rises': len(found.rises), 'streaks': len(found.streaks),
+            'streak_penalty': sum((length - MAX_STREAK) ** 2 for _, _, length in found.streaks),
+            **_rest(request, schedule)}
 
 
 def _rest(request, schedule):
@@ -397,7 +429,7 @@ def _rest(request, schedule):
         if not request.is_present(name):
             continue
         shifts = schedule.get(name, {})
-        run = 0
+        run = request.prior_streak(name)
         for day in days:
             run = run + 1 if day in shifts else 0
             longest = max(longest, run)
@@ -417,8 +449,8 @@ COMPARE = (
               lambda v: f'Пятницы, субботы и воскресенья неровно: разница {v}'),
     ('rises', lambda v: 'Нет ранних приходов после поздних' if v == 0 else f'Ранних приходов после поздних меньше всего: {v}',
               lambda v: f'Ранний приход после позднего: {v}'),
-    ('streaks', lambda v: 'Нет серий дольше трёх смен подряд' if v == 0 else f'Серий дольше трёх смен подряд меньше всего: {v}',
-                lambda v: f'Есть серии дольше трёх смен подряд: {v}'),
+    ('streaks', lambda v: 'Нет серий дольше двух смен подряд' if v == 0 else f'Серий дольше двух смен подряд меньше всего: {v}',
+                lambda v: f'Есть серии дольше двух смен подряд: {v}'),
     ('stretch', lambda v: f'Дольше всего без выходного — {v} дн. подряд, это меньше, чем в других',
                 lambda v: f'Кому-то работать {v} дн. подряд без выходного'),
     ('pairs', lambda v: 'Выходные идут подряд, по два-три дня', lambda v: 'Выходные разбросаны по одному дню', True),
@@ -454,9 +486,10 @@ def build_variants(request, iterations=120000, restarts=2):
         results.append({'id': variant['id'], 'title': variant['title'], 'schedule': schedule,
                         'metrics': metrics(trial, found, schedule)})
     describe(results)
-    # Порядок совпадает с тем, что читает менеджер: меньше нарушений, затем минусов больше плюсов, затем разброс.
-    results.sort(key=lambda r: (r['metrics']['problems'], len(r['cons']) - len(r['pros']),
-                                r['metrics']['hours'] + r['metrics']['money'] + r['metrics']['shifts']))
+    # Сначала условия смены, затем длина серий и равномерность количества смен.
+    results.sort(key=lambda r: (r['metrics']['problems'] - r['metrics']['streaks'],
+                                r['metrics']['streak_penalty'], r['metrics']['shifts'],
+                                len(r['cons']) - len(r['pros']), r['metrics']['hours'] + r['metrics']['money']))
     # Названия нейтральные: чем вариант хорош, говорят его плюсы и минусы, посчитанные по цифрам.
     for letter, result in zip('АБВГД', results):
         result['title'] = f'Вариант {letter}'
@@ -531,8 +564,8 @@ def audit(request, schedule):
                 result.wish_total += 1
                 if rule.misses(start, end) if rule and rule.preferred_start is not None else start not in wanted:
                     result.missed_starts.append((name, day, start))
-        streak_start = None
-        length = 0
+        length = request.prior_streak(name)
+        streak_start = days[0] - timedelta(days=length) if length else None
         for index, day in enumerate(days + [None]):
             if day is not None and day in own:
                 if length == 0:
@@ -544,7 +577,7 @@ def audit(request, schedule):
                 if previous in own and start_of(own[day]) < start_of(own[previous]):
                     result.rises.append((name, day, start_of(own[previous]), start_of(own[day])))
             else:
-                if length > MAX_STREAK:
+                if index and length > MAX_STREAK:
                     result.streaks.append((name, streak_start, length))
                 length = 0
         result.people[name] = {

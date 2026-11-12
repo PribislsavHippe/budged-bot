@@ -272,7 +272,7 @@ def check(draft, start, end):
     # на сайте строку можно нажать и перейти к нужной клетке.
     where = ([(day, None) for day, *_ in found.shortages] + [(day, name) for name, day in found.forced]
              + [(day, name) for name, day, *_ in found.rises] + [(day, None) for day, *_ in found.closers]
-             + [(day, None) for day, *_ in found.openers] + [(day, name) for name, day, _ in found.streaks]
+             + [(day, None) for day, *_ in found.openers] + [(max(day, start), name) for name, day, _ in found.streaks]
              + [(day, name) for name, day, _ in found.unavailable])
     lines = text.split('\n')
     bullets = []
@@ -365,7 +365,7 @@ async def build_inputs(restaurant_id, start, draft, row=None, *, end=None):
         required = await requested_offs(restaurant_id, start, draft)
         preferred, revisions = {}, {}
     history = {}
-    if patterns:
+    if names:
         previous_end = start - timedelta(days=1)
         previous = (await db._execute(db.supabase.table('rosters').select('published,start_date')
                                       .eq('restaurant_id', restaurant_id).eq('end_date', previous_end.isoformat())
@@ -376,7 +376,7 @@ async def build_inputs(restaurant_id, start, draft, row=None, *, end=None):
             span = [(first + timedelta(days=i)).isoformat() for i in range((start - first).days)]
             for person in snap.get('people', []):
                 name = names.get(person.get('link'))
-                if name in patterns:
+                if name:
                     cells = snap.get('cells', {}).get(person['name'], {})
                     history[name] = ''.join('1' if str(cells.get(day, '')).strip()[:1].isdigit() else '0'
                                             for day in span)

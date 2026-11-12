@@ -60,6 +60,49 @@ class BuildTests(unittest.TestCase):
         self.assertLessEqual(max(money) - min(money), 1)
         hours = [stats['hours'] for stats in found.people.values()]
         self.assertLessEqual(max(hours) - min(hours), 12)
+        shifts = [stats['shifts'] for stats in found.people.values()]
+        self.assertLessEqual(max(shifts) - min(shifts), 1)
+        self.assertEqual(found.streaks, [])
+
+    def test_two_on_two_off_when_it_fits(self):
+        days = [START + timedelta(days=i) for i in range(8)]
+        request = roster.Request(START, days[-1], NAMES[:4], counts=dict.fromkeys(days, 2),
+                                 openers=dict.fromkeys(days, 0), closers=dict.fromkeys(days, 2))
+        schedule = solved(request)
+        for own in schedule.values():
+            worked = sum(1 << i for i, day in enumerate(days) if day in own)
+            self.assertEqual(len(own), 4)
+            self.assertEqual(roster.pattern_misses(worked, roster.pattern_masks('2/2', len(days))), 0)
+
+    def test_employee_with_few_available_days_can_have_fewer_shifts(self):
+        days = [START + timedelta(days=i) for i in range(8)]
+        request = roster.Request(START, days[-1], NAMES[:5], days_off={NAMES[0]: set(days[1:])},
+                                 counts=dict.fromkeys(days, 2), openers=dict.fromkeys(days, 0),
+                                 closers=dict.fromkeys(days, 2))
+        found = roster.audit(request, solved(request))
+        self.assertEqual((found.shortages, found.forced, found.streaks), ([], [], []))
+        self.assertEqual(found.people[NAMES[0]]['shifts'], 1)
+        self.assertEqual(sorted(found.people[name]['shifts'] for name in NAMES[1:5]), [3, 4, 4, 4])
+
+    def test_required_staffing_can_extend_a_streak_from_the_last_period(self):
+        request = roster.Request(START, START, [NAMES[0]], pattern_history={NAMES[0]: '011'},
+                                 counts={START: 1}, openers={START: 0}, closers={START: 1})
+        schedule = solved(request)
+        found = roster.audit(request, schedule)
+        self.assertEqual(found.shortages, [])
+        self.assertEqual(found.streaks, [(NAMES[0], START - timedelta(days=2), 3)])
+        self.assertEqual(roster.audit(request, {}).streaks, [])
+
+    def test_avoiding_long_streak_does_not_cause_extra_recalls(self):
+        days = [START + timedelta(days=i) for i in range(13)]
+        names = NAMES[:3]
+        counts = {day: 2 if day == days[6] else 1 for day in days}
+        request = roster.Request(START, days[-1], names, days_off={name: set(days[1:-1]) for name in names[1:]},
+                                 counts=counts, openers=dict.fromkeys(days, 0), closers=counts)
+        for variant in roster.build_variants(request, iterations=10000, restarts=1):
+            found = roster.audit(request, variant['schedule'])
+            self.assertEqual(found.shortages, [])
+            self.assertEqual(len(found.forced), 1)
 
     def test_same_input_gives_the_same_schedule(self):
         request = fortnight({NAMES[0]: [0, 1]})
