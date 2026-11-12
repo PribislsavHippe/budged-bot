@@ -10,7 +10,7 @@ try {
   for(const name of ['schema.sql',...Array.from({length:25},(_,i)=>'migration_v'+(i+7)+'.sql')]){
     await db.exec(await source(name));
   }
-  await db.exec('INSERT INTO users(id) VALUES(1),(2),(3),(4),(5),(6)');
+  await db.exec('INSERT INTO users(id) VALUES(1),(2),(3),(4),(5),(6),(7),(8)');
   await db.exec(`INSERT INTO restaurants(id,name,owner_id) VALUES('${R}','Ресторан',1)`);
   const add=(n,uid,status,extra='')=>db.exec(`INSERT INTO employee_links(id,restaurant_id,user_id,report_name,name_key,status${extra?',role':''})
     VALUES('${link(n)}','${R}',${uid},'Имя ${n}','имя ${n}','${status}'${extra?`,'${extra}'`:''})`);
@@ -46,4 +46,25 @@ try {
   await db.query('SELECT identity_action($1,$2,$3)',[6,'request',JSON.stringify({hash:'again',id:link(7),name:'Имя 6',name_key:'имя 6x'})]);
   assert.equal((await db.query('SELECT role FROM employee_links WHERE user_id=6')).rows[0].role,'staff');
   console.log('v31 SQL passed: roles, one director, manager limits, director plans, revoke resets role.');
+
+  // Upgrade an existing restaurant with confirmed roles, rather than starting with empty tables.
+  for(let version=32;version<=39;version++) await db.exec(await source(`migration_v${version}.sql`));
+  const member=async uid=>(await db.query('SELECT to_jsonb(e) AS member FROM employee_links e WHERE user_id=$1',[uid])).rows[0]?.member;
+  const request=async(uid,n,name,nameKey)=>(await db.query('SELECT identity_action($1,$2,$3) AS member',
+    [uid,'request',JSON.stringify({hash:'again',id:link(n),name,name_key:nameKey})])).rows[0].member;
+  await db.exec('SET ROLE service_role');
+  for(const uid of [2,3,5]){
+    const before=await member(uid);
+    assert.equal(before.status,'approved');
+    assert.deepEqual(await request(uid,8,'Другое имя','другое имя'),before);
+    assert.deepEqual(await member(uid),before);
+  }
+  await assert.rejects(request(7,8,'Имя 3','имя 3'),{code:'23505'});
+  assert.equal(await member(7),undefined);
+  const pending=await request(8,8,'Другое имя','другое имя');
+  assert.deepEqual([pending.status,pending.role],['pending','staff']);
+  assert.deepEqual(await request(8,9,'Другое имя','другое имя'),pending);
+  await db.exec('RESET ROLE; SET ROLE anon');
+  await assert.rejects(request(7,9,'Другое имя','другое имя'),/permission denied/);
+  console.log('v39 SQL passed: repeated invites preserve approval and role, taken names do not create a duplicate, permissions remain enforced.');
 } finally { await db.close(); }

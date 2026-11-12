@@ -110,6 +110,9 @@ async def register_name(message,state):
     try:
         result=await identity.request(message.from_user.id,data.get('invite_token',''),message.text)
         await state.clear()
+        if result['status']=='approved':
+            await message.answer(identity.STATUSES['approved'])
+            return
         await message.answer(f"Спасибо, {html.escape(result['report_name'])}! Заявка отправлена менеджеру. "
                              "Когда он подтвердит тебя в ресторане, сможешь записывать пожелания к графику. "
                              "Чаевые и расходы уже можно записывать здесь.")

@@ -75,6 +75,18 @@ class IdentityTests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(photo.drafts[42],draft)
         finally:photo.expire(42,draft)
 
+    async def test_confirmed_employee_reopening_invitation_sees_existing_status(self):
+        message=NS(from_user=NS(id=42),text='Другое имя',answer=AsyncMock())
+        state=NS(get_data=AsyncMock(return_value={'invite_token':'token'}),clear=AsyncMock())
+        with patch.object(identity,'request',new=AsyncMock(return_value={
+            'status':'approved','report_name':'Прежнее имя','role':'manager',
+        })) as request, patch('ux_chat.begin',new=AsyncMock()) as begin:
+            await chat.register_name(message,state)
+        request.assert_awaited_once_with(42,'token','Другое имя')
+        state.clear.assert_awaited_once()
+        message.answer.assert_awaited_once_with('Ты в команде')
+        begin.assert_not_awaited()
+
     async def test_verified_photo_still_requires_confirmation(self):
         draft=photo.Draft('nonce','report-id','file')
         photo.drafts[42]=draft
