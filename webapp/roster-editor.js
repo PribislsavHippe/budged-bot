@@ -1,5 +1,5 @@
-// Составление графика на сайте ресторана: при создании программа сама ставит обязательные выходные и
-// собирает несколько вариантов; менеджер выбирает вариант, правит клетки и публикует для команды.
+// Составление графика на сайте ресторана: программа собирает несколько вариантов смен.
+// Менеджер выбирает вариант, правит клетки и публикует для команды.
 // В график попадают только подтверждённые сотрудники ресторана.
 (() => {
   'use strict';
@@ -123,7 +123,7 @@
       const keep=cur&&cur.id===data.id&&!replace?cur.draft:null;
       if(cur?.id!==data.id){undo=[];redo=[];forcePick=false;}
       cur={...data,days:daysOf(data.start,data.end),draft:keep||data.draft};
-      for(const key of ['off','off_auto','cells','wish_off','wish_starts','days','events'])cur.draft[key]=cur.draft[key]||{};
+      for(const key of ['off','cells','wish_off','wish_starts','days','events'])cur.draft[key]=cur.draft[key]||{};
       cur.draft.variants=cur.draft.variants||[];
       if(!keep)last=JSON.stringify(cur.draft);
       const i=periods.findIndex(p=>p.id===data.id),summary={id:data.id,start:data.start,end:data.end,published_at:data.published_at,changed:data.changed};
@@ -279,8 +279,7 @@
       for(const n of names){const x=a[n]||{},y=b[n]||{},keys=new Set([...Object.keys(x),...Object.keys(y)]);for(const k of keys)if(x[k]!==y[k])return false;}return true;};
     const current=()=>(D().variants||[]).find(v=>v.id===D().variant&&D().picked&&sameCells(D().cells,v.cells));
     function renderPick(){
-      const box=q('.re-pickview'),list=D().variants||[],auto=D().off_auto||{},manual={};
-      for(const [n,days] of Object.entries(D().off)){const m=days.filter(d=>!(auto[n]||[]).includes(d));if(m.length)manual[n]=m;}
+      const box=q('.re-pickview'),list=D().variants||[];
       const chosen=current();
       box.innerHTML=list.map((v,i)=>{
         const rank=i===0?'лучший по расчёту':i===list.length-1&&list.length>1?'слабее остальных':'';
@@ -289,7 +288,7 @@
           <ul>${v.pros.map(t=>`<li class="pro">${esc(t)}</li>`).join('')}${v.cons.map(t=>`<li class="con">${esc(t)}</li>`).join('')}</ul>
           ${chosen?.id===v.id?'<button type="button" class="btn" data-edit>Править этот</button>':`<button type="button" class="btn btn-ghost" data-variant="${esc(v.id)}">Выбрать</button>`}</article></section>`;}).join('');
       list.forEach(v=>{
-        const people=D().people.map(p=>({name:p.name,cells:v.cells[p.name]||{},off:[...new Set([...(manual[p.name]||[]),...(v.off[p.name]||[])])]}));
+        const people=D().people.map(p=>({name:p.name,cells:v.cells[p.name]||{},off:D().off[p.name]||[]}));
         box.querySelector(`[data-id="${v.id}"] table`).innerHTML=G.table({days:cur.days,people,events:D().events,holidays:holidayLabels(),weekGap:false,need});
       });
     }
@@ -298,11 +297,8 @@
       // Если таблицу уже правили руками, замена вариантом их сотрёт.
       const was=(D().variants||[]).find(x=>x.id===D().variant);
       if(D().picked&&was&&!sameCells(D().cells,was.cells)&&!confirm('Заменить таблицу этим вариантом? Правки смен пропадут.'))return;
-      // Выходные, поставленные вручную (отпуск) или запрошенные людьми, остаются; автоматические берутся из варианта.
-      const auto=D().off_auto||{},manual={};
-      for(const [n,days] of Object.entries(D().off)){const m=days.filter(d=>!(auto[n]||[]).includes(d));if(m.length)manual[n]=m;}
-      D().cells=JSON.parse(JSON.stringify(v.cells));D().off_auto=JSON.parse(JSON.stringify(v.off));D().off={};
-      for(const n of new Set([...Object.keys(manual),...Object.keys(v.off)]))D().off[n]=[...new Set([...(manual[n]||[]),...(v.off[n]||[])])].sort();
+      // Обязательные даты общие для вариантов. Выбор меняет только расстановку смен.
+      D().cells=JSON.parse(JSON.stringify(v.cells));
       D().variant=id;D().picked=true;forcePick=false;sel=null;side=null;
       applyView();changed();
     }
@@ -420,8 +416,6 @@
     function toggleOff(){
       const p=person(sel.r),on=!(D().off[p.name]||[]).includes(sel.day);
       toggle('off',p.name,sel.day,on);
-      // Снятый выходной больше не автоматический.
-      if(!on){const auto=D().off_auto[p.name]||[],i=auto.indexOf(sel.day);if(i>=0){auto.splice(i,1);if(!auto.length)delete D().off_auto[p.name];}}
       // Обязательный выходной убирает смену, кроме отметки «необычное».
       if(on){const v=G.parse(D().cells[p.name]?.[sel.day]);setCell(p.name,sel.day,v?.note?'*':'');}
       changed();renderCell();
@@ -512,7 +506,7 @@
       const p=person(r);if(!p)return;
       if(!confirm(`Убрать ${p.name} из графика?`))return;
       D().people.splice(r,1);
-      for(const key of ['cells','off','off_auto','wish_off','wish_starts'])delete D()[key][p.name];
+      for(const key of ['cells','off','wish_off','wish_starts'])delete D()[key][p.name];
       side=null;sel=null;clearSel();changed();renderPanel();
     }
     q('.re-day').addEventListener('change',e=>{

@@ -188,24 +188,9 @@ class DraftTests(unittest.TestCase):
         self.assertIn(date(2027, 11, 5), holidays_ru.between(date(2027, 11, 1), date(2027, 11, 8)))
         self.assertIn(date(2031, 6, 12), holidays_ru.between(date(2031, 6, 1), date(2031, 6, 30)))
 
-    def test_mandatory_days_off_are_placed_by_the_program(self):
-        people = [f'П{i}' for i in range(11)]
-        start, end = date(2026, 11, 1), date(2026, 11, 15)
-        request = roster.Request(start, end, people)
-        request.holidays = set(holidays_ru.between(start, end))
-        request.students = {'П0'}
-        request.days_off = {'П1': {date(2026, 11, 2)}}
-        added = roster.auto_days_off(request)
-        self.assertEqual(len(added['П0']), 5)
-        self.assertEqual(len(added['П1']), 2)
-        self.assertEqual({len(v) for n, v in added.items() if n not in ('П0', 'П1')}, {3})
-        for day in request.days:
-            away = sum(day in added[n] or day in request.days_off.get(n, ()) for n in people)
-            self.assertGreaterEqual(len(people) - away, request.count(day), day)
-        # Выходные — в будни: на пятницу, субботу, воскресенье и праздники приходится лишь малая часть.
-        total = sum(len(v) for v in added.values())
-        on_busy = sum(day in v for v in added.values() for day in request.days if request.is_money(day))
-        self.assertLessEqual(on_busy, total * .1)
+    def test_mandatory_request_limit_for_fifteen_days(self):
+        self.assertEqual(roster.off_limit(15), 3)
+        self.assertEqual(roster.off_limit(15, student=True), 5)
 
     def test_variants_differ_and_describe_their_pros_and_cons(self):
         people = [f'П{i}' for i in range(11)]
@@ -214,13 +199,10 @@ class DraftTests(unittest.TestCase):
             found = roster.build_variants(request)
         self.assertEqual({v['id'] for v in found}, {'even', 'calm', 'weekend'})
         self.assertLessEqual(found[0]['metrics']['problems'], found[-1]['metrics']['problems'])
-        calm = next(v for v in found if v['id'] == 'calm')
-        even = next(v for v in found if v['id'] == 'even')
-        self.assertGreater(calm['metrics']['pairs'], even['metrics']['pairs'])
-        self.assertIn('Выходные идут подряд, по два-три дня', calm['pros'])
-        scattered = min(found, key=lambda v: v['metrics']['pairs'])
-        self.assertIn('Выходные разбросаны по одному дню', scattered['cons'])
-        self.assertTrue(all(v['off'] and v['schedule'] for v in found))
+        self.assertTrue(all(v['schedule'] and v['metrics']['pairs'] > 0 for v in found))
+        self.assertNotEqual(found[0]['schedule'], found[1]['schedule'])
+        self.assertTrue(any(v['pros'] for v in found))
+        self.assertEqual(request.days_off, {})
 
     def test_day_settings_reach_the_builder_and_the_check(self):
         draft = self.draft(days={'2026-11-17': {'count': 6, 'closers': 4, 'openers': 2}}, off={'Аня': ['2026-11-17']})
@@ -235,23 +217,21 @@ class DraftTests(unittest.TestCase):
         self.assertEqual(len(tuesday_starts), 6)
         self.assertEqual(sum(h >= roster.LAST_CLOSER_START for h in tuesday_starts), 4)
         self.assertNotIn('2026-11-17', cells.get('Аня', {}))
-        # Ручной выходной остаётся, автоматические добавлены сверху и отмечены отдельно.
-        self.assertIn('2026-11-17', draft['off']['Аня'])
-        self.assertNotIn('2026-11-17', draft['off_auto'].get('Аня', []))
+        self.assertEqual(draft['off'], {'Аня': ['2026-11-17']})
+        self.assertEqual(draft['off_auto'], {})
         self.assertEqual(len(draft['variants']), 3)
         self.assertEqual(draft['variant'], draft['variants'][0]['id'])
         self.assertEqual(self.api.check(draft, START, END)['days'], {})
 
-    def test_rebuild_keeps_manual_days_off_and_replaces_automatic_ones(self):
+    def test_rebuild_keeps_manual_days_off_and_drops_legacy_automatic_flags(self):
         draft = self.draft(off={'Аня': ['2026-11-16']})
+        draft['off']['Аня'].append('2026-11-17')
+        draft['off_auto'] = {'Аня': ['2026-11-17']}
         with fast():
             self.api.build_all(draft, START, END)
-            first_auto = {n: list(v) for n, v in draft['off_auto'].items()}
             self.api.build_all(draft, START, END)
-        self.assertIn('2026-11-16', draft['off']['Аня'])
-        self.assertNotIn('2026-11-16', draft['off_auto'].get('Аня', []))
-        for name, days in draft['off_auto'].items():
-            self.assertEqual(set(draft['off'][name]) - set(days), set(draft['off'][name]) - set(first_auto.get(name, [])) - set(days))
+        self.assertEqual(draft['off'], {'Аня': ['2026-11-16']})
+        self.assertEqual(draft['off_auto'], {})
 
     def test_requested_days_off_come_first_and_are_capped(self):
         draft = self.draft()
@@ -271,8 +251,21 @@ class DraftTests(unittest.TestCase):
         with fast():
             self.api.build_all(draft, START, END, {'Аня': ['2026-11-20']})
         self.assertEqual(draft['off_requested'], {'Аня': ['2026-11-20']})
-        self.assertNotIn('2026-11-16', draft['off']['Аня'] if 'Аня' in draft['off'] and '2026-11-16' not in draft['off_auto'].get('Аня', []) else [])
+        self.assertNotIn('2026-11-16', draft['off'].get('Аня', []))
         self.assertIn('2026-11-22', draft['off']['Ева'])
+
+    def test_two_requested_days_remain_two_mandatory_days_in_every_variant(self):
+        end = date(2026, 11, 30)
+        draft = self.api.normalize({'people': [{'name': name} for name in NAMES]}, START, end)
+        requested = {'Аня': ['2026-11-21', '2026-11-22']}
+        with fast():
+            self.api.build_all(draft, START, end, requested)
+        self.assertEqual(draft['off'], requested)
+        self.assertEqual(draft['off_requested'], requested)
+        self.assertEqual(draft['off_auto'], {})
+        for variant in draft['variants']:
+            self.assertEqual(variant['off'], {})
+            self.assertTrue(set(requested['Аня']).isdisjoint(variant['cells'].get('Аня', {})))
 
     def test_telegram_text_with_days_off_is_read_and_checked_against_the_period(self):
         days_off = self.api.days_off
@@ -510,7 +503,8 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(balance, sorted(balance))
         self.assertEqual(draft['variant'], draft['variants'][0]['id'])
         self.assertFalse(draft['picked'])
-        self.assertTrue(draft['cells'] and draft['off_auto'])
+        self.assertTrue(draft['cells'])
+        self.assertEqual(draft['off'], {})
         self.assertIn('2026-11-16', made['holidays'] if False else {**made['holidays'], '2026-11-16': 1})
         await self.roster('create', MANAGER, 400, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
         draft['events'] = {'2026-11-18': 'Генуборка'}
@@ -581,9 +575,7 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([p['name'] for p in people], [n for n in order if n != 'Менеджер'] + ['Новенький'])
         self.assertTrue(next(p for p in people if p['name'] == 'Аня')['student'])
         self.assertEqual(later['draft']['wish_starts'], {'Аня': [9, 10]})
-        # Студенту — больше обязательных выходных, чем остальным.
-        auto = later['draft']['off_auto']
-        self.assertGreater(len(auto['Аня']), len(auto['Боря']))
+        self.assertEqual(later['draft']['off'], {})
 
     async def test_publication_messages_each_person_in_the_bot(self):
         sent = []
@@ -853,8 +845,8 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('сотрудники ресторана', stranger.answer.await_args.args[0])
         made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
         self.assertEqual(made['draft']['wish_off'], {'Аня': ['2026-11-17']})
-        # Обязательный выходной у Ани ставится на вторник во всех вариантах.
-        self.assertTrue(all('2026-11-17' in v['off'].get('Аня', []) for v in made['draft']['variants']))
+        self.assertEqual(made['draft']['off'], {})
+        self.assertTrue(any('2026-11-17' not in v['cells'].get('Аня', {}) for v in made['draft']['variants']))
         opened = await self.roster('open', MANAGER, id=made['id'])
         self.assertEqual(list(opened['wishes'].values()), [{'days': [1], 'pattern': None}])
         # «Убрать пожелание» стирает его; следующая сборка его уже не учитывает.
@@ -1102,6 +1094,32 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         await self.post('/api/restaurant/transfer', WAITER, 403, id=manager, restaurant_id=PLACE, target_restaurant_id=OTHER)
         await self.post('/api/restaurant/role', OWNER, id=waiter, role='staff', restaurant_id=PLACE)
         self.assertFalse((await self.post('/api/restaurant/access', WAITER))['available'])
+
+    async def test_legacy_automatic_off_flags_are_removed_without_rebuilding_or_changing_shifts(self):
+        made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-30')
+        row = self.fake.rows['rosters'][0]
+        shifts = {'Аня': {'2026-11-24': '9-17'}}
+        explicit = {'Аня': ['2026-11-20', '2026-11-21', '2026-11-22']}
+        automatic = {'Аня': ['2026-11-23']}
+        legacy = {**row['draft'], 'cells': shifts, 'picked': True,
+                  'off': {'Аня': [*explicit['Аня'], *automatic['Аня']]},
+                  'off_requested': {'Аня': ['2026-11-21', '2026-11-22']},
+                  'off_auto': automatic,
+                  'variants': [{**variant, 'off': automatic} for variant in row['draft']['variants']]}
+        row.update(draft=legacy, published=legacy, published_at='2026-11-12T10:00:00Z')
+        opened = await self.roster('open', MANAGER, id=made['id'])
+        self.assertEqual(opened['draft']['off'], explicit)
+        self.assertEqual(opened['draft']['cells'], shifts)
+        self.assertEqual(opened['draft']['off_auto'], {})
+        self.assertTrue(all(not v['off'] for v in opened['draft']['variants']))
+        self.assertFalse(opened['changed'])
+        view = await self.post('/api/schedule/view', WAITER)
+        own = next(person for person in view['period']['people'] if person['me'])
+        self.assertEqual((own['cells'], own['off']), (shifts['Аня'], explicit['Аня']))
+        saved = await self.roster('save', MANAGER, id=made['id'], revision=made['revision'], draft=legacy)
+        self.assertEqual(saved['draft']['off'], explicit)
+        self.assertEqual(saved['draft']['cells'], shifts)
+
 
 if __name__ == '__main__':
     unittest.main()

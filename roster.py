@@ -3,7 +3,7 @@
 Правила владельца (2 ноября 2026): смена 12 часов, ресторан закрывается в 23;
 в будни 5 человек, в выходные 6, число можно менять на дату, и его нужно набрать всегда;
 в закрытии всегда 3 (приход с 11 и позже); в пт–вс открывают двое, в будни один;
-обязательных выходных 3 на 15 дней, у студентов больше; из обязательного выходного
+обязательных выходных до 3 на 15 дней, у студентов больше; из обязательного выходного
 выходят, только если иначе не набрать людей; в смены подряд приход не раньше, чем накануне;
 денежные дни поровну.
 
@@ -364,72 +364,15 @@ STUDENT_EXTRA_OFF = 2   # студентам нужно больше обяза�
 
 
 def off_limit(days, student=False):
-    """Сколько обязательных выходных положено на период: 3 на 15 дней, студентам на 2 больше."""
+    """Лимит обязательных просьб на период: до 3 на 15 дней, студентам на 2 больше."""
     return max(1, round(MAX_MANDATORY * days / MANDATORY_PERIOD_DAYS)) + (STUDENT_EXTRA_OFF if student else 0)
-
-
-def off_quota(request, name):
-    return off_limit(len(request.days), name in request.students)
-
-
-def auto_days_off(request, seed=0, pairs=False):
-    """Обязательные выходные каждому: поровну на период, в дни, когда людей нужно меньше всего.
-    Не больше, чем можно отпустить при нужном числе людей (и одном запасном); пятница, суббота,
-    воскресенье и праздники — последними. pairs: выходные по два дня подряд, где получается.
-    Уже стоящие выходные (отпуск, ручные) не трогаются. Возвращает только новые: {имя: set(дат)}."""
-    rng = random.Random(seed)
-    days = request.days
-    people = list(request.people)
-    off = {name: set(request.days_off.get(name, ())) for name in people}
-    extra = [0] * len(days)
-    away = [sum(day in off[name] for name in people) for day in days]
-    room = [len(people) - away[d] - request.count(day) - 1 for d, day in enumerate(days)]
-    price = [(70 if request.is_money(day) else 0) for day in days]
-    added = {name: set() for name in people}
-    order = [name for name in people if request.is_present(name)]
-    rng.shuffle(order)
-    # У кого есть пожелания, выбирает первым: желаемые дни ещё свободны.
-    order.sort(key=lambda name: not request.wish_off.get(name))
-    wish = {name: request.wish_off.get(name, set()) for name in people}
-
-    def free(name, d):
-        return (days[d] not in off[name] and days[d] not in request.wish_dates.get(name, ())
-                and extra[d] < room[d])
-
-    def cost(name, d):
-        near = sum(days[i] in off[name] for i in (d - 1, d + 1) if 0 <= i < len(days))
-        # В режиме «парами» соседство даже приветствуется; иначе выходные разносим.
-        # Пожелание («выходной по вторникам») важнее того, что день денежный: человек сам от него отказался.
-        wanted = -90 if days[d] in wish[name] else 0
-        return price[d] + wanted + extra[d] * 10 + (-6 if pairs else 8) * near + rng.random() * .5
-
-    def take(name, d):
-        off[name].add(days[d]); added[name].add(days[d]); extra[d] += 1
-
-    for name in order:
-        need = off_quota(request, name) - len(off[name])
-        while pairs and need >= 2:
-            options = [(cost(name, d) + cost(name, d + 1), d) for d in range(len(days) - 1) if free(name, d) and free(name, d + 1)]
-            if not options:
-                break
-            _, d = min(options)
-            take(name, d); take(name, d + 1)
-            need -= 2
-        while need > 0:
-            options = [(cost(name, d), d) for d in range(len(days)) if free(name, d)]
-            if not options:
-                break
-            _, d = min(options)
-            take(name, d)
-            need -= 1
-    return added
 
 
 # Варианты отличаются тем, что для них важнее; у каждого свой разброс выходных.
 VARIANTS = (
-    {'id': 'even', 'title': 'Поровну часов и смен', 'pairs': False, 'seed': 11, 'weights': {'shift': 3.0, 'hour': 3.0}},
-    {'id': 'calm', 'title': 'Спокойные переходы', 'pairs': True, 'seed': 23, 'weights': {'rise': 4.0, 'streak': 2.5, 'lonely': 3.0}},
-    {'id': 'weekend', 'title': 'Поровну пт–вс', 'pairs': False, 'seed': 37, 'weights': {'money': 4.0}},
+    {'id': 'even', 'title': 'Поровну часов и смен', 'seed': 11, 'weights': {'shift': 3.0, 'hour': 3.0}},
+    {'id': 'calm', 'title': 'Спокойные переходы', 'seed': 23, 'weights': {'rise': 4.0, 'streak': 2.5, 'lonely': 3.0}},
+    {'id': 'weekend', 'title': 'Поровну пт–вс', 'seed': 37, 'weights': {'money': 4.0}},
 )
 
 
@@ -453,12 +396,12 @@ def _rest(request, schedule):
     for name in request.people:
         if not request.is_present(name):
             continue
+        shifts = schedule.get(name, {})
         run = 0
         for day in days:
-            run = run + 1 if day in schedule.get(name, {}) else 0
+            run = run + 1 if day in shifts else 0
             longest = max(longest, run)
-        off = request.days_off.get(name, set())
-        pairs += sum(day in off and day + timedelta(days=1) in off for day in days)
+        pairs += sum(first not in shifts and second not in shifts for first, second in zip(days, days[1:]))
     return {'stretch': longest, 'pairs': pairs}
 
 
@@ -501,18 +444,15 @@ def describe(results, limit=3):
 
 
 def build_variants(request, iterations=120000, restarts=2):
-    """Несколько вариантов графика сразу: обязательные выходные расставляются сами, затем каждый
-    вариант собирается со своими приоритетами. Лучший по числу нарушений и разбросу — первый."""
+    """Варианты используют одни обязательные даты и разные приоритеты расстановки смен."""
     results = []
     for variant in VARIANTS:
-        auto = auto_days_off(request, variant['seed'], variant['pairs'])
-        merged = {name: set(request.days_off.get(name, ())) | auto.get(name, set()) for name in request.people}
-        trial = dataclasses.replace(request, days_off=merged, weights=variant['weights'])
+        trial = dataclasses.replace(request, weights=variant['weights'])
         table = build(trial, iterations=iterations, seed=variant['seed'], restarts=restarts)
         schedule = as_schedule(trial, table)
         found = audit(trial, schedule)
         results.append({'id': variant['id'], 'title': variant['title'], 'schedule': schedule,
-                        'off': auto, 'metrics': metrics(trial, found, schedule)})
+                        'metrics': metrics(trial, found, schedule)})
     describe(results)
     # Порядок совпадает с тем, что читает менеджер: меньше нарушений, затем минусов больше плюсов, затем разброс.
     results.sort(key=lambda r: (r['metrics']['problems'], len(r['cons']) - len(r['pros']),

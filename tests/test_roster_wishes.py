@@ -63,8 +63,6 @@ class WishParsing(unittest.TestCase):
         shifts = roster.as_schedule(request, roster.build(request, iterations=100, restarts=1))
         self.assertEqual(len(shifts['Аня']), 4)
         self.assertEqual(roster.audit(request, shifts).missed_off, [('Аня', START)])
-        request.people.extend(['Боря', 'Вика'])
-        self.assertNotIn(START, roster.auto_days_off(request).get('Аня', set()))
 
 
 class WishFlow(unittest.IsolatedAsyncioTestCase):

@@ -67,6 +67,24 @@ def parse_cell(value):
     return start, end, bool(note)
 
 
+def without_auto_days_off(draft):
+    """Legacy snapshots can mark automatically selected rest days as mandatory."""
+    automatic = draft.get('off_auto') or {}
+    variants = draft.get('variants') or []
+    if not automatic and not any(variant.get('off') for variant in variants):
+        return draft
+
+    requested = draft.get('off_requested') or {}
+    explicit = {}
+    for name, days in (draft.get('off') or {}).items():
+        generated = set(automatic.get(name, ())) - set(requested.get(name, ()))
+        kept = [day for day in days if day not in generated]
+        if kept:
+            explicit[name] = kept
+    return {**draft, 'off': explicit, 'off_auto': {},
+            'variants': [{**variant, 'off': {}} for variant in variants]}
+
+
 def normalize(draft, start, end):
     """Проверяет черновик с сайта и оставляет только известные поля."""
     if not isinstance(draft, dict):
@@ -150,7 +168,7 @@ def normalize(draft, start, end):
     result['picked'] = bool(draft.get('picked'))
     chosen = str(draft.get('variant') or '')
     result['variant'] = chosen if any(v['id'] == chosen for v in result['variants']) else None
-    return result
+    return without_auto_days_off(result)
 
 
 def trim(draft, start, end):
@@ -172,7 +190,7 @@ def trim(draft, start, end):
 
 
 def clean_variants(raw, names, in_period):
-    """Варианты графика, собранные программой: смены, автоматические выходные и описание."""
+    """Варианты графика: смены, описание и данные старых автоматических отметок."""
     out = []
     for item in (raw if isinstance(raw, list) else [])[:5]:
         if not isinstance(item, dict):
@@ -267,21 +285,9 @@ def check(draft, start, end):
     return {'text': text, 'problems': len(where), 'days': flagged, 'items': items}
 
 
-def apply_variant(draft, variant, manual):
-    """Ставит вариант в черновик: его смены и его автоматические выходные поверх ручных."""
-    draft['cells'] = {name: dict(row) for name, row in variant['cells'].items()}
-    draft['off_auto'] = {name: list(days) for name, days in variant['off'].items()}
-    names = set(manual) | set(variant['off'])
-    draft['off'] = {name: sorted(set(manual.get(name, [])) | set(variant['off'].get(name, []))) for name in names}
-    draft['variant'] = variant['id']
-
-
 def build_all(draft, start, end, requested=None, weekdays=None, *, preferred=None, patterns=None, history=None,
               revisions=None, time_rules=None):
-    """Обязательные выходные расставляются сами, затем собираются несколько вариантов графика;
-    лучший сразу встаёт в таблицу. Выходные, которые менеджер поставил сам (отпуск), остаются.
-    requested — выходные, которые люди выбрали в Telegram ({имя: [даты]}): они ставятся первыми,
-    не больше нормы на человека, остальное до нормы добавляет программа.
+    """Собирает варианты по обязательным просьбам в пределах нормы и ручным отметкам.
     weekdays — пожелания по дням недели ({имя: [0..6]}): это мягкие пожелания на весь период."""
     if weekdays is not None:
         names = {p['name'] for p in draft['people']}
@@ -316,9 +322,13 @@ def build_all(draft, start, end, requested=None, weekdays=None, *, preferred=Non
     draft['variants'] = [{'id': r['id'], 'title': r['title'],
                           'cells': {name: {day.isoformat(): format_shift(shift) for day, shift in row.items()}
                                     for name, row in r['schedule'].items() if row},
-                          'off': {name: sorted(d.isoformat() for d in days) for name, days in r['off'].items() if days},
+                          'off': {},
                           'pros': r['pros'], 'cons': r['cons']} for r in found]
-    apply_variant(draft, draft['variants'][0], fixed)
+    chosen = draft['variants'][0]
+    draft['cells'] = {name: dict(row) for name, row in chosen['cells'].items()}
+    draft['variant'] = chosen['id']
+    draft['off'] = fixed
+    draft['off_auto'] = {}
     draft['off_requested'] = asked
     # Лучший вариант уже стоит в таблице, но менеджер ещё не выбирал: сначала он видит все варианты.
     draft['picked'] = False
@@ -418,9 +428,12 @@ def _period(row):
 
 
 def _summary(row):
+    published = row.get('published') or {}
+    changed = bool(row.get('published_at')) and (
+        without_auto_days_off(published) != without_auto_days_off(row['draft'])
+    )
     return {'id': row['id'], 'start': row['start_date'], 'end': row['end_date'],
-            'published_at': row.get('published_at'), 'updated_at': row.get('updated_at'),
-            'changed': bool(row.get('published_at')) and row.get('published') != row.get('draft')}
+            'published_at': row.get('published_at'), 'updated_at': row.get('updated_at'), 'changed': changed}
 
 
 async def _load(roster_id, allowed):
@@ -432,7 +445,7 @@ async def _load(roster_id, allowed):
 
 def _opened(row):
     start, end = _period(row)
-    draft = row['draft']
+    draft = without_auto_days_off(row['draft'])
     return {**_summary(row), 'revision': row['revision'], 'restaurant_id': row['restaurant_id'],
             'draft': draft, 'check': check(draft, start, end),
             'holidays': {d.isoformat(): name for d, name in holidays_ru.between(start, end).items()}}
@@ -608,7 +621,7 @@ async def handle(request):
                 raise Stale()
             stage = 'publish'
             now = datetime.now(timezone.utc).isoformat()
-            draft = dict(row['draft'])
+            draft = dict(without_auto_days_off(row['draft']))
             draft['time_rules'], _ = await time_rules_for(row['restaurant_id'], start, end, draft)
             unavailable = roster.audit(to_request(draft, start, end), to_schedule(draft)).unavailable
             if unavailable:
@@ -772,6 +785,8 @@ def notices(old, new, start, end, links=None):
     """Первая публикация — сообщение каждому из команды; дальше — только тем, чьи смены
     или обязательные выходные изменились. В сообщении человека — только его смены."""
     period = f'{start.day} {roster.MONTHS[start.month - 1]} – {end.day} {roster.MONTHS[end.month - 1]}'
+    if old is not None:
+        old = without_auto_days_off(old)
     def mine(snapshot, name):
         snapshot = snapshot or {}
         return (snapshot.get('cells') or {}).get(name, {}), sorted((snapshot.get('off') or {}).get(name, []))
@@ -842,7 +857,7 @@ async def team_places(uid):
 
 def published_view(row, link):
     """Только опубликованное: смены, обязательные выходные и события дня."""
-    snapshot = row['published']
+    snapshot = without_auto_days_off(row['published'])
     start, end = _period(row)
     days = [date.fromordinal(start.toordinal() + i).isoformat() for i in range((end - start).days + 1)]
     people = []
