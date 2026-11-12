@@ -232,8 +232,8 @@
 .restaurant-page #restaurant-panel .re-var-info .btn{justify-self:start}
 .restaurant-page #restaurant-panel .re-all{background:none;color:var(--blue)}
 .restaurant-page .sg-s.off{--t:#ffd0d2}
-.restaurant-page #restaurant-panel .re-ask{min-height:var(--ctl);padding:0 16px;border:0;border-radius:999px;background:var(--fill3);color:var(--blue);font-size:14px;font-weight:500}
-.restaurant-page #restaurant-panel .re-ask:disabled{opacity:.35}
+.restaurant-page #restaurant-panel :is(.re-ask,.re-check-offs){min-height:var(--ctl);padding:0 16px;border:0;border-radius:999px;background:var(--fill3);color:var(--blue);font-size:14px;font-weight:500}
+.restaurant-page #restaurant-panel :is(.re-ask,.re-check-offs):disabled{opacity:.35}
 
 /* Заголовок страницы — список ресторанов, если их несколько: отдельной кнопки нет. */
 .restaurant-page .site-place #restaurant-select{font:700 34px/41px var(--sf);letter-spacing:.4px;color:var(--label);height:auto;min-height:41px;
@@ -312,7 +312,7 @@
   .restaurant-page .re-period{width:100%;flex-wrap:nowrap}
   .restaurant-page #restaurant-panel button.re-title{font-size:22px;flex:1 1 auto;text-align:left;padding:0}
   .restaurant-page .re-actions{width:100%;margin:0}
-  .restaurant-page #restaurant-panel .re-ask{width:100%;min-height:44px}
+  .restaurant-page #restaurant-panel :is(.re-ask,.re-check-offs){width:100%;min-height:44px}
   .restaurant-page .sg-edit td.sg-c,.restaurant-page .sg-edit thead th.sg-day{pointer-events:none}
   .restaurant-page .sg-edit .sg-name{max-width:96px;font-size:14px;padding-right:8px}
   .restaurant-page .re-check:has(.re-asks[hidden]){display:none}

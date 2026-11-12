@@ -132,7 +132,7 @@
 .re-jump{font:inherit;font-size:13px;height:36px;border:1px solid var(--sg-line);border-radius:9px;background:var(--sg-surface);padding:0 10px;color:var(--sg-ink)}
 #restaurant-panel .re-new{min-height:36px;padding:0 12px;border-radius:9px;color:var(--sg-muted);font-size:14px}
 #restaurant-panel .re-new:hover{color:var(--sg-ink)}
-.re-actions{display:flex;gap:8px;align-items:center}
+.re-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 #restaurant-panel .re-build{min-height:40px;padding:0 16px;border:1px solid var(--sg-line);border-radius:10px;background:var(--sg-surface);font-size:14px}
 #restaurant-panel .re .btn{display:inline-flex;align-items:center;justify-content:center;width:auto;margin:0;min-height:40px;padding:0 18px;border-radius:10px;font-size:14px;background:var(--sg-ink);color:#fff!important;border:0}
 #restaurant-panel .re .btn:disabled{opacity:.3}

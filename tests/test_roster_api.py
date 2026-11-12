@@ -604,6 +604,86 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(mine), 1)
         self.assertIn('пн 16 — с 9', mine[0])
 
+    async def test_check_offs_sends_to_saved_roster_including_staff_who_already_answered(self):
+        import asyncio
+
+        made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
+        payload = {'id': made['id'], 'revision': made['revision']}
+        row = self.fake.rows['rosters'][0]
+        row['collect_wishes_at'] = '2026-11-10T09:00:00Z'
+        people = row['draft']['people']
+        people[:] = [p for p in people if p['link'] != link_id(1)]
+        members = {p['user_id']: p for p in self.fake.rows['employee_links']}
+        members[10]['status'] = 'revoked'
+        outsider = {**members[STRANGER], 'id': link_id(9), 'user_id': 99, 'role': 'staff'}
+        self.fake.rows['employee_links'].append(outsider)
+        people.extend({'name': p['report_name'], 'link': p['id']} for p in (members[MANAGER], outsider))
+        requests = [
+            {'link_id': members[WAITER]['id'], 'roster_id': made['id'], 'answered': True,
+             'days': ['2026-11-22', '2026-11-18'], 'desired_days': ['2026-11-20']},
+            {'link_id': members[12]['id'], 'roster_id': made['id'], 'answered': True, 'days': ['2026-11-19']},
+            {'link_id': members[13]['id'], 'roster_id': str(uuid4()), 'answered': True, 'days': ['2026-11-21']},
+            {'link_id': members[14]['id'], 'roster_id': made['id'], 'answered': True, 'days': [],
+             'desired_days': ['2026-11-21']},
+        ]
+        self.fake.rows['day_off_requests'] = [r.copy() for r in requests]
+        self.fake.rows['weekday_wishes'] = [
+            {'link_id': members[WAITER]['id'], 'restaurant_id': PLACE, 'days': [6]},
+            {'link_id': members[15]['id'], 'restaurant_id': PLACE, 'days': [0, 4]},
+        ]
+        sending, finish = asyncio.Event(), asyncio.Event()
+
+        async def send_message(chat, text):
+            if chat == WAITER:
+                sending.set()
+                await finish.wait()
+            if chat == 12:
+                raise RuntimeError('Telegram rejected the message')
+
+        bot = NS(send_message=AsyncMock(side_effect=send_message))
+        self.client.server.app['bot'] = bot
+        await self.roster('check_offs', WAITER, 403, **payload)
+        await self.roster('check_offs', STRANGER, 404, **payload)
+        await self.roster('check_offs', MANAGER, 409, **{**payload, 'revision': 0})
+        bot.send_message.assert_not_awaited()
+
+        request = asyncio.create_task(self.roster('check_offs', MANAGER, **payload))
+        try:
+            await asyncio.wait_for(sending.wait(), timeout=5)
+            await self.roster('check_offs', OWNER, 409, **payload)
+        finally:
+            finish.set()
+            result = await request
+
+        self.assertEqual(result, {'sent': 4, 'total': 5})
+        prefix = 'Проверь свои выходные на 16–22 ноября.\n'
+        self.assertCountEqual([call.args for call in bot.send_message.await_args_list], [
+            (WAITER, prefix + 'Обязательно: 18, 22 ноября.\nЖелательно: 20 ноября, по воскресеньям.'),
+            (12, prefix + 'Обязательно: 19 ноября.'),
+            (13, prefix + 'Пожеланий пока нет.'),
+            (14, prefix + 'Желательно: 21 ноября.'),
+            (15, prefix + 'Желательно: по понедельникам и пятницам.'),
+        ])
+        self.assertEqual(self.fake.rows['day_off_requests'], requests)
+        self.assertEqual(row['revision'], made['revision'])
+
+    async def test_check_offs_reads_only_in_period_dates_from_legacy_requests(self):
+        made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
+        link = next(member['id'] for member in self.fake.rows['employee_links'] if member['user_id'] == WAITER)
+        row = self.fake.rows['rosters'][0]
+        row['draft']['people'] = [person for person in row['draft']['people'] if person['link'] == link]
+        self.fake.rows['day_off_requests'] = [
+            {'link_id': link, 'restaurant_id': PLACE, 'start_date': made['start'], 'answered': True,
+             'days': ['2026-11-20', '2026-11-23']},
+        ]
+        bot = NS(send_message=AsyncMock())
+        self.client.server.app['bot'] = bot
+
+        result = await self.roster('check_offs', MANAGER, id=made['id'], revision=made['revision'])
+
+        self.assertEqual(result, {'sent': 1, 'total': 1})
+        bot.send_message.assert_awaited_once_with(WAITER, 'Проверь свои выходные на 16–22 ноября.\nОбязательно: 20 ноября.')
+
     def callback(self, data, uid=WAITER):
         return NS(data=data, from_user=NS(id=uid), message=NS(chat=NS(type='private'), edit_text=AsyncMock()), answer=AsyncMock())
 

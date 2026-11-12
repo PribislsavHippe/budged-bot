@@ -41,7 +41,12 @@
           <button type="button" class="re-all" hidden>Все варианты</button>
           <button type="button" class="re-delete is-off">Удалить черновик</button>
         </div>
-        <div class="re-actions"><button type="button" class="re-ask" disabled>Запросить выходные</button><button type="button" class="re-build" disabled>Собрать заново</button><button type="button" class="btn re-publish" disabled>Опубликовать</button></div>
+        <div class="re-actions">
+          <button type="button" class="re-ask" disabled>Запросить выходные</button>
+          <button type="button" class="re-check-offs" disabled>Попросить проверить выходные</button>
+          <button type="button" class="re-build" disabled>Собрать заново</button>
+          <button type="button" class="btn re-publish" disabled>Опубликовать</button>
+        </div>
       </div>
       <form class="re-create" hidden><strong>Даты графика</strong><label>с <input type="date" name="start" required></label><label>по <input type="date" name="end" required></label>
         <button class="btn">Сохранить</button><button type="button" class="re-cancel">Отмена</button></form>
@@ -99,6 +104,7 @@
       if(!cur){q('.re-title').textContent='';q('.re-all').hidden=true;}
       q('.re-title').disabled=!cur||!!cur.published_at;q('.re-title').title=cur?.published_at?'':'Изменить даты';
       q('.re-ask').disabled=q('.re-build').disabled=q('.re-publish').disabled=!cur;
+      q('.re-check-offs').disabled=!cur||busy||conflict||!D().people.length;
       q('.re-delete').classList.toggle('is-off',!cur||!!cur.published_at);
     }
     async function list(openId){
@@ -189,6 +195,7 @@
       const pending=edits!==saved;
       q('.re-publish').textContent=cur.published_at?(cur.changed||pending?'Опубликовать правки':'Опубликован'):'Опубликовать';
       q('.re-publish').disabled=busy||conflict||showPick()||(!!cur.published_at&&!cur.changed&&!pending);q('.re-build').disabled=busy||conflict;q('.re-ask').disabled=busy;
+      q('.re-check-offs').disabled=busy||conflict||!D().people.length;
       // Пока идёт публикация или сборка, таблица заперта: правка во время запроса пропала бы с ответом сервера.
       root.classList.toggle('re-working',busy);
       // Сколько человек уже записали выходные: подсказка к кнопке, а не строка под заголовком.
@@ -562,6 +569,19 @@
       busy=true;renderState();error('');
       try{offsInfo=await api('ask_offs',{id:cur.id});toast(`Отправлено: ${offsInfo.sent}`);}
       catch(e){failed(e);}finally{busy=false;renderState();}
+    };
+    q('.re-check-offs').onclick=async()=>{
+      if(!cur||busy||conflict||!D().people.length)return;
+      const {id,start,end}=cur;
+      if(!confirm(`Отправить сотрудникам графика на ${G.period(start,end)} их пожелания по выходным для проверки?`))return;
+      busy=true;renderState();error('');
+      try{
+        if(!(await flush())||cur?.id!==id)return;
+        toast('Отправляю сообщение…',true);
+        const {sent,total}=await api('check_offs',{id,revision:cur.revision},90000);
+        toast(total?`Отправлено: ${sent} из ${total}`:'В графике нет сотрудников, которым можно отправить сообщение.');
+      }catch(e){toast('');error(e.status?e.message:'Не удалось подтвердить отправку.');}
+      finally{busy=false;renderState();}
     };
 
     // ─── сборка и публикация ───

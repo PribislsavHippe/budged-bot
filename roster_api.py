@@ -29,6 +29,7 @@ MAX_EVENT = 40
 CELL = re.compile(r'^(?:(\d{1,2}(?::[0-5]\d)?)(?:-(\d{1,2}(?::[0-5]\d)?))?)?(\*)?$')
 # Сборка занимает процессор на десятки секунд: одна за раз на весь сервер.
 _building = asyncio.Semaphore(1)
+_checking_offs = set()
 
 
 class Stale(Exception):
@@ -542,6 +543,17 @@ async def handle(request):
         revision = body.get('revision')
         if type(revision) is not int:
             raise ValueError('Обнови страницу: версия черновика неизвестна.')
+        if action == 'check_offs':
+            if revision != row['revision']:
+                raise Stale()
+            if row['id'] in _checking_offs:
+                return response({'error': 'Сообщение уже отправляется.'}, 409)
+            stage = 'check_offs'
+            _checking_offs.add(row['id'])
+            try:
+                return response(await send_off_check(request.app.get('bot'), row))
+            finally:
+                _checking_offs.discard(row['id'])
         if action in ('save', 'build'):
             # В график попадают только подтверждённые сотрудники ресторана: человека по имени
             # добавить нельзя, уволенный (доступ отозван) убирается сам.
@@ -691,6 +703,60 @@ WEEK = ('пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс')
 _sending = set()
 
 
+def off_check_text(start, end, reply, weekdays):
+    def dates(field):
+        return days_off.days_text(day for day in map(date.fromisoformat, reply.get(field, [])) if start <= day <= end)
+
+    lines = [f'Проверь свои выходные на {days_off.period_text(start, end)}.']
+    if required := dates('days'):
+        lines.append(f'Обязательно: {required}.')
+    preferred = [dates('desired_days'), days_off.weekdays_text(weekdays) if weekdays else '']
+    if preferred_text := ', '.join(filter(None, preferred)):
+        lines.append(f'Желательно: {preferred_text}.')
+    if len(lines) == 1:
+        lines.append('Пожеланий пока нет.')
+    return '\n'.join(lines)
+
+
+async def send_off_check(bot, row):
+    """Manual check of recorded days off, including staff who already answered."""
+    if not bot:
+        raise ValueError('Бот сейчас недоступен. Попробуй позже.')
+    links = {person['link'] for person in row['draft'].get('people', []) if person.get('link')}
+    if not links:
+        return {'sent': 0, 'total': 0}
+    members = (await db._execute(db.supabase.table('employee_links').select('id,user_id')
+                                 .eq('restaurant_id', row['restaurant_id']).eq('status', 'approved')
+                                 .eq('role', 'staff').in_('id', sorted(links)))).data
+    recipients = {member['user_id']: member['id'] for member in members if member['user_id'] is not None}
+    if not recipients:
+        return {'sent': 0, 'total': 0}
+    start, end = _period(row)
+    if roster_wishes.migrated(row):
+        replies = await roster_wishes.requests(row['id'])
+    else:
+        replies = {link: {'days': dates} for link, dates in (await days_off.for_period(row['restaurant_id'], start)).items()}
+    weekdays = await days_off.weekdays_for(row['restaurant_id'])
+    messages = [(uid, off_check_text(start, end, replies.get(link, {}), weekdays.get(link, [])))
+                for uid, link in recipients.items()]
+
+    async def send(user_id, text):
+        try:
+            await asyncio.wait_for(bot.send_message(user_id, text), timeout=5)
+            return True
+        except Exception as error:
+            from diagnostics import failure
+            failure(error, area='roster', stage='check_offs')
+            return False
+
+    sent = 0
+    # Limit parallel Telegram requests and pace the batches even when sends are fast.
+    for offset in range(0, len(messages), 5):
+        sent += sum(await asyncio.gather(*(send(uid, text) for uid, text in messages[offset:offset + 5])))
+        await asyncio.sleep(.25)
+    return {'sent': sent, 'total': len(messages)}
+
+
 def own_shifts(snapshot, name):
     lines = []
     for key, value in sorted(((snapshot or {}).get('cells') or {}).get(name, {}).items()):
@@ -753,7 +819,9 @@ async def notify(bot, publisher, old, new, start, end, restaurant_id):
 def _failure(response, uid, error, stage):
     from diagnostics import failure
     code, reference = failure(error, area='roster', stage=stage)
-    return response({'error': 'Не получилось открыть график. Попробуй ещё раз чуть позже.',
+    message = ('Не удалось подтвердить отправку.' if stage == 'check_offs'
+               else 'Не получилось открыть график. Попробуй ещё раз чуть позже.')
+    return response({'error': message,
                      'code': code, 'reference': reference}, 503)
 
 
