@@ -10,10 +10,15 @@
   const dayName=iso=>{const d=at(iso);return `${WD[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]}`;};
   const period=(a,b)=>{const x=at(a),y=at(b);return x.getMonth()===y.getMonth()?`${x.getDate()}–${y.getDate()} ${MONTHS[y.getMonth()]}`:`${x.getDate()} ${MONTHS[x.getMonth()]} – ${y.getDate()} ${MONTHS[y.getMonth()]}`;};
   function parse(value){
-    const m=/^(?:(\d{1,2})(?:-(\d{1,2}))?)?(\*)?$/.exec(String(value??'').trim());
+    const m=/^(?:(\d{1,2}(?::[0-5]\d)?)(?:-(\d{1,2}(?::[0-5]\d)?))?)?(\*)?$/.exec(String(value??'').trim());
     if(!m||!String(value??'').trim())return null;
-    return {start:m[1]?+m[1]:null,end:m[2]?+m[2]:null,note:!!m[3]};
+    const hour=s=>{const [h,min='0']=s.split(':');return Number(h)+Number(min)/60;};
+    return {start:m[1]?hour(m[1]):null,end:m[2]?hour(m[2]):null,note:!!m[3]};
   }
+  const clock=(value,short=false)=>{
+    const minutes=Math.round(value*60), hour=Math.floor(minutes/60), minute=minutes%60;
+    return short&&minute===0?String(hour):hour+':'+String(minute).padStart(2,'0');
+  };
   const works=v=>!!v&&v.start!=null;
   function shift(person,iso){
     const v=parse(person.cells?.[iso]),off=(person.off||[]).includes(iso),asked=!off&&(person.asked||[]).includes(iso);
@@ -21,7 +26,7 @@
       // Выход в обязательный выходной — тоже «необычное», но цветом выходного.
       // Смена в день, когда человек просит выходной (ещё не учтённый сборкой), обведена пунктиром.
       const cls=off?'off':v.note||v.end!=null?'note':'';
-      return `<span class="sg-s ${cls}${v.end!=null?' rng':''}${asked?' clash':''}"${asked?' title="Просит выходной"':''}><b>${v.start}${v.end!=null?'–'+v.end:''}</b></span>`;
+      return `<span class="sg-s ${cls}${v.end!=null?' rng':''}${asked?' clash':''}"${asked?' title="Просит выходной"':''}><b>${clock(v.start,true)}${v.end!=null?'–'+clock(v.end,true):''}</b></span>`;
     }
     if(off)return '<span class="sg-s off">вых</span>';
     if(asked)return '<span class="sg-s ask" title="Просит выходной">вых</span>';
@@ -206,5 +211,5 @@
     return {expand,collapse,refresh:layout};
   }
 
-  window.ScheduleGrid={table,scroller,hover,landscape,parse,works,esc,dayName,period,at,WD,MONTHS};
+  window.ScheduleGrid={table,scroller,hover,landscape,parse,clock,works,esc,dayName,period,at,WD,MONTHS};
 })();

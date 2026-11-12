@@ -19,6 +19,7 @@ import random
 import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from roster_time import Rule, clock
 
 CLOSE_HOUR = 23
 SHIFT_HOURS = 12
@@ -78,6 +79,7 @@ class Request:
     wish_dates: dict[str, set[date]] = field(default_factory=dict)
     wish_patterns: dict[str, str] = field(default_factory=dict)
     pattern_history: dict[str, str] = field(default_factory=dict)
+    time_rules: dict[str, dict[date, Rule]] = field(default_factory=dict)
 
     @property
     def days(self):
@@ -174,7 +176,7 @@ def pattern_misses(mask, patterns):
     return min(((mask ^ desired).bit_count() + prior for desired, prior in patterns), default=0)
 
 
-def _person_cost(row, money, target, wish_off, wish_starts, off, recall_price, w=None, patterns=()):
+def _person_cost(row, money, target, wish_off, wish_starts, off, recall_price, w=None, patterns=(), time_rules=()):
     """Штраф одного человека. row — приход по дням или None. w — веса целей (1 по умолчанию)."""
     w = w or {}
     streak_c, lonely_c, rise_c = STREAK_COST * w.get('streak', 1), LONELY_COST * w.get('lonely', 1), RISE_COST * w.get('rise', 1)
@@ -182,8 +184,8 @@ def _person_cost(row, money, target, wish_off, wish_starts, off, recall_price, w
     cost = streak = shifts = paid = hours = refused = recalled = 0
     previous = None
     worked = 0
-    for index, start in enumerate(row):
-        if start is None:
+    for index, shift in enumerate(row):
+        if shift is None:
             if streak > MAX_STREAK:
                 cost += streak_c * (streak - MAX_STREAK) ** 2
             elif streak == 1:
@@ -191,6 +193,7 @@ def _person_cost(row, money, target, wish_off, wish_starts, off, recall_price, w
             streak = 0
             previous = None
             continue
+        start, end = shift if isinstance(shift, tuple) else (shift, min(SHIFT_HOURS + shift, CLOSE_HOUR))
         if previous is not None and start < previous:
             cost += rise_c
         previous = start
@@ -198,7 +201,7 @@ def _person_cost(row, money, target, wish_off, wish_starts, off, recall_price, w
             worked |= 1 << index
         streak += 1
         shifts += 1
-        hours += min(SHIFT_HOURS, CLOSE_HOUR - start)
+        hours += end - start
         if money[index]:
             paid += 1
         if off[index]:
@@ -206,7 +209,9 @@ def _person_cost(row, money, target, wish_off, wish_starts, off, recall_price, w
         if wish_off[index]:
             cost += WISH_OFF_COST
             refused += 1
-        if wish_starts and start not in wish_starts:
+        rule = time_rules[index] if time_rules else None
+        if (rule.misses(start, end) if rule and rule.preferred_start is not None
+            else wish_starts and start not in wish_starts):
             cost += WISH_START_COST
             refused += 1
     if streak > MAX_STREAK:
@@ -250,15 +255,21 @@ def _search(request, iterations, seed):
     days = request.days
     people = request.people
     money = [request.is_money(day) for day in days]
-    available = [[p for p, name in enumerate(people) if not request.is_off(name, day)] for day in days]
+    rules = [[request.time_rules.get(name, {}).get(day) for day in days] for name in people]
     present = [p for p, name in enumerate(people) if request.is_present(name)]
-    pool = []
-    slots = []
+    available, pool, slots, realized, coverage = [], [], [], [], []
     for d, day in enumerate(days):
+        opener = open_hour(day, day in request.holidays)
+        candidates = [p for p in present if not rules[p][d] or rules[p][d].latest > max(opener, rules[p][d].earliest)]
+        free = [p for p in candidates if not request.is_off(people[p], day)]
+        available.append(free)
         # Число людей обязательно: если свободных мало, выходят из обязательного выходного.
-        pool.append(available[d] if len(available[d]) >= request.count(day) else present)
+        pool.append(free if len(free) >= request.count(day) else candidates)
         full = day_slots(day, request.count(day), day in request.holidays, request.closing(day), request.opening(day))
         slots.append(full[:len(pool[d])])
+        realized.append({p: {h: rules[p][d].shift(h, opener, LAST_CLOSER_START, end_of) for h in set(slots[d])}
+                         for p in candidates if rules[p][d]})
+        coverage.append((opener, request.opening(day), request.closing(day)) if realized[d] else None)
 
     total_shifts = sum(len(s) for s in slots)
     total_money = sum(len(s) for d, s in enumerate(slots) if money[d])
@@ -279,16 +290,35 @@ def _search(request, iterations, seed):
                 for name in people]
 
     def person_cost(p):
-        return _person_cost(table[p], money, targets[p], wish_off[p], wish_starts[p], off[p], prices[p], request.weights, patterns[p])
+        return _person_cost(table[p], money, targets[p], wish_off[p], wish_starts[p], off[p], prices[p],
+                            request.weights, patterns[p], rules[p] if request.time_rules else ())
+
+    def actual(d, person, slot):
+        return realized[d].get(person, {}).get(slot, slot)
+
+    def role_delta(d, shift):
+        if shift is None:
+            return 0, 0
+        return start_of(shift) == coverage[d][0], start_of(shift) >= LAST_CLOSER_START and end_of(shift) == CLOSE_HOUR
+
+    def gap(d, counts):
+        return abs(counts[0] - coverage[d][1]) + abs(counts[1] - coverage[d][2])
 
     table = [[None] * len(days) for _ in people]
+    assigned = [[None] * len(days) for _ in people] if request.time_rules else table
+    counts = [(0, 0)] * len(days)
     for d in range(len(days)):
         chosen = rng.sample(pool[d], len(slots[d]))
         for person, start in zip(chosen, slots[d]):
-            table[person][d] = start
+            assigned[person][d] = start
+            table[person][d] = actual(d, person, start)
+        if coverage[d]:
+            roles = [role_delta(d, table[p][d]) for p in chosen]
+            counts[d] = tuple(map(sum, zip(*roles))) if roles else (0, 0)
 
     costs = [person_cost(p) for p in range(len(people))]
-    total = sum(costs)
+    coverage_cost = 1000000
+    total = sum(costs) + coverage_cost * sum(gap(d, counts[d]) for d in range(len(days)) if coverage[d])
     best = [row[:] for row in table]
     best_total = total
     movable = [d for d in range(len(days)) if slots[d]]
@@ -301,20 +331,30 @@ def _search(request, iterations, seed):
         d = rng.choice(movable)
         a = rng.choice(pool[d])
         b = rng.choice(pool[d])
-        if a == b or table[a][d] == table[b][d]:
+        sa, sb = assigned[a][d], assigned[b][d]
+        if a == b or sa == sb:
             continue
-        table[a][d], table[b][d] = table[b][d], table[a][d]
+        old_a, old_b = table[a][d], table[b][d]
+        table[a][d], table[b][d] = (actual(d, a, sb), actual(d, b, sa)) if realized[d] else (sb, sa)
         cost_a = person_cost(a)
         cost_b = person_cost(b)
         change = cost_a + cost_b - costs[a] - costs[b]
+        next_counts = counts[d]
+        if coverage[d]:
+            oa, ob = role_delta(d, old_a), role_delta(d, old_b)
+            na, nb = role_delta(d, table[a][d]), role_delta(d, table[b][d])
+            next_counts = tuple(c - a - b + x + y for c, a, b, x, y in zip(counts[d], oa, ob, na, nb))
+            change += coverage_cost * (gap(d, next_counts) - gap(d, counts[d]))
         if change <= 0 or rng.random() < math.exp(-change / heat):
+            assigned[a][d], assigned[b][d] = sb, sa
+            counts[d] = next_counts
             costs[a], costs[b] = cost_a, cost_b
             total += change
             if total < best_total - 1e-9:
                 best_total = total
                 best = [row[:] for row in table]
         else:
-            table[a][d], table[b][d] = table[b][d], table[a][d]
+            table[a][d], table[b][d] = old_a, old_b
     return best_total, best
 
 
@@ -505,6 +545,7 @@ class Audit:
     wish_total: int = 0                             # сколько пожеланий было
     missed_off: list = field(default_factory=list)  # (имя, день): просил выходной, стоит смена
     missed_starts: list = field(default_factory=list)  # (имя, день, приход): приход не тот, что просил
+    unavailable: list = field(default_factory=list)  # (имя, день, правило времени)
 
 
 def audit(request, schedule):
@@ -539,10 +580,17 @@ def audit(request, schedule):
         off_count = len(request.days_off.get(name, ()))
         if off_count > request.mandatory_limit and name not in request.students:
             result.too_many_off.append((name, off_count))
-        result.wish_total += len(wanted_off) + (len(own) if wanted else 0)
+        result.wish_total += len(wanted_off)
         result.missed_off += [(name, day) for day in days if day in wanted_off and day in own]
-        if wanted:
-            result.missed_starts += [(name, day, start_of(own[day])) for day in days if day in own and start_of(own[day]) not in wanted]
+        for day, shift in own.items():
+            start, end = start_of(shift), end_of(shift)
+            rule = request.time_rules.get(name, {}).get(day)
+            if rule and not rule.permits(start, end):
+                result.unavailable.append((name, day, rule))
+            if rule and rule.preferred_start is not None or wanted:
+                result.wish_total += 1
+                if rule.misses(start, end) if rule and rule.preferred_start is not None else start not in wanted:
+                    result.missed_starts.append((name, day, start))
         streak_start = None
         length = 0
         for index, day in enumerate(days + [None]):
@@ -569,6 +617,10 @@ def audit(request, schedule):
 
 def _day(day):
     return f'{day.day} {MONTHS[day.month - 1]}'
+
+
+def time_problem(name, day, rule):
+    return f'{name}, {_day(day)}: смена выходит за пределы доступного времени {clock(rule.earliest)}–{clock(rule.latest)}.'
 
 
 def _spread(values, key):
@@ -603,6 +655,7 @@ def report(request, schedule, findings=None, *, editor=False):
         problems.append(f'{_day(day)}: открывают {opening}, нужно {need}.')
     for name, first, length in found.streaks:
         problems.append(f'{name}: смен подряд с {_day(first)}: {length}.')
+    problems.extend(time_problem(*item) for item in found.unavailable)
     if problems:
         lines += ['', 'Что не получилось:'] + [f'• {p}' for p in problems]
     else:
@@ -642,7 +695,9 @@ def report(request, schedule, findings=None, *, editor=False):
         if high - low > 1:
             lines.append(f'Больше всего: {", ".join(most)}. Меньше всего: {", ".join(least)}.')
         high, low, most, least = _spread(present or found.people, 'hours')
-        lines += [f'Часы: от {low} до {high}. Больше всего: {", ".join(most)}. Меньше всего: {", ".join(least)}.']
+        lines += [f'Часы: от {low:.2f} до {high:.2f}. Больше всего: {", ".join(most)}. Меньше всего: {", ".join(least)}.'
+                  if low % 1 or high % 1 else
+                  f'Часы: от {int(low)} до {int(high)}. Больше всего: {", ".join(most)}. Меньше всего: {", ".join(least)}.']
         high, low, _, _ = _spread(present or found.people, 'shifts')
         lines.append(f'Смены: от {low} до {high}.')
     return '\n'.join(lines)

@@ -17,6 +17,8 @@ import db
 import holidays_ru
 import identity
 import roster
+import roster_time_store
+from roster_time import cell_hour
 import roster_wishes
 from workday import op_today
 
@@ -24,7 +26,7 @@ from workday import op_today
 MISSING = ('42P01', 'PGRST205', '42703', 'PGRST204')
 NOT_READY = 'График пока недоступен: владельцу нужно обновить базу (migration_v30.sql).'
 MAX_EVENT = 40
-CELL = re.compile(r'^(?:(\d{1,2})(?:-(\d{1,2}))?)?(\*)?$')
+CELL = re.compile(r'^(?:(\d{1,2}(?::[0-5]\d)?)(?:-(\d{1,2}(?::[0-5]\d)?))?)?(\*)?$')
 # Сборка занимает процессор на десятки секунд: одна за раз на весь сервер.
 _building = asyncio.Semaphore(1)
 
@@ -54,9 +56,12 @@ def parse_cell(value):
     start, end, note = match.groups()
     if start is None:
         return None, None, bool(note)
-    start = int(start)
-    end = int(end) if end else None
-    if not 6 <= start <= 22 or (end is not None and not start < end <= roster.CLOSE_HOUR):
+    def hour(value):
+        whole, _, minute = value.partition(':')
+        return int(whole) + int(minute) / 60 if minute else int(whole)
+    start = hour(start)
+    end = hour(end) if end else None
+    if not 6 <= start < roster.CLOSE_HOUR or (end is not None and not start < end <= roster.CLOSE_HOUR):
         raise ValueError(f'Смена «{value}» вне часов работы ресторана.')
     return start, end, bool(note)
 
@@ -159,6 +164,8 @@ def trim(draft, start, end):
     cells = {n: {d: v for d, v in row.items() if d in inside} for n, row in (draft.get('cells') or {}).items()}
     out['cells'] = {n: row for n, row in cells.items() if row}
     out['pattern_history'] = {}
+    out['time_rules'] = {name: {day: rule for day, rule in rules.items() if day in inside}
+                         for name, rules in draft.get('time_rules', {}).items()}
     out['variants'], out['variant'], out['picked'] = [], None, True
     return out
 
@@ -200,6 +207,7 @@ def to_request(draft, start, end):
     request.wish_dates = {n: dates(v) for n, v in draft.get('wish_dates', {}).items()}
     request.wish_patterns = draft.get('wish_patterns', {})
     request.pattern_history = draft.get('pattern_history', {})
+    request.time_rules = roster_time_store.as_rules(draft.get('time_rules', {}))
     request.students = {p['name'] for p in draft['people'] if p['student']}
     for key, setting in draft['days'].items():
         day = date.fromisoformat(key)
@@ -245,7 +253,8 @@ def check(draft, start, end):
     # на сайте строку можно нажать и перейти к нужной клетке.
     where = ([(day, None) for day, *_ in found.shortages] + [(day, name) for name, day in found.forced]
              + [(day, name) for name, day, *_ in found.rises] + [(day, None) for day, *_ in found.closers]
-             + [(day, None) for day, *_ in found.openers] + [(day, name) for name, day, _ in found.streaks])
+             + [(day, None) for day, *_ in found.openers] + [(day, name) for name, day, _ in found.streaks]
+             + [(day, name) for name, day, _ in found.unavailable])
     lines = text.split('\n')
     bullets = []
     if 'Что не получилось:' in lines:
@@ -266,7 +275,8 @@ def apply_variant(draft, variant, manual):
     draft['variant'] = variant['id']
 
 
-def build_all(draft, start, end, requested=None, weekdays=None, *, preferred=None, patterns=None, history=None, revisions=None):
+def build_all(draft, start, end, requested=None, weekdays=None, *, preferred=None, patterns=None, history=None,
+              revisions=None, time_rules=None):
     """Обязательные выходные расставляются сами, затем собираются несколько вариантов графика;
     лучший сразу встаёт в таблицу. Выходные, которые менеджер поставил сам (отпуск), остаются.
     requested — выходные, которые люди выбрали в Telegram ({имя: [даты]}): они ставятся первыми,
@@ -284,6 +294,8 @@ def build_all(draft, start, end, requested=None, weekdays=None, *, preferred=Non
         draft['pattern_history'] = history or {}
     if revisions is not None:
         draft['wish_revisions'] = revisions
+    if time_rules is not None:
+        draft['time_rules'] = time_rules
     previous, asked_before = draft.get('off_auto', {}), draft.get('off_requested', {})
     manual = {name: [d for d in days if d not in previous.get(name, []) and d not in asked_before.get(name, [])]
               for name, days in draft['off'].items()}
@@ -301,7 +313,7 @@ def build_all(draft, start, end, requested=None, weekdays=None, *, preferred=Non
     request = to_request({**draft, 'off': fixed}, start, end)
     found = roster.build_variants(request)
     draft['variants'] = [{'id': r['id'], 'title': r['title'],
-                          'cells': {name: {day.isoformat(): str(hour) for day, hour in row.items()}
+                          'cells': {name: {day.isoformat(): format_shift(shift) for day, shift in row.items()}
                                     for name, row in r['schedule'].items() if row},
                           'off': {name: sorted(d.isoformat() for d in days) for name, days in r['off'].items() if days},
                           'pros': r['pros'], 'cons': r['cons']} for r in found]
@@ -318,7 +330,16 @@ async def requested_offs(restaurant_id, start, draft):
     return {by_link[link]: days for link, days in got.items() if link in by_link}
 
 
-async def build_inputs(restaurant_id, start, draft, row=None):
+def format_shift(shift):
+    return '-'.join(map(cell_hour, shift)) if isinstance(shift, tuple) else cell_hour(shift)
+
+
+async def time_rules_for(restaurant_id, start, end, draft):
+    names = {p['link']: p['name'] for p in draft['people'] if p.get('link')}
+    return await roster_time_store.rules_for(restaurant_id, start, end, names)
+
+
+async def build_inputs(restaurant_id, start, draft, row=None, *, end=None):
     names = {p['link']: p['name'] for p in draft['people'] if p.get('link')}
     permanent = await days_off.wishes_for(restaurant_id)
     weekdays = {names[link]: wish['days'] for link, wish in permanent.items() if link in names and wish['days']}
@@ -348,8 +369,9 @@ async def build_inputs(restaurant_id, start, draft, row=None):
                     cells = snap.get('cells', {}).get(person['name'], {})
                     history[name] = ''.join('1' if str(cells.get(day, '')).strip()[:1].isdigit() else '0'
                                             for day in span)
+    limits, _ = await time_rules_for(restaurant_id, start, end or _day(row['end_date']), draft)
     return (required, weekdays), {'preferred': preferred, 'patterns': patterns, 'history': history,
-                                  'revisions': revisions}
+                                  'revisions': revisions, 'time_rules': limits}
 
 
 async def schedulable(uid):
@@ -484,7 +506,7 @@ async def handle(request):
                 # Сразу несколько вариантов: менеджеру остаётся выбрать и поправить.
                 if _building.locked():
                     return response({'error': 'Сейчас собирается другой график. Попробуй через минуту.'}, 429)
-                args, options = await build_inputs(restaurant_id, start, draft)
+                args, options = await build_inputs(restaurant_id, start, draft, end=end)
                 async with _building:
                     await asyncio.to_thread(build_all, draft, start, end, *args, **options)
             row = {'id': str(uuid4()), 'restaurant_id': restaurant_id, 'start_date': start.isoformat(),
@@ -537,6 +559,8 @@ async def handle(request):
                 args, options = await build_inputs(row['restaurant_id'], start, draft, row)
                 async with _building:
                     await asyncio.to_thread(build_all, draft, start, end, *args, **options)
+            else:
+                draft['time_rules'], _ = await time_rules_for(row['restaurant_id'], start, end, draft)
             stage = 'save'
             saved = await _save(row, uid, revision, {'draft': draft})
             if action == 'build':
@@ -560,6 +584,7 @@ async def handle(request):
                 a, b = date.fromisoformat(clash[0]['start_date']), date.fromisoformat(clash[0]['end_date'])
                 raise ValueError(f'Даты пересекаются с графиком {a.day}.{a.month:02d}–{b.day}.{b.month:02d}.')
             draft = normalize(trim(row['draft'], new_start, new_end), new_start, new_end)
+            draft['time_rules'], _ = await time_rules_for(row['restaurant_id'], new_start, new_end, draft)
             saved = await _save(row, uid, revision, {
                 'start_date': new_start.isoformat(), 'end_date': new_end.isoformat(), 'draft': draft})
             if not roster_wishes.migrated(row):
@@ -571,17 +596,22 @@ async def handle(request):
                 raise Stale()
             stage = 'publish'
             now = datetime.now(timezone.utc).isoformat()
-            saved = await _save(row, uid, revision, {'published': row['draft'], 'published_at': now})
+            draft = dict(row['draft'])
+            draft['time_rules'], _ = await time_rules_for(row['restaurant_id'], start, end, draft)
+            unavailable = roster.audit(to_request(draft, start, end), to_schedule(draft)).unavailable
+            if unavailable:
+                raise ValueError(roster.time_problem(*unavailable[0]))
+            saved = await _save(row, uid, revision, {'draft': draft, 'published': draft, 'published_at': now})
             _track(uid, 'roster_republished' if row.get('published_at') else 'roster_published')
             stage = 'sync'
             # Смены попадают в личный календарь, подписку iPhone и напоминания; публикацию это не задерживает.
             import roster_sync
-            task = asyncio.create_task(roster_sync.sync_published(row['restaurant_id'], start, end, row['draft'],
+            task = asyncio.create_task(roster_sync.sync_published(row['restaurant_id'], start, end, draft,
                                                                   row.get('published'), version=saved['revision'], roster_id=row['id']))
             _sending.add(task)
             task.add_done_callback(_sending.discard)
             stage = 'notify'
-            told = await notify(request.app.get('bot'), uid, row['published'], row['draft'], start, end, row['restaurant_id'])
+            told = await notify(request.app.get('bot'), uid, row['published'], draft, start, end, row['restaurant_id'])
             return response({**_opened(saved), 'notified': told})
         return response({'error': 'Такого действия нет.'}, 404)
     except Stale:
@@ -628,6 +658,7 @@ async def offs_action(request, uid, row, start, end, send):
     fresh = sum(1 for link in answered if sorted(got[link]) != sorted(asked_before.get(links[link], [])))
     # Что именно просят: менеджер видит это в таблице ещё до сборки.
     wishes = await days_off.wishes_for(row['restaurant_id'])
+    time_rules, time_summaries = await roster_time_store.rules_for(row['restaurant_id'], start, end, links)
     if modern:
         span = [start + timedelta(days=i) for i in range((end - start).days + 1)]
         fresh = 0
@@ -637,7 +668,8 @@ async def offs_action(request, uid, row, start, end, send):
             dates = [d.isoformat() for d in span if d.weekday() in wish.get('days', ())]
             if (reply.get('revision') != draft.get('wish_revisions', {}).get(name)
                 or wish.get('pattern') != draft.get('wish_patterns', {}).get(name)
-                or dates != draft.get('wish_off', {}).get(name, [])):
+                or dates != draft.get('wish_off', {}).get(name, [])
+                or time_rules.get(name) != draft.get('time_rules', {}).get(name)):
                 fresh += 1
     return {'total': len(links), 'answered': len(answered), 'fresh': fresh, 'sent': sent,
             'requests': {links[link]: sorted(got[link]) for link in answered if got[link]},
@@ -645,6 +677,7 @@ async def offs_action(request, uid, row, start, end, send):
                         if link in replies and replies[link]['desired_days']},
             'weekdays': {links[link]: w['days'] for link, w in wishes.items() if link in links and w['days']},
             'patterns': {links[link]: w['pattern'] for link, w in wishes.items() if link in links and w['pattern']},
+            'time': time_summaries,
             # Больше нормы — согласовать: сборка сама ставит только норму, остальное решает менеджер.
             'over': {links[link]: limit for link in answered
                      for limit in [roster.off_limit((end - start).days + 1,
@@ -664,7 +697,8 @@ def own_shifts(snapshot, name):
         start, end, _ = parse_cell(value)
         if start is not None:
             day = date.fromisoformat(key)
-            lines.append(f'{WEEK[day.weekday()]} {day.day} — с {start}' + (f' до {end}' if end else ''))
+            lines.append(f'{WEEK[day.weekday()]} {day.day} — с {cell_hour(start)}'
+                         + (f' до {cell_hour(end)}' if end else ''))
     return lines
 
 

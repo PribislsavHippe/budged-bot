@@ -68,6 +68,41 @@ class WishParsing(unittest.TestCase):
 
 
 class WishFlow(unittest.IsolatedAsyncioTestCase):
+    async def test_chat_confirms_required_and_preferred_dates_after_saving(self):
+        chat, wishes = modules()
+        message = NS(
+            text='Не могу работать 23 ноября, желательно выходной 25 ноября.',
+            from_user=NS(id=7), chat=NS(id=7), message_id=42, answer=AsyncMock(),
+        )
+        state = NS(update_data=AsyncMock())
+        with patch('identity_chat.enabled', return_value=True), \
+                patch.object(wishes, 'supported', new=AsyncMock(return_value=True)), \
+                patch.object(wishes, 'employee', new=AsyncMock(return_value=EMPLOYEE)), \
+                patch.object(wishes, 'period_rows', new=AsyncMock(return_value=[PERIOD])), \
+                patch.object(chat, 'active_period', new=AsyncMock(return_value=PERIOD)), \
+                patch.object(chat.days_off, 'roster_today', return_value=START), \
+                patch.object(wishes, 'save', new=AsyncMock(return_value={
+                    'status': 'ok', 'days': ['2026-11-23'], 'desired_days': ['2026-11-25'],
+                })) as save:
+            matched = await chat.message_filter(message)
+            await chat.write_reply(message, state, **matched)
+        self.assertEqual(save.await_args.args[4], {'2026-11-23': 'required', '2026-11-25': 'preferred'})
+        state.update_data.assert_not_awaited()
+        message.answer.assert_awaited_once_with(
+            'Записал пожелания на 16–30 ноября.\n'
+            'Обязательные выходные: 23 ноября.\n'
+            'Желательные выходные: 25 ноября.', reply_markup=None,
+        )
+
+    def test_mixed_reply_includes_requested_pattern(self):
+        chat, _ = modules()
+        for pattern in ('2/2', '3/3'):
+            with self.subTest(pattern=pattern):
+                parsed = chat.parse_wish(f'Не могу работать 23 ноября, удобно {pattern}')
+                changes = chat.resolve_dates(parsed['dates'], PERIOD, START)
+                reply = chat.summary(PERIOD, parsed, changes, {'days': ['2026-11-23']}, EMPLOYEE['id'])
+                self.assertTrue(reply.endswith(f'\nРежим: {pattern}.'), reply)
+
     async def test_reminder_context_does_not_capture_a_bare_tip(self):
         chat, wishes = modules()
         message = NS(from_user=NS(id=7), text='30')

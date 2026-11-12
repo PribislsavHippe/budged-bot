@@ -82,7 +82,7 @@
     const label=d=>{const k=Math.round((G.at(d)-G.at(today))/864e5);return rel[k]||G.dayName(d).replace(/^(\S+), (\d+).*/,'$1, $2');};
     box.hidden=false;
     box.innerHTML=(next.length?`<p>Твои смены</p><ul>${next.map(d=>{const v=G.parse(me.cells[d]);
-        return `<li><span>${G.esc(label(d))}</span><b>${v.start}:00${v.end!=null?'–'+v.end+':00':''}</b></li>`;}).join('')}</ul>`
+        return `<li><span>${G.esc(label(d))}</span><b>${G.clock(v.start)}${v.end!=null?'–'+G.clock(v.end):''}</b></li>`;}).join('')}</ul>`
       :'<p>Смен больше нет</p>')+offs;
   }
   async function load(start){
@@ -98,7 +98,7 @@
     const c=e.target.closest('td.sg-c');if(!c)return;
     const person=data.period.people[+c.dataset.r],v=G.parse(person.cells[c.dataset.day]),off=person.off.includes(c.dataset.day);
     const end=v&&v.start!=null?(v.end??Math.min(v.start+12,23)):null;
-    $('sg-detail').textContent=`${person.name} · ${G.dayName(c.dataset.day)} · ${v&&v.start!=null?`${v.start}:00–${end}:00${off?' вместо выходного':''}`:off?'обязательный выходной':'не работает'}`;
+    $('sg-detail').textContent=`${person.name} · ${G.dayName(c.dataset.day)} · ${v&&v.start!=null?`${G.clock(v.start)}–${G.clock(end)}${off?' вместо выходного':''}`:off?'обязательный выходной':'не работает'}`;
   });
   grid.addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.closest('th.sg-day,td.sg-c')){e.preventDefault();e.target.click();}});
   G.hover(grid);

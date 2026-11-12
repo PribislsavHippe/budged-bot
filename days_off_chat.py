@@ -12,11 +12,14 @@ from aiogram.filters import StateFilter
 
 import days_off
 import roster
+import roster_time_chat
 import roster_wish_chat
 
 router = Router()
 router.message.filter(F.chat.type == 'private', F.text, StateFilter(None))
 router.callback_query.filter(F.message.chat.type == 'private', F.data.startswith(days_off.PREFIX + ':'))
+router.message.register(roster_time_chat.begin, roster_time_chat.time_filter)
+router.callback_query.register(roster_time_chat.action, F.data.regexp(r'^off:time:[sxr]:[0-9a-f]{32}$'))
 router.message.register(roster_wish_chat.write_reply, roster_wish_chat.message_filter)
 router.callback_query.register(roster_wish_chat.callback_kind, F.data.startswith('off:kind:'))
 router.callback_query.register(roster_wish_chat.callback_keep, F.data.startswith('off:keep:'))

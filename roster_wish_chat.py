@@ -59,25 +59,29 @@ def parse_wish(text, *, bare=False):
         for number, rule in days_off.WEEKDAY_WORDS:
             if re.search(rf'\b(?:{rule})\b', part):
                 weekdays.add(number)
-        matches = []
-        for match in _DATE.finditer(part):
-            lo, hi = int(match['day']), int(match['last'] or match['day'])
-            month = int(match['nmonth']) if match['nmonth'] else (
-                roster.MONTHS.index(match['month']) + 1 if match['month'] else None)
-            year = int(match['year']) if match['year'] else None
-            matches.append((lo, hi, month, year))
-        # A suffix applies to the preceding numbers in the same group.
-        # A number after the last explicit month inherits that last month.
-        last_month = (None, None)
-        for i, (lo, hi, month, year) in enumerate(matches):
-            if month:
-                last_month = month, year
-            else:
-                month, year = next(((m, y) for _, _, m, y in matches[i + 1:] if m), last_month)
-            dates.append([lo, hi, month, year, kind])
+        dates.extend(date_references(part, kind))
     if not (dates or weekdays or pattern):
         return None
     return {'dates': dates, 'weekdays': sorted(weekdays), 'pattern': pattern, 'empty': None}
+
+
+def date_references(text, kind=None):
+    matches = []
+    for match in _DATE.finditer(text):
+        lo, hi = int(match['day']), int(match['last'] or match['day'])
+        month = int(match['nmonth']) if match['nmonth'] else (
+            roster.MONTHS.index(match['month']) + 1 if match['month'] else None)
+        year = int(match['year']) if match['year'] else None
+        matches.append((lo, hi, month, year))
+    dates = []
+    last_month = (None, None)
+    for i, (lo, hi, month, year) in enumerate(matches):
+        if month:
+            last_month = month, year
+        else:
+            month, year = next(((m, y) for _, _, m, y in matches[i + 1:] if m), last_month)
+        dates.append([lo, hi, month, year, kind])
+    return dates
 
 
 def resolve_dates(refs, row, today):
@@ -191,7 +195,7 @@ def unavailable_preference(parsed):
     return False
 
 
-def summary(row, parsed, changes, result, link):
+def summary(row, parsed, changes, result, link_id):
     required = sorted(day for day, kind in changes.items() if kind == 'required')
     preferred = sorted(day for day, kind in changes.items() if kind == 'preferred')
     span = days_off.period_text(date.fromisoformat(row['start_date']), date.fromisoformat(row['end_date'])) if row else ''
@@ -203,7 +207,9 @@ def summary(row, parsed, changes, result, link):
     if row and (bool(required) + bool(preferred) + bool(pattern) > 1):
         date_text = lambda days: days_off.days_text(map(date.fromisoformat, days)) or 'не указаны'
         answer = (f'Записал пожелания на {span}.\nОбязательные выходные: {date_text(required)}.\n'
-                  f'Желательные выходные: {date_text(preferred)}.\nРежим: {pattern or "не указан"}.')
+                  f'Желательные выходные: {date_text(preferred)}.')
+        if pattern:
+            answer += f'\nРежим: {pattern}.'
     elif required or preferred:
         answer = wishes.saved_dates('required' if required else 'preferred', required or preferred)
     elif pattern:
@@ -213,7 +219,7 @@ def summary(row, parsed, changes, result, link):
         answer = ''
     if parsed['weekdays']:
         answer += ('\n' if answer else '') + f'Записал пожелание: выходные {days_off.weekdays_text(result["weekdays"])}.'
-    if row and required and (note := wishes.over_limit(row, link['id'], result)):
+    if row and required and (note := wishes.over_limit(row, link_id, result)):
         answer += ' ' + note
     return answer
 

@@ -354,7 +354,7 @@
       box.innerHTML=`<h4 class="re-sub">Смена</h4>
         <p class="re-label">Приход</p>
         <div class="re-hours">${STARTS.map(h=>`<button type="button" data-set="${h}"${dis} aria-pressed="${start===h&&v.end==null}">${h}</button>`).join('')}</div>
-        <div class="re-line"><label class="re-range">Интервал <input${dis} value="${v&&v.end!=null?esc(start+'-'+v.end):''}" placeholder="9-17" inputmode="numeric"></label>
+        <div class="re-line"><label class="re-range">Интервал <input${dis} value="${v&&v.end!=null?esc(G.clock(start,true)+'-'+G.clock(v.end,true)):''}" placeholder="9-17" inputmode="numeric"></label>
           <button type="button" data-set=""${dis} class="re-clear" aria-pressed="${has&&(!v||start==null)}">Не работает</button></div>
         <div class="re-flags"><button type="button" data-off${dis} aria-pressed="${off}"><i class="sg-s off">вых</i>Обязательный выходной</button>
           <button type="button" data-note${dis} aria-pressed="${!!v?.note}"><i class="sg-s note">★</i>Необычное</button></div>`;
@@ -401,8 +401,8 @@
       if(raw===''){setCell(p.name,day,old?.note?'*':'');}
       else{
         // Ресторан закрывается в 23: смена не может кончаться позже.
-        const v=G.parse(raw);if(!v||v.start==null||v.start<6||v.start>22||(v.end!=null&&!(v.end>v.start&&v.end<=23))){error(`Не понял смену «${raw}». Пиши час прихода (9) или интервал (9-17), конец не позже 23.`);return;}
-        error('');setCell(p.name,day,v.start+(v.end!=null?'-'+v.end:'')+(old?.note||v.note?'*':''));
+        const v=G.parse(raw);if(!v||v.start==null||v.start<6||v.start>=23||(v.end!=null&&!(v.end>v.start&&v.end<=23))){error(`Не понял смену «${raw}». Пиши час прихода (9) или интервал (9-17), конец не позже 23.`);return;}
+        error('');setCell(p.name,day,G.clock(v.start,true)+(v.end!=null?'-'+G.clock(v.end,true):'')+(old?.note||v.note?'*':''));
       }
       changed();renderCell();
     }
@@ -546,13 +546,14 @@
       return Object.entries(by).map(([m,ds])=>`${ds.join(', ')} ${G.MONTHS[m]}`).join(', ');
     }
     function renderAsks(){
-      const box=q('.re-asks'),req=offsInfo?.requests||{},desired=offsInfo?.desired||{},wd=offsInfo?.weekdays||{},pt=offsInfo?.patterns||{};
-      const names=D().people.map(p=>p.name).filter(n=>req[n]?.length||desired[n]?.length||wd[n]?.length||pt[n]);
+      const box=q('.re-asks'),req=offsInfo?.requests||{},desired=offsInfo?.desired||{},wd=offsInfo?.weekdays||{},pt=offsInfo?.patterns||{},times=offsInfo?.time||{};
+      const names=D().people.map(p=>p.name).filter(n=>req[n]?.length||desired[n]?.length||wd[n]?.length||pt[n]||times[n]?.length);
       box.hidden=!names.length;
       box.innerHTML=names.length?`<h4>Пожелания к графику</h4>${names.map(n=>`<p>${esc(n)} — ${[
         req[n]?.length?`Обязательные: ${esc(daysText(req[n]))}`:'',
         desired[n]?.length?`Желательные: ${esc(daysText(desired[n]))}`:'',wd[n]?.length?`<small>по ${wd[n].map(d=>WD[d]).join(', ')}</small>`:'',
-        pt[n]?`<small>график ${esc(pt[n])}</small>`:'',offsInfo?.over?.[n]?`<small class="re-over">больше ${offsInfo.over[n]} — согласовать</small>`:''].filter(Boolean).join(' · ')}</p>`).join('')}
+        pt[n]?`<small>график ${esc(pt[n])}</small>`:'',offsInfo?.over?.[n]?`<small class="re-over">больше ${offsInfo.over[n]} — согласовать</small>`:'',
+        ...(times[n]||[]).map(t=>`<small>${esc(t)}</small>`)].filter(Boolean).join(' · ')}</p>`).join('')}
         ${offsInfo?.fresh?'<p><small>Есть новые: «Собрать заново» учтёт их.</small></p>':''}`:'';
     }
     document.addEventListener('visibilitychange',()=>{if(!document.hidden&&cur&&!root.closest('[hidden]'))refreshOffs();});

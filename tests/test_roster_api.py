@@ -472,6 +472,33 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
             conflict = await self.post('/api/calendar_edit', WAITER, 409, **payload)
             self.assertIn('уже изменилось', conflict['error'])
 
+    async def test_shift_time_rule_survives_rebuild_and_validates_publication(self):
+        made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
+        day = '2026-11-18'
+        worker = next(person for person in made['draft']['people'] if person['name'] == 'Аня')
+        self.fake.rows['shift_time_rules'] = [
+            {'link_id':worker['link'], 'restaurant_id':PLACE, 'target':day, 'kind':'limit', 'start_min':540, 'end_min':1020},
+        ]
+        asks = await self.roster('offs', MANAGER, id=made['id'])
+        self.assertIn('09:00 до 17:00', asks['time']['Аня'][0])
+        built = await self.roster('build', MANAGER, id=made['id'], revision=made['revision'], draft=made['draft'])
+        self.assertEqual(built['draft']['time_rules']['Аня'][day], [540, 1020, None, None])
+        for variant in built['draft']['variants']:
+            cell = variant['cells'].get('Аня', {}).get(day)
+            if cell:
+                import roster_api
+                start, end, _ = roster_api.parse_cell(cell)
+                self.assertTrue(9 <= start < end <= 17)
+        built['draft']['cells'].setdefault('Аня', {})[day] = '14'
+        draft = await self.roster('save', MANAGER, id=built['id'], revision=built['revision'], draft=built['draft'])
+        error = await self.roster('publish', MANAGER, 400, id=draft['id'], revision=draft['revision'])
+        self.assertIn('смена выходит за пределы доступного времени', error['error'])
+        draft['draft']['cells']['Аня'][day] = '9-17'
+        corrected = await self.roster('save', MANAGER, id=draft['id'], revision=draft['revision'], draft=draft['draft'])
+        await self.roster('publish', MANAGER, id=corrected['id'], revision=corrected['revision'])
+        period = (await self.post('/api/schedule/view', WAITER))['period']
+        self.assertEqual(next(p for p in period['people'] if p['me'])['cells'][day], '9-17')
+
     async def test_creating_a_schedule_builds_variants_and_the_rest_follows(self):
         made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
         # Менеджер в график смен не попадает: в нём только официанты.
