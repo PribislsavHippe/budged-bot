@@ -1,0 +1,72 @@
+/* Стеклянный вид кнопок, вкладки-таблетка и панель календаря. Подключается последним и только меняет внешний вид:
+   размеры, отступы и раскладка остаются прежними. Образец — Nimbus UI · Liquid Navbar (вода рисуется в liquid.js). */
+:root {
+  --g-fill: rgba(255,255,255,.26); --g-rim: rgba(255,255,255,.75); --g-ring: rgba(255,255,255,.22);
+  --g-shadow: 0 8px 20px -10px rgba(40,30,80,.38), 0 1px 3px rgba(40,30,80,.08);
+  --g-dark: rgba(24,22,23,.78);
+}
+/* На белых листах прозрачное стекло не видно: заливка темнее, кант тоньше. */
+.sheet, .detail-sheet, .range-picker, #help-panel .sheet {
+  --g-fill: rgba(24,22,23,.06); --g-rim: rgba(255,255,255,.9); --g-ring: rgba(24,22,23,.09);
+  --g-shadow: 0 1px 2px rgba(24,22,23,.08);
+}
+
+/* Светлое стекло */
+.btn-ghost, .chip, .acc-btn, .cal-nav, .period-link, .privacy-link, .day-account span, .help-action,
+.btn.btn-ghost {
+  background: var(--g-fill); color: var(--ink); border: 0; border-radius: 999px;
+  -webkit-backdrop-filter: blur(10px) saturate(1.25) brightness(1.06); backdrop-filter: blur(10px) saturate(1.25) brightness(1.06);
+  box-shadow: inset 0 1px 1px var(--g-rim), inset 0 0 0 1px var(--g-ring), var(--g-shadow);
+  transition: transform .25s cubic-bezier(.3,1.6,.5,1), background-color .25s, box-shadow .25s;
+}
+/* Тёмное стекло — главное действие */
+.btn, #spend-submit, .chip.sel, .acc-btn.sel, .day-account input:checked + span, .hist-save, .detail-primary, .detail-form button,
+.help-action.primary {
+  background: var(--g-dark); color: #fff; border: 0; border-radius: 999px;
+  -webkit-backdrop-filter: blur(10px) saturate(1.2); backdrop-filter: blur(10px) saturate(1.2);
+  box-shadow: inset 0 1px 1px rgba(255,255,255,.35), inset 0 0 0 1px rgba(255,255,255,.1), 0 12px 24px -12px rgba(24,22,23,.7);
+  transition: transform .25s cubic-bezier(.3,1.6,.5,1), background-color .25s, box-shadow .25s;
+}
+.btn.btn-ghost { background: var(--g-fill); color: var(--ink); box-shadow: inset 0 1px 1px var(--g-rim), inset 0 0 0 1px var(--g-ring), var(--g-shadow); }
+.detail-edit-actions #tips-delete { background: var(--g-fill); color: #8d2b39; box-shadow: inset 0 1px 1px var(--g-rim), inset 0 0 0 1px var(--g-ring); }
+.btn:active, .btn-ghost:active, .chip:active, .acc-btn:active, .cal-nav:active, .period-link:active, .privacy-link:active,
+#spend-submit:active, .help-action:active, .detail-primary:active { transform: scale(.965); background-color: unset; }
+.btn:active { background: var(--g-dark); }
+.btn-ghost:active, .chip:active, .acc-btn:active { background: var(--g-fill); }
+.period-link, .privacy-link { padding: 11px 16px; white-space: nowrap; }
+.cal-nav { width: 44px; height: 44px; min-width: 44px; padding: 0; display: grid; place-items: center; font-size: 22px; }
+.cal-nav:disabled { opacity: .4; }
+.chip, .acc-btn { padding: 11px 16px; }
+#spend-submit { padding: 12px 18px; }
+.day-account span { border: 0; }
+
+/* Вкладки: таблетка с водой. Скрывать и показывать вкладки может приложение — таблетка пересчитывается сама. */
+.tabs-scroll { overflow-x: auto; scrollbar-width: none; margin: -14px -22px 8px; padding: 14px 22px; }
+.tabs-scroll::-webkit-scrollbar { display: none; }
+.nimbus-nav { --n-tint: rgba(255,255,255,.14); --n-fg: #181617; --n-fg-soft: rgba(24,22,23,.58); --n-rim: rgba(255,255,255,.7);
+  position: relative; display: inline-flex; align-items: center; gap: 2px; padding: 6px; border-radius: 999px; isolation: isolate;
+  -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+.nimbus-glass { position: absolute; inset: 0; border-radius: inherit; z-index: -2; overflow: hidden; background: var(--n-tint, rgba(255,255,255,.14));
+  -webkit-backdrop-filter: blur(10px) saturate(1.2) brightness(1.08); backdrop-filter: blur(10px) saturate(1.2) brightness(1.08);
+  box-shadow: inset 0 1px 1px var(--n-rim, rgba(255,255,255,.7)), inset 0 0 0 1px rgba(255,255,255,.2), 0 12px 32px -14px rgba(40,30,80,.5), 0 2px 6px rgba(40,30,80,.1); }
+.nimbus-water { position: absolute; left: -14px; top: -14px; z-index: -1; pointer-events: none; }
+[data-gl="off"] > .nimbus-water { display: none; }
+.nimbus-drop { display: none; position: absolute; top: 6px; bottom: 6px; left: 0; border-radius: 999px; z-index: -1; pointer-events: none;
+  background: radial-gradient(120% 140% at 30% 0%, rgba(255,255,255,.75), rgba(255,255,255,0) 55%), rgba(255,255,255,.38);
+  box-shadow: inset 0 1px 1px rgba(255,255,255,.95), inset 0 0 0 1px rgba(255,255,255,.55), 0 6px 16px -6px rgba(40,30,80,.4); }
+.nimbus-nav[data-gl="off"] > .nimbus-drop { display: block; }
+.nimbus-item { position: relative; z-index: 1; flex: 0 0 auto; display: inline-flex; align-items: center; height: 42px; padding: 0 18px; border: 0; border-radius: 999px;
+  background: none; color: var(--n-fg-soft); font: 500 15px/1 'Onest',sans-serif; letter-spacing: -.01em; white-space: nowrap; cursor: pointer; transition: color .25s; }
+.nimbus-item:hover, .nimbus-item[aria-selected="true"] { color: var(--n-fg); }
+.nimbus-item[aria-selected="true"] { font-size: 15px; }
+.nimbus-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Календарь: стеклянная панель, а период в ней — капля воды. Дни внутри капли круглые. */
+.cal-wrap { position: relative; isolation: isolate; padding: 12px; border-radius: 28px; margin-top: 6px; }
+.cal-wrap.water .cal-cell.in:not([data-wish]) { border-radius: 50%; }
+.cal-wrap.water .cal-cell.in.shift:not([data-wish]) { box-shadow: inset 0 0 0 1.5px var(--card); }
+.cal-wrap.water .cal-cell.in.today:not([data-wish]) { box-shadow: inset 0 0 0 2px var(--ink); }
+
+@media (prefers-reduced-transparency: reduce) {
+  .btn, .btn-ghost, .chip, .acc-btn, .cal-nav, .period-link, .privacy-link, .nimbus-glass { -webkit-backdrop-filter: none; backdrop-filter: none; }
+}

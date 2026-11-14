@@ -1,6 +1,6 @@
 """Tips-only periods: gross tips minus recorded expenses; salary is separate."""
 from calendar import monthrange
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from workday import entry_op_date, op_today
 
@@ -33,6 +33,21 @@ def summarize(entries, start, end, today):
             'avg_net':round(float(net)/shifts,2) if shifts else None,
             'days':[{'date':d.isoformat(),'gross':float(r['gross']),'expenses':float(r['expenses']),
                      'net':float(r['gross']-r['expenses']),'has_tip':r['has_tip']} for d,r in sorted(days.items())]}
+
+
+def worked_hours(rows, start, end, today):
+    """Отработанные часы по записям `worked_shifts` за период; будущие дни не считаем.
+    Часы — это записанные отработанные смены: у смены без записанного времени часов нет."""
+    days={}
+    for r in rows:
+        d=date.fromisoformat(str(r['shift_date'])[:10])
+        if not start<=d<=min(end,today):continue
+        began=datetime.fromisoformat(str(r['actual_start']).replace('Z','+00:00'))
+        ended=datetime.fromisoformat(str(r['actual_end']).replace('Z','+00:00'))
+        seconds=(ended-began).total_seconds()
+        if seconds>0:days[d]=days.get(d,0)+seconds/3600
+    return {'hours':round(sum(days.values()),2),
+            'days':[{'date':d.isoformat(),'hours':round(h,2)} for d,h in sorted(days.items())]}
 
 
 def compare_tips(entries, kind='month', anchor=None, other=None, aligned=True, today=None):

@@ -251,18 +251,25 @@
   #cal-sum.error { display:block; color:#8d2b39; }
   .cal-head { margin:3px 0 12px; }
   .cal-grid { gap:5px; }
+  /* Выбранный период: светлая волнистая лента под днями — широкая на днях, узкая между ними. Цвет заработок не показывает. */
+  .cal-wrap { position:relative; }
+  .cal-wrap .cal-grid { position:relative; z-index:1; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
+  .cal-period { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }
+  .cal-period .rb { fill:rgba(255,255,252,.92); }
+  .cal-cell.in:not([data-wish]) { background-color:transparent; box-shadow:none; color:var(--ink); }
   .app-footer { border:0; }
 </style>
+<link rel="stylesheet" href="/app/glass.css">
 </head>
 <body>
   <div id="bg" aria-hidden="true"><canvas id="gradient-canvas"></canvas></div>
-  <nav class="app-tabs" role="tablist" aria-label="Разделы">
-    <button id="tab-earnings" role="tab" aria-selected="true" aria-controls="earnings-panel">Чаевые</button>
-    <button id="tab-schedule" role="tab" aria-selected="false" aria-controls="schedule-panel" hidden>График</button>
-    <button id="tab-sales" role="tab" aria-selected="false" aria-controls="sales-panel">План</button>
-    <button id="tab-restaurant" role="tab" aria-selected="false" aria-controls="restaurant-panel" hidden>Ресторан</button>
-    <button id="tab-research" role="tab" aria-selected="false" aria-controls="research-panel" hidden>UX Research</button>
-  </nav>
+  <div class="tabs-scroll"><nav class="app-tabs nimbus-nav" role="tablist" aria-label="Разделы">
+    <button id="tab-earnings" class="nimbus-item" role="tab" aria-selected="true" aria-controls="earnings-panel">Чаевые</button>
+    <button id="tab-schedule" class="nimbus-item" role="tab" aria-selected="false" aria-controls="schedule-panel" hidden>График</button>
+    <button id="tab-sales" class="nimbus-item" role="tab" aria-selected="false" aria-controls="sales-panel">План</button>
+    <button id="tab-restaurant" class="nimbus-item" role="tab" aria-selected="false" aria-controls="restaurant-panel" hidden>Ресторан</button>
+    <button id="tab-research" class="nimbus-item" role="tab" aria-selected="false" aria-controls="research-panel" hidden>UX Research</button>
+  </nav></div>
   <section id="research-panel" role="tabpanel" aria-labelledby="tab-research" hidden></section>
   <section id="restaurant-panel" role="tabpanel" aria-labelledby="tab-restaurant" hidden></section>
   <section id="schedule-panel" role="tabpanel" aria-labelledby="tab-schedule" hidden></section>
@@ -297,7 +304,7 @@
     <button class="cal-nav" id="cal-next" type="button" aria-label="Следующий месяц">›</button>
   </div>
   <div class="cal-wd" id="cal-wd"></div>
-  <div class="cal-grid" id="cal-grid"></div>
+  <div class="cal-wrap" id="cal-wrap"><div class="cal-grid" id="cal-grid"></div></div>
   <p class="cal-sum" id="cal-sum" role="status"></p>
   <p class="cal-hint" id="cal-hint">Нажми на день, чтобы добавить или исправить смену и чаевые.</p>
   <div class="iphone-calendar" id="iphone-calendar" hidden>
@@ -424,6 +431,7 @@
 
 <script src="/app/private.js"></script>
 <script src="/app/private-finance.js"></script>
+<script src="/app/liquid.js"></script>
 <script>
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 if (tg) { tg.ready(); tg.expand(); }
@@ -535,6 +543,151 @@ function calViewFromStats(s) {
   };
 }
 
+// ── выбранный период в календаре ──
+// Вкладка «Чаевые» (tips.js) сообщает период событием `tips-period`; календарь рисует его волнистой лентой
+// и возвращает свой выбор событием `tips-set-range`. Касание дня по-прежнему открывает день;
+// когда выбран режим «Свои дни», касания выбирают начало и конец. Долгое нажатие с проведением выбирает период.
+let tipsPeriod = null, calPick = null, calPreview = null, calSuppressClick = false;
+
+function workedHours(row) {
+  if (!row?.actual_start || !row?.actual_end) return 0;
+  const hours = (new Date(row.actual_end) - new Date(row.actual_start)) / 36e5;
+  return Number.isFinite(hours) && hours > 0 ? hours : 0;
+}
+function hoursLabel(hours) {
+  return hours.toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' ч';
+}
+
+let calWater = null;
+function waterOf(wrap) {
+  if (calWater === null) { try { calWater = window.LiquidWater ? LiquidWater.cal(wrap) : false; } catch (e) { calWater = false; } }
+  return calWater && calWater.ok ? calWater : null;
+}
+
+function drawPeriod() {
+  const grid = document.getElementById('cal-grid'), wrap = document.getElementById('cal-wrap');
+  if (!grid || !wrap) return;
+  const water = waterOf(wrap);
+  wrap.classList.toggle('water', !!water);
+  let svg = document.getElementById('cal-period');
+  if (!svg) {
+    svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.id = 'cal-period'; svg.setAttribute('class', 'cal-period'); svg.setAttribute('aria-hidden', 'true');
+    wrap.insertBefore(svg, grid);
+  }
+  const range = calPreview || (tipsPeriod && tipsPeriod.mode !== 'all' ? tipsPeriod : null);
+  const cells = Array.from(grid.querySelectorAll('.cal-cell[data-iso]'));
+  const inside = range ? cells.filter(function (c) { return c.dataset.iso >= range.start && c.dataset.iso <= range.end; }) : [];
+  cells.forEach(function (c) { c.classList.toggle('in', inside.includes(c)); });
+  if (water) {
+    // Период — капля воды: по одной на каждую строку календаря, в координатах панели.
+    svg.innerHTML = '';
+    const all2 = Array.from(grid.children), wr = wrap.getBoundingClientRect(), segs = [], rows2 = new Map();
+    inside.forEach(function (c) { const r = Math.floor(all2.indexOf(c) / 7); (rows2.get(r) || rows2.set(r, []).get(r)).push(c); });
+    rows2.forEach(function (list, row) {
+      const r1 = list[0].getBoundingClientRect(), r2 = list[list.length - 1].getBoundingClientRect();
+      segs.push({ row: row, x0: r1.left - wr.left, x1: r2.right - wr.left, y: r1.top - wr.top + r1.height / 2, rad: r1.height / 2 + 1.5 });
+    });
+    water.set(segs);
+    return;
+  }
+  if (!inside.length) { svg.innerHTML = ''; return; }
+
+  const all = Array.from(grid.children), gr = wrap.getBoundingClientRect();
+  const probe = inside[0].getBoundingClientRect();
+  const gap = parseFloat(getComputedStyle(grid).columnGap) || 5;
+  const cw = probe.width, ch = probe.height, pitch = cw + gap, hMin = ch * .42;
+  // Высота ленты меняется косинусом: максимум в центре дня, минимум в середине промежутка между днями.
+  const prof = function (t) { return hMin + (ch - hMin) * (.5 + .5 * Math.cos(2 * Math.PI * t / pitch)); };
+  function outline(xa, xb, cy, cx0, cap) {
+    const top = [], bot = [];
+    for (let x = xa; x <= xb + .01; x += 1.5) {
+      const k = cap ? Math.min(x - xa, xb - x) / 10 : 1, h = prof(x - cx0) * (k >= 1 ? 1 : Math.sqrt(Math.max(k, 0))) / 2;
+      top.push(x.toFixed(1) + ',' + (cy - h).toFixed(1)); bot.unshift(x.toFixed(1) + ',' + (cy + h).toFixed(1));
+    }
+    return 'M' + top.join('L') + 'L' + bot.join('L') + 'Z';
+  }
+  // Лента — по одной на каждую неделю-строку внутри периода.
+  const rows = new Map();
+  inside.forEach(function (c) { const r = Math.floor(all.indexOf(c) / 7); (rows.get(r) || rows.set(r, []).get(r)).push(c); });
+  let ribbon = '', rings = '';
+  rows.forEach(function (list) {
+    const r1 = list[0].getBoundingClientRect(), r2 = list[list.length - 1].getBoundingClientRect();
+    ribbon += '<path class="rb" d="' + outline(r1.left - gr.left, r2.right - gr.left, r1.top - gr.top + r1.height / 2, r1.left - gr.left + cw / 2, true) + '"/>';
+  });
+  // Смена или сегодняшний день внутри периода — обводка по контуру «бусины».
+  inside.forEach(function (c) {
+    const today = c.classList.contains('today');
+    if (!today && !c.classList.contains('shift')) return;
+    const r = c.getBoundingClientRect(), cx = r.left - gr.left + r.width / 2, cy = r.top - gr.top + r.height / 2;
+    rings += '<path d="' + outline(cx - r.width / 2, cx + r.width / 2, cy, cx, false) + '" fill="none" stroke-linejoin="round" ' +
+      (today ? 'stroke="#181617" stroke-width="2"' : 'stroke="#4f89ab" stroke-width="1.5"') + '/>';
+  });
+  svg.innerHTML = ribbon + rings;
+}
+
+window.addEventListener('tips-period', function (event) {
+  tipsPeriod = event.detail; calPick = null; calPreview = null; drawPeriod();
+});
+window.addEventListener('resize', function () { drawPeriod(); });
+// Вкладка «Чаевые» скрыта, пока открыта другая: когда календарь снова получает размер, период рисуется заново.
+if ('ResizeObserver' in window) new ResizeObserver(function () { drawPeriod(); }).observe(document.getElementById('cal-wrap'));
+
+// Касание дня в режиме «Свои дни»: первое — начало, второе — конец периода.
+function calClick(cell) {
+  if (calSuppressClick) return true;
+  if (!tipsPeriod?.picking) return false;
+  const iso = cell.dataset.iso;
+  if (!calPick) { calPick = iso; calPreview = { start: iso, end: iso }; drawPeriod(); return true; }
+  const range = { start: calPick < iso ? calPick : iso, end: calPick < iso ? iso : calPick };
+  calPick = null; calPreview = null;
+  window.dispatchEvent(new CustomEvent('tips-set-range', { detail: range }));
+  return true;
+}
+
+// Долгое нажатие и проведение: палец на дне четверть секунды, затем веди — период тянется за пальцем.
+(function () {
+  const grid = document.getElementById('cal-grid');
+  let press = null, dragging = false, from = null;
+  const dayAt = function (x, y) { const c = document.elementFromPoint(x, y)?.closest('.cal-cell[data-iso]'); return c ? c.dataset.iso : null; };
+  function begin(iso) {
+    dragging = true; from = iso; calPick = null; calPreview = { start: iso, end: iso }; drawPeriod();
+    if (navigator.vibrate) navigator.vibrate(8);
+  }
+  function stretch(iso) {
+    if (iso === null) return;
+    calPreview = { start: from < iso ? from : iso, end: from < iso ? iso : from }; drawPeriod();
+  }
+  grid.addEventListener('pointerdown', function (e) {
+    const iso = dayAt(e.clientX, e.clientY); if (iso === null) return;
+    press = { iso: iso, x: e.clientX, y: e.clientY, touch: e.pointerType !== 'mouse' };
+    if (press.touch) press.timer = setTimeout(function () { if (press) begin(press.iso); }, 250);
+  });
+  grid.addEventListener('pointermove', function (e) {
+    if (!press) return;
+    if (!dragging) {
+      if (Math.hypot(e.clientX - press.x, e.clientY - press.y) < 8) return;
+      if (press.touch) { clearTimeout(press.timer); press = null; return; }   // палец сдвинулся раньше — это прокрутка страницы
+      begin(press.iso); grid.setPointerCapture(e.pointerId);
+    }
+    stretch(dayAt(e.clientX, e.clientY));
+  });
+  grid.addEventListener('touchmove', function (e) { if (dragging) e.preventDefault(); }, { passive: false });
+  function finish() {
+    if (!press) return;
+    clearTimeout(press.timer);
+    const was = dragging, range = calPreview;
+    press = null; dragging = false;
+    if (!was) return;
+    calSuppressClick = true; setTimeout(function () { calSuppressClick = false; }, 60);
+    calPreview = null;
+    window.dispatchEvent(new CustomEvent('tips-set-range', { detail: range }));
+  }
+  grid.addEventListener('pointerup', finish);
+  grid.addEventListener('pointercancel', finish);
+  grid.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+})();
+
 function paintCalendar(view) {
   document.getElementById('cal-sum').classList.remove('error');
   calYear = view.year;
@@ -551,7 +704,7 @@ function paintCalendar(view) {
     return parseInt(d.slice(8, 10), 10);
   }));
   const plannedByDay = new Map((view.planned_times || []).map(function (s) { return [Number(s.shift_date.slice(8)),s]; }));
-  const vmax = Math.max.apply(null, view.days.map(function (d) { return d.tips; }).concat([1]));
+  const workedByDay = new Map((view.worked_times || []).map(function (s) { return [Number(s.shift_date.slice(8)), s]; }));
 
   document.getElementById("cal-wd").innerHTML =
     WD.map(function (x) { return "<span>" + x + "</span>"; }).join("");
@@ -567,26 +720,22 @@ function paintCalendar(view) {
     cell.type = "button";
     cell.className = "cal-cell";
     cell.textContent = d.day;
-    const plannedTime=plannedByDay.get(d.day);
-    if (plannedTime?.starts_at && plannedTime?.ends_at) {
+    const plannedTime=plannedByDay.get(d.day), workedTime=workedByDay.get(d.day), hours=workedHours(workedTime);
+    if (hours) {
+      // Прошедшая смена с записанным временем: внутри отработанные часы, а не период работы.
+      const label=document.createElement('span');label.className='cal-time';
+      label.textContent=hoursLabel(hours);
+      cell.appendChild(label);
+    } else if (plannedTime?.starts_at && plannedTime?.ends_at) {
       const shortTime=function(v) {return v.slice(3,5)==='00'?String(Number(v.slice(0,2))):v.slice(0,5);};
       const label=document.createElement('span');label.className='cal-time';
       label.textContent=shortTime(plannedTime.starts_at)+'–'+
         shortTime(plannedTime.ends_at);
       cell.appendChild(label);
     }
-    if (d.tips > 0) {
-      // Количество кодируем темнотой, а не цветом: цвет в этом приложении
-      // занят счётом (нал/карта), и синяя шкала спорила с подложкой смены,
-      // и с фоном. Нейтральный графит не конфликтует ни с чем.
-      const alpha = 0.12 + 0.76 * (d.tips / vmax);
-      cell.style.backgroundColor = "rgba(17,17,17," + alpha.toFixed(2) + ")";
-      const dark = alpha > 0.55;
-      cell.style.color = dark ? "#fff" : "var(--ink)";
-      if (dark) cell.classList.add("dark");   // светлая отметка сегодняшнего дня
-      cell.style.fontWeight = "400";
-      cell.title = d.day + ": " + rub(d.tips) + " ₽";
-    }
+    // Чаевые цветом не показываем: заработок виден в цифрах вверху, а календарь отмечает смены и выбранный период.
+    if (d.tips > 0) cell.title = d.day + ": " + rub(d.tips) + " ₽";
+    cell.dataset.iso = calendarDate(view,d.day);
     const wish = view.calendar_wishes?.days?.[calendarDate(view,d.day)];
     if (wish?.kind && !wish.published) cell.dataset.wish=wish.kind;
     else if (wish?.published && wish.working!=null ? wish.working : shiftDays.has(d.day)) cell.classList.add("shift");
@@ -598,9 +747,11 @@ function paintCalendar(view) {
     const wishLabel = cell.dataset.wish==='required' ? '. Планируемый обязательный выходной'
       : cell.dataset.wish==='preferred' ? '. Планируемый желательный выходной' : '';
     cell.setAttribute("aria-label", d.day + " " + MONTHS_GEN[view.month - 1] + wishLabel + ". Открыть день");
-    cell.onclick = function () { openDay(view, d); };
+    cell.onclick = function () { if (calClick(cell)) return; openDay(view, d); };
     grid.appendChild(cell);
   });
+
+  drawPeriod();
 
   const sum = document.getElementById("cal-sum");
 
@@ -1458,6 +1609,8 @@ document.addEventListener("visibilitychange", async function () {
     document.querySelectorAll('.app-tabs [role=tab]').forEach(t=>t.setAttribute('aria-selected',String(t.id==='tab-'+key)));
     document.querySelectorAll('body>[role=tabpanel]').forEach(p=>{p.hidden=p.id!==key+'-panel';});
   };
+  // Вода во вкладках: сама следит за aria-selected и hidden; без WebGL остаётся стеклянная капля на CSS.
+  try{window.LiquidWater&&LiquidWater.tabs(document.querySelector('.app-tabs'));}catch(e){}
 </script>
 <script src="/app/sales.js"></script>
 <script src="/app/tips.js"></script>

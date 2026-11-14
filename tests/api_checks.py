@@ -209,7 +209,7 @@ async def _revoke_calendar_subscription(uid):
 
 
 async def _get_worked_shift_details(uid, since, until):
-    return []
+    return [w for w in getattr(_db, 'worked_shifts', []) if w['user_id']==uid and since<=w['shift_date']<=until]
 
 
 async def _save_shift(uid, day, start, end):
@@ -406,6 +406,32 @@ def test_tips_range_defaults_to_last_tip_date_without_today_shift():
     assert r.data['has_shift'] is False
     assert {e['id'] for e in r.data['entries']} == {old['id'], expense['id']}
     assert (r.data['period']['gross'], r.data['period']['expenses']) == (600,150)
+
+
+def test_tips_range_counts_recorded_worked_hours_only_up_to_today():
+    _db.store.clear(); _db.shifts.clear()
+    _db.worked_shifts = [
+        {'user_id':42,'shift_date':'2026-07-18','actual_start':'2026-07-18T11:00:00+03:00','actual_end':'2026-07-18T23:30:00+03:00'},
+        {'user_id':42,'shift_date':'2026-07-19','actual_start':'2026-07-19T12:00:00+03:00','actual_end':'2026-07-19T23:00:00+03:00'},
+        {'user_id':42,'shift_date':'2026-07-12','actual_start':'2026-07-12T11:00:00+03:00','actual_end':'2026-07-12T20:00:00+03:00'},
+        {'user_id':99,'shift_date':'2026-07-18','actual_start':'2026-07-18T10:00:00+03:00','actual_end':'2026-07-18T22:00:00+03:00'},
+    ]
+    # смена планом без записанного времени часов не даёт
+    _db.shifts.append({'user_id':42,'shift_date':'2026-07-20','starts_at':'11:00','ends_at':'23:00'})
+    try:
+        with patch.object(webapp_api, 'op_today', return_value=date(2026, 7, 20)):
+            week = run(webapp_api.api_tips_range(Req({'initData': init_data(TOKEN, 42),
+                'start': '2026-07-13', 'end': '2026-07-20'})))
+            day = run(webapp_api.api_tips_range(Req({'initData': init_data(TOKEN, 42),
+                'start': '2026-07-18', 'end': '2026-07-18'})))
+            everything = run(webapp_api.api_tips_range(Req({'initData': init_data(TOKEN, 42),
+                'start': '2000-01-01', 'end': '2026-07-20'})))
+    finally:
+        _db.worked_shifts = []
+    assert week.status == 200 and week.data['hours'] == 23.5          # 12,5 + 11, чужая запись не считается
+    assert [d['date'] for d in week.data['worked']] == ['2026-07-18', '2026-07-19']
+    assert day.data['hours'] == 12.5 and day.data['worked'] == [{'date': '2026-07-18', 'hours': 12.5}]
+    assert everything.data['hours'] == 32.5
 
 
 # ─── /api/entries и /api/entry_edit ──────────────────────────────────────────

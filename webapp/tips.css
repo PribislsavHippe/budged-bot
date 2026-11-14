@@ -1,8 +1,4 @@
 [hidden] { display:none!important; }
-.app-tabs { display:flex; align-items:baseline; gap:22px; border:0; margin:0 0 22px; padding:0; background:none; overflow-x:auto; scrollbar-width:none; }
-.app-tabs::-webkit-scrollbar { display:none; }
-.app-tabs button { flex:0 0 auto; border:0; background:none; color:var(--ink); padding:12px 0 0; font:400 12px 'Onest',sans-serif; cursor:pointer; white-space:nowrap; }
-.app-tabs button[aria-selected=true] { color:var(--ink); border:0; box-shadow:none; font:400 25px 'Onest',sans-serif; font-size:25px!important; letter-spacing:-.035em; }
 #tips-dashboard { color:var(--ink); }
 .dashboard-controls { display:flex; justify-content:space-between; align-items:center; gap:12px; }
 .period-link,.privacy-link { border:0; background:none; padding:8px 0; color:var(--ink); font:400 14px 'Onest',sans-serif; cursor:pointer; text-align:left; }
@@ -12,28 +8,27 @@
 .range-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
 .range-head h2 { font:400 21px 'Onest',sans-serif; }
 .range-head button { border:0; background:none; color:var(--ink); font:22px 'Onest',sans-serif; min-width:40px; min-height:40px; }
-.range-picker label { display:block; margin:11px 0; font:400 14px 'Onest',sans-serif; }
-.range-picker input { display:block; width:100%; min-width:0; min-height:48px; margin-top:6px; padding:9px 12px; background:#f5f5f7; color:var(--ink); border:0; border-radius:10px; font:400 16px 'Onest',sans-serif; color-scheme:light; }
-.range-hint { color:var(--ink-soft); font:12px 'Onest',sans-serif; margin:10px 0; }
-.range-apply { width:100%; min-height:48px; margin-top:12px; border:0; border-radius:10px; background:var(--ink); color:white; font:400 15px 'Onest',sans-serif; }
-.range-home { width:100%; min-height:44px; margin-top:8px; border:0; background:none; color:var(--accent); font:400 14px 'Onest',sans-serif; }
-#tips-range-error { color:#8d2b39; font-size:12px; }
-#tips-range-error:empty { display:none; }
+.range-option { display:flex; justify-content:space-between; align-items:center; width:100%; min-height:52px; padding:0; border:0; border-bottom:1px solid #eee; background:none; color:var(--ink); text-align:left; font:400 16px 'Onest',sans-serif; cursor:pointer; }
+.range-option small { font-size:13px; color:#64646a; }
+.range-option.on::after { content:'✓'; font-size:16px; }
+.range-option:last-child { border-bottom:0; }
 #tips-error { color:#8d2b39; font-size:13px; margin-top:12px; }
 #tips-error:empty { display:none; }
-.tips-hero { padding:16px 0 0; }
-.tips-field { font:400 14px 'Onest',sans-serif; }
-.tips-gross { display:block; width:100%; margin:4px 0 26px; padding:0; border:0; background:none; color:var(--ink); text-align:left; cursor:pointer; }
-.tips-gross span { display:block; color:var(--accent); font:400 14px 'Onest',sans-serif; }
-.tips-gross strong { display:block; font:400 clamp(57px,17vw,82px)/1.2 'Prata',Georgia,serif; letter-spacing:-.06em; font-variant-numeric:lining-nums; overflow-wrap:anywhere; }
-.tips-secondary { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
-.tips-secondary span { display:block; font:400 14px 'Onest',sans-serif; color:var(--ink); }
-.tips-secondary strong { display:block; font:400 clamp(31px,9vw,42px)/1.3 'Prata',Georgia,serif; letter-spacing:-.06em; margin-top:2px; overflow-wrap:anywhere; }
-.expense-link { display:block; width:100%; padding:0; border:0; background:none; color:var(--ink); text-align:left; cursor:pointer; }
-.tips-secondary .expense-link span { color:var(--accent); }
+/* Вкладка «Чаевые»: слева часы, справа деньги — грязные, а под ними чистые и расходы (чистые — часть чаевых, не часов).
+   Кегли по золотой пропорции и размеры подбирает tips.js под колонки; без скрипта работают значения по умолчанию. */
+.tips-hero { display:grid; grid-template-columns:.85fr 1fr; column-gap:16px; align-items:start; padding:26px 0 0; }
+.tips-hero.wide { grid-template-columns:1.2fr 1fr; }
+.tips-money { display:grid; row-gap:20px; min-width:0; }
+.tips-sub { display:grid; grid-template-columns:1fr 1fr; column-gap:14px; }
+.tips-cell { display:block; min-width:0; padding:0; border:0; background:none; color:var(--ink); text-align:left; font:inherit; }
+button.tips-cell { cursor:pointer; }
+.tips-cell span { display:block; color:var(--accent); font:400 13px 'Onest',sans-serif; }
+.tips-cell.plain span { color:var(--ink); }
+.tips-cell strong { display:block; margin-top:10px; font:400 var(--small,17px)/1 'Prata',Georgia,serif; letter-spacing:-.05em; white-space:nowrap; font-variant-numeric:lining-nums; }
+.tips-cell.tips-lg strong { font-size:var(--big,28px); margin-top:12px; }
+.tips-cell.tips-hours strong { font-size:var(--huge,94px); line-height:.9; margin-top:var(--huge-top,12px); letter-spacing:-.06em; }
 .tips-hero button:disabled { cursor:default; }
-.tips-placeholder { width:58%; border-radius:8px; background:rgba(17,17,17,.1); color:transparent; }
-.tips-secondary .tips-placeholder { width:68%; }
+.tips-placeholder { display:inline-block; width:3.2ch; border-radius:8px; background:rgba(17,17,17,.1); color:transparent; }
 .detail-backdrop { position:fixed; inset:0; z-index:88; display:flex; align-items:end; background:rgba(0,0,0,.38); }
 .detail-sheet { box-sizing:border-box; width:100%; max-width:480px; max-height:88vh; margin:0 auto; padding:20px 20px calc(20px + env(safe-area-inset-bottom)); overflow:auto; border-radius:18px 18px 0 0; background:#fff; color:var(--ink); box-shadow:0 -6px 28px #0001; }
 .detail-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
@@ -60,4 +55,4 @@
 .tips-actions .btn { width:auto; margin:0; padding:8px 0; border:0; background:none; box-shadow:none; color:var(--ink); font:400 14px 'Onest',sans-serif; }
 .text-action { border:0; background:none; padding:10px 0; font:14px 'Onest',sans-serif; color:var(--ink); }
 .app-tabs :focus-visible,#tips-dashboard :focus-visible,.calendar-disclosure :focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
-@media(max-width:370px) { .app-tabs {gap:16px} .app-tabs button[aria-selected=true] {font-size:23px!important} .privacy-link,.period-link {font-size:12px} }
+@media(max-width:370px) { .privacy-link,.period-link {font-size:12px} }

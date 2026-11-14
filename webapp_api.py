@@ -418,8 +418,12 @@ async def api_tips_range(request: web.Request) -> web.Response:
             for e in entries if start <= _entry_date(e) <= end and
             (e['kind'] == 'expense' or e['kind'] == 'income' and e['category'] == 'Чаевые')]
     rows.sort(key=lambda e:(e['date'],str(e['id'])),reverse=True)
+    # Часы не деньги: они лежат на сервере и в приватном режиме, поэтому берутся отсюда в любом режиме.
+    from tips_stats import worked_hours
+    work=worked_hours(await db.get_worked_shift_details(user_id,start.isoformat(),end.isoformat()),start,end,today)
     return web.json_response({'period':summarize(entries,start,end,today),
                               'today':today.isoformat(),'custom':custom,'has_shift':has_shift,
+                              'hours':work['hours'],'worked':work['days'],
                               'entries':rows},headers=NO_CACHE)
 
 
@@ -847,7 +851,7 @@ def register_webapp_routes(app: web.Application, bot_token: str, bot_username: s
     app.router.add_post("/api/tips_compare", api_tips_compare)
     app.router.add_post("/api/tips_range", api_tips_range)
     for asset in ("background.js", "tips.js", "tips.css", "private.js", "restaurant.js", "restaurant.css", "ux.js", "research.js", "research.css",
-                  "schedule.css", "schedule-grid.js", "schedule.js", "roster-editor.js", "site-ios.css"):
+                  "schedule.css", "schedule-grid.js", "schedule.js", "roster-editor.js", "site-ios.css", "liquid.js", "glass.css"):
         async def serve_asset(request, asset=asset):
             return web.FileResponse(os.path.join(WEBAPP_DIR, asset), headers=NO_CACHE)
         app.router.add_get("/app/" + asset, serve_asset)

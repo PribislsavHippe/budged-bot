@@ -35,6 +35,9 @@ assert.deepEqual(clone(api.view('/api/service_charge/view',{}, {month:'2026-10',
 assert.equal(api.entryDate(rows[0]),'2026-10-01');
 const home=clone(api.range(rows,{}, {has_shift:true},today));
 assert.equal(home.period.gross,500);assert.equal(home.period.net,400);
+// Часы приходят с сервера и не зависят от того, где лежат деньги: в приватном режиме они сохраняются.
+const withHours=clone(api.range(rows,{start:'2026-10-01',end:today},{has_shift:false,hours:12.5,worked:[{date:'2026-10-02',hours:12.5}]},today));
+assert.equal(withHours.hours,12.5);assert.deepEqual(withHours.worked,[{date:'2026-10-02',hours:12.5}]);
 window.privateMoney.entries=[];
 assert.equal(api.view('/api/tips_range',{}, {has_shift:true,today}).period.gross,0);
 console.log('Private finance matches server calculations: money, dates, calendar, comparison, service charge and empty shift: OK');
