@@ -68,8 +68,6 @@
 .sg table.sg-near th.sg-day,.sg table.sg-near td.sg-c,.sg table.sg-near tfoot td{width:var(--dw,25vw);min-width:var(--dw,25vw);box-sizing:border-box}
 .sg table.sg-near td.sg-c{height:48px}
 .sg table.sg-near .sg-s{min-width:48px;height:34px}
-.sg-expand{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;min-height:48px;font:500 15px Onest,sans-serif;color:var(--sg-ink);background:var(--sg-surface);border:0;border-top:1px solid var(--sg-line);cursor:pointer}
-.sg-expand svg{width:20px;height:20px}
 
 /* Весь график на телефоне поверх страницы: помещается целиком, дни листаются вбок,
    «Свернуть» в углу таблицы. Вертикально держат — повёрнут боком. */
@@ -194,12 +192,6 @@
 #restaurant-panel .re-card .re-check-row input{width:auto;height:auto;margin:2px 0 0}
 .re-fields{align-items:end}
 /* Свои ближайшие смены над таблицей. */
-.sg-mine{background:var(--sg-surface);border-radius:14px;padding:14px 16px;margin-bottom:12px}
-.sg-mine p{margin:0;font-size:13px;color:var(--sg-muted)}
-.sg-mine ul{list-style:none;margin:10px 0 0;padding:0;display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
-.sg-mine li{display:grid;gap:2px}
-.sg-mine li span{font-size:12px;color:var(--sg-muted)}
-.sg-mine li b{font-size:20px;font-weight:500;letter-spacing:-.02em}
 
 /* Подсказка «что дальше»: шаги работы над графиком и одна кнопка следующего действия. */
 .re-guide{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px 24px;background:var(--sg-surface);border-radius:14px;padding:14px 18px}
@@ -307,7 +299,6 @@ html.tg-full .sg-land:not(.rotated) .sg-fit{padding-top:calc(var(--tg-safe-area-
 /* Дни, ушедшие под колонку имён, обрезаются по её краю (см. scroller в schedule-grid.js): заливки у имён нет. */
 .sg thead th.sg-day,.sg td.sg-c,.sg tfoot td:not(.sg-tail){clip-path:inset(-24px -24px -24px clamp(-24px,calc(var(--edge,0px) - var(--x,99999px)),240px))}
 #schedule-panel .sg-detail{border-top:0;padding:10px 0}
-#schedule-panel .sg-expand{background:rgba(255,255,255,.7);border:0;border-radius:14px;margin-top:12px}
 #schedule-panel table.sg-near td.sg-c{height:var(--rh,48px)}
 #schedule-panel table.sg-near .sg-s,#schedule-panel table.sg-near .sg-e{height:min(34px,calc(var(--rh,48px) - 10px))}
 #schedule-panel table.sg-near tfoot td,#schedule-panel table.sg-near tfoot th{height:min(40px,var(--rh,48px))}
@@ -315,8 +306,7 @@ html.tg-full .sg-land:not(.rotated) .sg-fit{padding-top:calc(var(--tg-safe-area-
 #schedule-panel .sg-scroll{scrollbar-width:none}
 #schedule-panel .sg-scroll::-webkit-scrollbar{display:none}
 
-/* «Твои смены» и повёрнутый график — тоже без плашек: текст и таблица лежат прямо на фоне страницы. */
-#schedule-panel .sg-mine{background:none;padding:0;margin-bottom:20px}
+/* Повёрнутый график — тоже без плашки: таблица лежит прямо на фоне страницы. */
 .sg-land{background:transparent}
 .sg-land .sg-name{background:transparent}
 /* Пока график открыт на весь экран, остальная страница скрыта, а фон (#bg) остаётся виден. */
@@ -334,9 +324,19 @@ html.sg-land-open body>*:not(.sg-land):not(#bg){visibility:hidden}
 .re-asks p{margin:0}
 .re-asks small{color:var(--sg-muted)}
 
-.sg-mine-off{margin-top:10px!important;color:var(--sg-ink)!important;font-size:14px!important;line-height:1.45}
 
 .re-asks small.re-over{color:var(--sg-off-ink)}
 
 /* Пока идёт публикация или сборка, правка недоступна (иначе она потерялась бы с ответом сервера). */
 .re.re-working .re-editor{pointer-events:none;opacity:.7}
+
+/* Своя строка — первая; от остальных её отделяет волнистая линия той же толщины и цвета, расстояния прежние.
+   Волна рисуется фоном каждой клетки и сдвигается на её место в таблице (--x, --sx), поэтому идёт без швов. */
+#schedule-panel tbody tr.sg-me:first-child>*,.sg-land tbody tr.sg-me:first-child>*{
+  border-bottom-color:transparent;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='4'%3E%3Cpath d='M0 2q2.5-2.4 5 0t5 0' fill='none' stroke='%23e3e1db' stroke-opacity='.9' stroke-width='1'/%3E%3C/svg%3E");
+  background-repeat:repeat-x;background-size:10px 4px;background-position:calc(-1 * var(--x,0px)) calc(100% + 2px)}
+#schedule-panel tbody tr.sg-me:first-child>th,.sg-land tbody tr.sg-me:first-child>th{background-position:calc(-1 * var(--sx,0px)) calc(100% + 2px)}
+/* Весь график — значок поворота экрана в правом верхнем углу, рядом со стрелками. */
+.sg-nav .sg-rotate{display:grid;place-items:center;padding:0}
+.sg-nav .sg-rotate svg{width:22px;height:22px}

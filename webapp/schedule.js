@@ -8,12 +8,10 @@
   let data=null,busy=false,picked=null;
   panel.classList.add('sg');
   panel.innerHTML=`<header class="sg-head"><div><h1 id="sg-title"></h1><p id="sg-sub"></p></div>
-      <div class="sg-nav"><button type="button" id="sg-prev" aria-label="Предыдущий график">‹</button><button type="button" id="sg-next" aria-label="Следующий график">›</button></div></header>
+      <div class="sg-nav"><button type="button" id="sg-prev" aria-label="Предыдущий график">‹</button><button type="button" id="sg-next" aria-label="Следующий график">›</button><button type="button" class="sg-rotate" id="sg-expand" aria-label="Весь график" title="Весь график"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3.5" width="8" height="13" rx="1.8"/><rect x="8.5" y="13" width="12.5" height="7.5" rx="1.8" stroke-dasharray="2 2"/><path d="M14 4.5a5.5 5.5 0 0 1 5 5"/><path d="m17.3 8.6 1.7 1.4 1.4-1.7"/></svg></button></div></header>
     <p id="sg-error" class="sg-error" role="alert"></p>
-    <section id="sg-mine" class="sg-mine" hidden aria-label="Мои смены"></section>
     <section class="sg-sheet" id="sg-sheet" hidden aria-label="График смен"><div class="sg-scroll"><table id="sg-grid"></table></div>
-      <p class="sg-detail" id="sg-detail" role="status"></p>
-      <button type="button" class="sg-expand" id="sg-expand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M7 3.5h3M14 20.5h3"/></svg>Весь график</button></section>
+      <p class="sg-detail" id="sg-detail" role="status"></p></section>
     <p id="sg-empty" class="sg-empty" hidden></p>
     <button type="button" id="sg-site" class="sg-site" hidden>Составить график на сайте</button>`;
   const grid=$('sg-grid'),sc=grid.parentElement,sheet=$('sg-sheet');
@@ -26,7 +24,9 @@
     if(!r.ok)throw new Error(json.error||'График пока недоступен.');
     return json;
   }
-  const options=()=>({days:data.period.days,people:data.period.people,events:data.period.events,holidays:data.period.holidays,today:data.today,weekGap:false});
+  // Владелец аккаунта — первой строкой, остальные в прежнем порядке.
+  const people=()=>{const all=data.period.people;return [...all.filter(x=>x.me),...all.filter(x=>!x.me)];};
+  const options=()=>({days:data.period.days,people:people(),events:data.period.events,holidays:data.period.holidays,today:data.today,weekGap:false});
   function render(){
     const p=data.period,list=data.periods,index=p?list.findIndex(x=>x.start===p.start):-1;
     const place=data.restaurants.find(r=>r.id===data.restaurant_id);
@@ -36,7 +36,6 @@
     $('sg-prev').disabled=index<=0;$('sg-next').disabled=index<0||index>=list.length-1;
     $('sg-site').hidden=!(data.can_edit&&data.site_url);
     sheet.hidden=!p;$('sg-empty').hidden=!!p;
-    renderMine(p);
     if(!p){$('sg-empty').textContent='График ещё не опубликован.';return;}
     const near=phone.matches;
     grid.className=near?'sg-near':'';
@@ -60,31 +59,6 @@
     }
     grid.style.setProperty('--rh',rh+'px');
   }
-  // Свои ближайшие смены над таблицей: искать себя глазами не нужно.
-  // Свои обязательные выходные (записанные в боте) и пожелание по дням недели видны сразу, ещё до публикации.
-  const WD=['понедельникам','вторникам','средам','четвергам','пятницам','субботам','воскресеньям'];
-  function daysText(list){
-    const by={};list.forEach(d=>{const x=G.at(d);(by[x.getMonth()]=by[x.getMonth()]||[]).push(x.getDate());});
-    return Object.entries(by).map(([m,ds])=>`${ds.join(', ')} ${G.MONTHS[m]}`).join(', ');
-  }
-  function offsText(){
-    const mine=data.mine||{},days=(mine.requests||[]).flatMap(r=>r.days),wd=mine.weekdays||[];
-    const over=(mine.requests||[]).find(r=>r.limit&&r.days.length>r.limit);
-    const wish=[wd.length?`выходные по ${wd.map(d=>WD[d]).join(', ')}`:'',mine.pattern?`график ${mine.pattern}`:''].filter(Boolean).join(', ');
-    const parts=[days.length?`Твои выходные: ${daysText(days)}${over?` (больше ${over.limit} — по согласованию с менеджером)`:''}`:'',wish?`Пожелание: ${wish}`:''].filter(Boolean);
-    return parts.length?`<p class="sg-mine-off">${parts.map(G.esc).join('<br>')}</p>`:'';
-  }
-  function renderMine(p){
-    const box=$('sg-mine'),me=p?.people.find(x=>x.me),offs=offsText();
-    if(!me){box.hidden=!offs;box.innerHTML=offs;return;}
-    const today=data.today,rel=['Сегодня','Завтра'];
-    const next=p.days.filter(d=>d>=today&&G.works(G.parse(me.cells[d]))).slice(0,3);
-    const label=d=>{const k=Math.round((G.at(d)-G.at(today))/864e5);return rel[k]||G.dayName(d).replace(/^(\S+), (\d+).*/,'$1, $2');};
-    box.hidden=false;
-    box.innerHTML=(next.length?`<p>Твои смены</p><ul>${next.map(d=>{const v=G.parse(me.cells[d]);
-        return `<li><span>${G.esc(label(d))}</span><b>${G.clock(v.start)}${v.end!=null?'–'+G.clock(v.end):''}</b></li>`;}).join('')}</ul>`
-      :'<p>Смен больше нет</p>')+offs;
-  }
   async function load(start){
     if(busy)return;busy=true;$('sg-error').textContent='';
     try{data=await api(start?{start,restaurant_id:data?.restaurant_id}:{});const mine=data.mine||{};tab.hidden=!data.available||(!data.periods.length&&!data.can_edit&&!(mine.requests||[]).length&&!(mine.weekdays||[]).length&&!mine.pattern);if(tab.hidden)return;render();window.dispatchEvent(new Event('schedule-tab-ready'));}
@@ -96,7 +70,7 @@
   grid.addEventListener('click',e=>{
     const h=e.target.closest('thead th.sg-day');if(h){picked=h.dataset.day;scroll.go(picked);return;}
     const c=e.target.closest('td.sg-c');if(!c)return;
-    const person=data.period.people[+c.dataset.r],v=G.parse(person.cells[c.dataset.day]),off=person.off.includes(c.dataset.day);
+    const person=people()[+c.dataset.r],v=G.parse(person.cells[c.dataset.day]),off=person.off.includes(c.dataset.day);
     const end=v&&v.start!=null?(v.end??Math.min(v.start+12,23)):null;
     $('sg-detail').textContent=`${person.name} · ${G.dayName(c.dataset.day)} · ${v&&v.start!=null?`${G.clock(v.start)}–${G.clock(end)}${off?' вместо выходного':''}`:off?'обязательный выходной':'не работает'}`;
   });

@@ -94,8 +94,10 @@
     // Дни, ушедшие под закреплённую колонку имён, обрезаются по её краю: без заливки и без просвечивания.
     // x каждой ячейки считается при раскладке, край — при каждой прокрутке (одно свойство на таблицу).
     const cells=()=>t.querySelectorAll('thead th.sg-day,td.sg-c,tfoot td:not(.sg-tail)');
-    const setEdge=()=>t.style.setProperty('--edge',(sc.scrollLeft+names())+'px');
-    function mark(){cells().forEach(c=>c.style.setProperty('--x',c.offsetLeft+'px'));setEdge();}
+    // --sx — где сейчас колонка имён в координатах таблицы: по ней волнистая линия под своей строкой продолжается без шва.
+    const setEdge=()=>{t.style.setProperty('--edge',(sc.scrollLeft+names())+'px');t.style.setProperty('--sx',sc.scrollLeft+'px');};
+    // x — от левого края таблицы: offsetLeft у ячеек может считаться от страницы, и тогда обрезка опаздывает на отступ таблицы.
+    function mark(){const l=t.getBoundingClientRect().left;[...cells(),...t.querySelectorAll('tbody tr.sg-me td')].forEach(c=>c.style.setProperty('--x',(c.getBoundingClientRect().left-l)+'px'));setEdge();}
     function size(){size_();mark();}
     function size_(){
       t.style.setProperty('--tail','0px');fits=false;
