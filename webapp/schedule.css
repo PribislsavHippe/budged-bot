@@ -72,10 +72,14 @@
 /* Весь график на телефоне поверх страницы: помещается целиком, дни листаются вбок,
    «Свернуть» в углу таблицы. Вертикально держат — повёрнут боком. */
 .sg-land{position:fixed;inset:0;z-index:1000;background:var(--sg-surface);display:flex;flex-direction:column;--rh:32px;
-  --sl:env(safe-area-inset-left,0px);--sr:env(safe-area-inset-right,0px);--sb:env(safe-area-inset-bottom,0px)}
+  /* В полноэкранном режиме Telegram рисует свои кнопки («Закрыть», «⋯») поверх мини-приложения: отступаем и от выреза,
+     и от них, иначе «Свернуть» в углу оказывается под ними или за краем. */
+  --tgi:calc(max(env(safe-area-inset-top,0px),var(--tg-safe-area-inset-top,0px)) + var(--tg-content-safe-area-inset-top,0px));--tgtop:var(--tgi);
+  --sl:max(env(safe-area-inset-left,0px),var(--tg-safe-area-inset-left,0px));--sr:max(env(safe-area-inset-right,0px),var(--tg-safe-area-inset-right,0px));
+  --sb:max(env(safe-area-inset-bottom,0px),var(--tg-safe-area-inset-bottom,0px))}
 .sg-land.rotated{inset:auto;top:0;left:0;transform-origin:top left;transform:rotate(90deg) translateY(-100%);
-  --sl:env(safe-area-inset-top,0px);--sr:env(safe-area-inset-bottom,0px);--sb:0px}
-.sg-land .sg-fit{flex:1;min-height:0;overflow:hidden;padding:0 var(--sr) var(--sb) var(--sl)}
+  --sl:var(--tgi);--tgtop:0px;--sr:env(safe-area-inset-bottom,0px);--sb:0px}
+.sg-land .sg-fit{flex:1;min-height:0;overflow:hidden;padding:var(--tgtop) var(--sr) var(--sb) var(--sl)}
 .sg-land .sg-lscroll{height:100%;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;overscroll-behavior-x:contain;scrollbar-width:none}
 .sg-land .sg-lscroll::-webkit-scrollbar{display:none}
 .sg-land table{table-layout:fixed;width:var(--tw,100%);min-width:0}

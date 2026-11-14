@@ -103,7 +103,8 @@
     gh=glyph(h);hero.style.setProperty('--huge-top',(12+top-gh.top)+'px');
   }
   if('ResizeObserver' in window)new ResizeObserver(fitHero).observe(root);
-  document.fonts?.ready?.then(fitHero);
+  // Размеры считаются по настоящему шрифту цифр: пока он не загрузился, пересчитываем, когда придёт.
+  if(document.fonts){document.fonts.ready.then(fitHero);document.fonts.addEventListener?.('loadingdone',fitHero);document.fonts.load('400 40px Prata').then(fitHero,()=>{});}
 
   /* ---------- связь с календарём ---------- */
   const announce=()=>{const [start,end]=bounds();
@@ -253,6 +254,7 @@
     $('tips-expense').onclick=()=>showDetail('expenses');
     $('tips-result').hidden=false;$('tips-retry').hidden=true;
     fitHero();announce();
+    document.fonts?.load('400 40px Prata').then(fitHero,()=>{});
   }
   const emptyData=(start,end)=>({period:{start,end,has_data:false,gross:0,expenses:0,net:0,shifts:0,days:[]},today,custom:true,has_shift:false,hours:0,worked:[],entries:[]});
   async function load(){
