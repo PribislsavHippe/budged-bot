@@ -264,7 +264,7 @@
 <body>
   <div id="bg" aria-hidden="true"><canvas id="gradient-canvas"></canvas></div>
   <div class="tabs-scroll"><nav class="app-tabs nimbus-nav" role="tablist" aria-label="Разделы">
-    <button id="tab-earnings" class="nimbus-item" role="tab" aria-selected="true" aria-controls="earnings-panel">Чаевые</button>
+    <button id="tab-earnings" class="nimbus-item" role="tab" aria-selected="true" aria-controls="earnings-panel">Деньги</button>
     <button id="tab-schedule" class="nimbus-item" role="tab" aria-selected="false" aria-controls="schedule-panel" hidden>График</button>
     <button id="tab-sales" class="nimbus-item" role="tab" aria-selected="false" aria-controls="sales-panel">План</button>
     <button id="tab-restaurant" class="nimbus-item" role="tab" aria-selected="false" aria-controls="restaurant-panel" hidden>Ресторан</button>
@@ -275,7 +275,7 @@
   <section id="schedule-panel" role="tabpanel" aria-labelledby="tab-schedule" hidden></section>
   <section id="sales-panel" role="tabpanel" aria-labelledby="tab-sales" hidden></section>
   <section id="earnings-panel" role="tabpanel" aria-labelledby="tab-earnings">
-  <section id="tips-dashboard" aria-label="Чаевые и расходы" aria-busy="true"></section>
+  <section id="tips-dashboard" aria-label="Деньги: часы, чаевые и расходы" aria-busy="true"></section>
   <div hidden>
   <p class="head" id="head">Загружаю…</p>
 
@@ -544,7 +544,7 @@ function calViewFromStats(s) {
 }
 
 // ── выбранный период в календаре ──
-// Вкладка «Чаевые» (tips.js) сообщает период событием `tips-period`; календарь рисует его волнистой лентой
+// Вкладка «Деньги» (tips.js) сообщает период событием `tips-period`; календарь рисует его волнистой лентой
 // и возвращает свой выбор событием `tips-set-range`. Касание дня по-прежнему открывает день;
 // когда выбран режим «Свои дни», касания выбирают начало и конец. Долгое нажатие с проведением выбирает период.
 let tipsPeriod = null, calPick = null, calPreview = null, calSuppressClick = false;
@@ -630,7 +630,7 @@ window.addEventListener('tips-period', function (event) {
   tipsPeriod = event.detail; calPick = null; calPreview = null; drawPeriod();
 });
 window.addEventListener('resize', function () { drawPeriod(); });
-// Вкладка «Чаевые» скрыта, пока открыта другая: когда календарь снова получает размер, период рисуется заново.
+// Вкладка «Деньги» скрыта, пока открыта другая: когда календарь снова получает размер, период рисуется заново.
 if ('ResizeObserver' in window) new ResizeObserver(function () { drawPeriod(); }).observe(document.getElementById('cal-wrap'));
 
 // Касание дня в режиме «Свои дни»: первое — начало, второе — конец периода.
