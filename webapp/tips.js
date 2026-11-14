@@ -95,6 +95,7 @@
     hero.classList.toggle('wide',h.textContent.replace(/\D/g,'').length>=3);   // от трёх цифр часов деньги уходят к правому краю
     fit(hero,'.tips-lg strong',28,'--big');fit(hero,'.tips-sub .tips-cell strong',17,'--small');
     hero.style.setProperty('--huge-top','12px');
+    if(!/\d/.test(h.textContent)){hero.style.setProperty('--huge',hero.style.getPropertyValue('--big'));return;}   // «—»: нет цифр, высоту сравнивать не с чем
     const top=glyph(g).top,bot=glyph(n).bottom;
     let gh=glyph(h),size=.85*gh.size*(bot-top)/(gh.bottom-gh.top);
     hero.style.setProperty('--huge',size+'px');

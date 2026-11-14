@@ -11,7 +11,7 @@
   var VERT = 'attribute vec2 a;void main(){gl_Position=vec4(a,0.,1.);}';
   var FRAG = 'precision highp float;\n' +
     'uniform vec2 uRes;uniform float uDpr;uniform float uTime;uniform vec4 uPill;\n' +
-    'uniform vec4 uBlob[6];uniform float uSy[6];uniform vec4 uRip[6];uniform vec3 uMouse;uniform float uDark;uniform float uAmb;uniform float uK;\n' +
+    'uniform vec4 uBlob[6];uniform float uSy[6];uniform vec4 uRip[6];uniform vec3 uMouse;uniform float uDark;uniform float uAmb;uniform float uK;uniform float uShade;\n' +
     'float sdRB(vec2 p,vec2 b,float r){vec2 q=abs(p)-b+r;return length(max(q,0.))+min(max(q.x,q.y),0.)-r;}\n' +
     'float sdCap(vec2 p,vec4 B,float sy){p-=B.xy;p.y/=sy;p.x=max(abs(p.x)-B.z,0.);return(length(p)-B.w)*min(1.,sy);}\n' +
     'float smin(float a,float b,float k){float h=clamp(.5+.5*(b-a)/k,0.,1.);return mix(b,a,h)-k*h*(1.-h);}\n' +
@@ -22,7 +22,7 @@
     ' for(int i=0;i<6;i++){vec4 R=uRip[i];if(R.w>0.){float x=length(p-R.xy)-R.z*240.;w+=R.w*exp(-R.z*1.7)*sin(x*.3)*exp(-x*x/700.);}}\n' +
     ' vec2 m=p-uMouse.xy;w+=uMouse.z*3.6*exp(-dot(m,m)/1000.);\n' +
     ' w+=uAmb*(sin(p.x*.05+uTime*1.2)*.45+sin(p.x*.13-uTime*.85+p.y*.2)*.25);return w;}\n' +
-    'float H(vec2 p){float dp=pillD(p);return lens(dp,min(uPill.w*.36,22.))*2.4+lens(dropD(p),11.)*7.5+waves(p)*smoothstep(0.,7.,-dp);}\n' +
+    'float H(vec2 p){float dp=pillD(p);return lens(dp,min(uPill.w*.36,22.))*2.4*uShade+lens(dropD(p),11.)*7.5+waves(p)*smoothstep(0.,7.,-dp);}\n' +
     'float caus(vec2 p,float t){vec2 q=p;float c=0.;for(int i=0;i<3;i++){q+=vec2(sin(q.y*1.1+t),cos(q.x*1.3-t*.7))*.6;c+=1./(1.+16.*abs(sin(q.x)*sin(q.y)));}return c/3.;}\n' +
     'void main(){\n' +
     ' vec2 p=vec2(gl_FragCoord.x,uRes.y*uDpr-gl_FragCoord.y)/uDpr;\n' +
@@ -73,7 +73,7 @@
     gl.enableVertexAttribArray(loc);
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
     var u = {};
-    ['uRes', 'uDpr', 'uTime', 'uPill', 'uBlob', 'uSy', 'uRip', 'uMouse', 'uDark', 'uAmb', 'uK'].forEach(function (n) { u[n] = gl.getUniformLocation(p, n); });
+    ['uRes', 'uDpr', 'uTime', 'uPill', 'uBlob', 'uSy', 'uRip', 'uMouse', 'uDark', 'uAmb', 'uK', 'uShade'].forEach(function (n) { u[n] = gl.getUniformLocation(p, n); });
     return { gl: gl, u: u };
   }
 
@@ -119,6 +119,7 @@
         g.uniform1f(u.uDark, dark);
         g.uniform1f(u.uAmb, s.reduce ? 0 : 1);
         g.uniform1f(u.uK, 13);
+        g.uniform1f(u.uShade, 1);   // таблетка вкладок выпуклая, как стекло
         g.clearColor(0, 0, 0, 0);
         g.clear(g.COLOR_BUFFER_BIT);
         g.drawArrays(g.TRIANGLES, 0, 3);
@@ -248,9 +249,8 @@
 
   /* ---------- календарь ---------- */
   function cal(panel) {
-    var glass = document.createElement('span'); glass.className = 'nimbus-glass'; glass.setAttribute('aria-hidden', 'true');
     var canvas = document.createElement('canvas'); canvas.className = 'nimbus-water'; canvas.setAttribute('aria-hidden', 'true');
-    panel.insertBefore(canvas, panel.firstChild); panel.insertBefore(glass, panel.firstChild);
+    panel.insertBefore(canvas, panel.firstChild);
 
     var s = {
       w: 0, h: 0, rows: [], rips: [], mouse: { x: 0, y: 0, s: 0, on: false },
@@ -284,6 +284,7 @@
       g.uniform1f(u.uDark, 0);
       g.uniform1f(u.uAmb, 0);       // без постоянной ряби: пока ничего не двигается, кадры не рисуются
       g.uniform1f(u.uK, 7);
+      g.uniform1f(u.uShade, 0);   // панель календаря плоская и невидимая: видна только капля
       g.clearColor(0, 0, 0, 0);
       g.clear(g.COLOR_BUFFER_BIT);
       g.drawArrays(g.TRIANGLES, 0, 3);

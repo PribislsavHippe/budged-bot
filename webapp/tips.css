@@ -20,7 +20,7 @@
 .tips-hero.wide { grid-template-columns:1.2fr 1fr; }
 .tips-money { display:grid; row-gap:20px; min-width:0; }
 .tips-sub { display:grid; grid-template-columns:1fr 1fr; column-gap:14px; }
-.tips-cell { display:block; min-width:0; padding:0; border:0; background:none; color:var(--ink); text-align:left; font:inherit; }
+.tips-cell { display:flex; flex-direction:column; justify-content:flex-start; align-self:start; min-width:0; padding:0; border:0; background:none; color:var(--ink); text-align:left; font:inherit; }
 button.tips-cell { cursor:pointer; }
 .tips-cell span { display:block; color:var(--accent); font:400 13px 'Onest',sans-serif; }
 .tips-cell.plain span { color:var(--ink); }
