@@ -167,10 +167,10 @@ async def match_message(message, parsed, bare):
     if target and period is None:
         return {'parsed_wish': parsed or parse_wish(message.text, bare=True), 'wish_link': link, 'wish_rows': []}
     wait = await days_off.waiting(message.from_user.id) if period is None and bare and not parsed else None
-    # A standalone number can be a tip. Require a direct reply or explicit
-    # wording, except when a legacy edit button is waiting for numbers.
-    if not parsed and not target and not wait and not bare.get('none') and len(bare['numbers']) == 1:
-        return False
+    # A lone one- or two-digit number is a day of the month, never a tip (owner's
+    # decision, 13.11.2026). It names the date itself, so no reminder is needed:
+    # without an open request every available period is a candidate.
+    lone = not parsed and days_off.lone_short_number(message.text) is not None
     if period is None and wait:
         period = next((r for r in rows if r['start_date'] == wait['start'].isoformat()), None)
     if period is None:
@@ -178,7 +178,7 @@ async def match_message(message, parsed, bare):
     if parsed and parsed['empty'] is False and not period:
         return False
     if not parsed:
-        if not period:
+        if not period and not lone:
             return False
         parsed = parse_wish(message.text, bare=True)
         if not parsed:

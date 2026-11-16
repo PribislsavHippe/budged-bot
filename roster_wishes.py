@@ -266,6 +266,8 @@ async def remind(bot, roster_id=None):
             await asyncio.wait_for(bot.send_message(claim['user_id'], reminder_text(current),
                                                    reply_markup=markup, disable_notification=True), timeout=5)
             count += 1
+            import research
+            research.track(claim['user_id'], 'reminder_sent', source='server', screen='schedule', step='days_off')
             await db._execute(db.supabase.table('roster_wish_notices')
                               .update({'sent_at': datetime.now(timezone.utc).isoformat()})
                               .eq('roster_id', claim['roster_id']).eq('link_id', claim['link_id'])

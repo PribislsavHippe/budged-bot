@@ -207,6 +207,8 @@ async def api_private_activate(request: web.Request) -> web.Response:
         if user.get('private_money_mode') and current_key.get('n')==public_key['n'] and current_key.get('e')==public_key['e']:
             return web.json_response({'active':True},headers=NO_CACHE)
         return web.json_response({'error':'Не получил подтверждение переноса. Проверь режим и повтори попытку.'},status=409,headers=NO_CACHE)
+    import research
+    research.track(user_id,'private_mode_enabled',source='miniapp',screen='earnings')
     return web.json_response({'active':True},headers=NO_CACHE)
 
 
@@ -255,6 +257,8 @@ async def api_private_deactivate(request: web.Request) -> web.Response:
         else:
             message='Не получил подтверждение переноса. Личный журнал на телефоне сохранён; проверь режим и повтори.'
         return web.json_response({'error':message},status=409,headers=NO_CACHE)
+    import research
+    research.track(user_id,'private_mode_disabled',source='miniapp',screen='earnings',operation=operation)
     return web.json_response({'active':False,'count':len(entries),'operation_id':operation},headers=NO_CACHE)
 
 
@@ -307,6 +311,12 @@ async def api_stats(request: web.Request) -> web.Response:
     except (ValueError,TypeError,InvalidOperation):
         return web.json_response({'error':'Не получилось прочитать личные записи на этом устройстве.'},status=400,headers=NO_CACHE)
     return web.json_response(result, headers=NO_CACHE)
+
+
+def _track_corrected(user_id: int, how: str, screen: str) -> None:
+    """Запись исправили или удалили в мини-приложении. Без суммы и содержимого."""
+    import research
+    research.track(user_id, 'entry_corrected', source='miniapp', screen=screen, step=how)
 
 
 def _track_saved_money_entry(user_id: int, entry_id: int, event: str) -> None:
@@ -545,7 +555,8 @@ async def api_calendar_edit(request: web.Request) -> web.Response:
     entry=await db.get_entry(entry_id,user_id)
     if not entry or entry['kind']!='income' or entry['category']!='Чаевые' or _entry_date(entry)!=day:
         return web.json_response({'error':'Не нашёл чаевые за этот день.'},status=404,headers=NO_CACHE)
-    await db.delete_entry(entry_id,user_id)
+    if await db.delete_entry(entry_id,user_id):
+        _track_corrected(user_id,'delete','calendar')
     return web.json_response({'saved':True},headers=NO_CACHE)
 
 
@@ -585,6 +596,7 @@ async def api_entry_edit(request: web.Request) -> web.Response:
     action = body.get("action")
     if action == "delete":
         await db.delete_entry(entry_id, user_id)
+        _track_corrected(user_id, 'delete', 'history')
     elif action == "tip_details":
         try:
             if entry['kind'] != 'income' or entry['category'] != 'Чаевые':raise ValueError()
@@ -594,6 +606,8 @@ async def api_entry_edit(request: web.Request) -> web.Response:
         except (ValueError,TypeError,InvalidOperation):
             return web.json_response({'error':'Проверь сумму чаевых и выбери: наличные или карта.'},status=400,headers=NO_CACHE)
         await db.update_tip_details(entry_id,user_id,float(amount),body['account'])
+        if float(amount)!=float(entry['signed_amount']):_track_corrected(user_id,'amount','history')
+        if body['account']!=entry['account']:_track_corrected(user_id,'account','history')
     elif action == "account":
         if entry["kind"] == "accrual":
             return web.json_response({"error": "Начисление не поступило на счёт."}, status=400)
@@ -601,6 +615,7 @@ async def api_entry_edit(request: web.Request) -> web.Response:
         if account not in ("cash", "card"):
             return web.json_response({"error": "Выбери, куда поступили деньги: наличными или на карту."}, status=400)
         await db.update_entry_account(entry_id, user_id, account)
+        _track_corrected(user_id, 'account', 'history')
     elif action == "amount":
         try:
             raw = body.get("amount")
@@ -617,6 +632,7 @@ async def api_entry_edit(request: web.Request) -> web.Response:
         else:
             sign = 1 if entry["kind"] in ("income", "accrual") else -1
         await db.update_entry_amount(entry_id, user_id, sign * float(amount))
+        _track_corrected(user_id, 'amount', 'history')
     else:
         return web.json_response({"error": "Не получилось выполнить изменение. Обнови историю."}, status=400)
 
@@ -721,6 +737,10 @@ async def iphone_calendar_feed(request: web.Request) -> web.Response:
     if not row:
         return web.Response(status=404, headers=CALENDAR_HEADERS)
     shifts = await db.get_calendar_shift_details(row['user_id'])
+    # Календарь телефона забирает смены сам; отмечаем раз в день, что подписка жива.
+    import research
+    research.track(row['user_id'], 'calendar_synced', source='server', screen='calendar',
+                   operation=research.daily(row['user_id'], 'calendar_synced'))
     body = calendar_feed.render_shifts(shifts, row['user_id'], request.app['bot_token'])
     return web.Response(body=body, content_type='text/calendar', charset='utf-8',
                         headers=CALENDAR_HEADERS)
@@ -807,7 +827,9 @@ async def api_errors(request, handler):
                                   'code':code,'reference':reference},status=503,headers=NO_CACHE)
     uid=request.get('verified_uid')
     if uid and screen and response.status==200 and request.path not in {'/api/restaurant/access'}:
-        research.track(uid,'cabinet_loaded',source='server',screen=screen)
+        # Мини-приложение само обновляет данные раз в минуту: считаем загрузку раздела раз в день, а не каждый запрос.
+        research.track(uid,'cabinet_loaded',source='server',screen=screen,
+                       operation=research.daily(uid,'cabinet_loaded:'+screen))
     elif uid and screen and response.status>=500 and not request.path.startswith('/api/restaurant/') and not request.get('research_error_tracked'):
         research.track(uid,'cabinet_load_error',source='server',screen=screen,error_code='backend')
     return response

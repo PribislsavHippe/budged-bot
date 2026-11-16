@@ -828,12 +828,17 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
             await self.post('/api/schedule/view', WAITER)
             await self.post('/api/schedule/view', WAITER)
             await self.post('/api/schedule/view', MANAGER)
-        kinds = [c.args[1] for c in track.call_args_list]
+        reminders = [c for c in track.call_args_list if c.args[1] == 'reminder_sent']
+        kinds = [c.args[1] for c in track.call_args_list if c.args[1] != 'reminder_sent']
         self.assertEqual(kinds, ['roster_created', 'roster_variant_picked', 'roster_built', 'roster_dates_changed',
                                  'days_off_asked', 'roster_published', 'roster_republished', 'roster_viewed', 'roster_viewed'])
+        # Просьба о выходных отмечена у каждого, кому дошла, — у сотрудников, не у менеджера.
+        self.assertTrue(reminders)
+        self.assertEqual({c.kwargs['step'] for c in reminders}, {'days_off'})
+        self.assertNotIn(MANAGER, {c.args[0] for c in reminders})
         # Только факт и этап: ни имён, ни дат, ни смен.
         for c in track.call_args_list:
-            self.assertLessEqual(set(c.kwargs), {'source', 'screen', 'operation'})
+            self.assertLessEqual(set(c.kwargs), {'source', 'screen', 'operation', 'step'})
         self.assertNotIn('Аня', str(track.call_args_list))
         views = [c for c in track.call_args_list if c.args[1] == 'roster_viewed']
         self.assertEqual(views[0].kwargs['operation'], views[1].kwargs['operation'])
@@ -871,7 +876,10 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rebuilt['draft']['wish_off'], {})
 
     async def test_one_message_with_weekdays_and_dates_records_both(self):
+        # Запасной путь для базы без пожеланий migration_v37: при ней числа записывает путь пожеланий
+        # (test_roster_wishes.OldPhraseDates).
         import days_off_chat
+        self.enterContext(patch.object(days_off_chat, 'wish_flow', new=AsyncMock(return_value=False)))
         store = {}
         async def update_data(**kw): store.update(kw)
         state = NS(update_data=update_data)
@@ -926,7 +934,10 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('wish', next(r for r in rows if r['report_name'] == 'Боря'))
 
     async def test_more_days_off_than_the_norm_are_accepted_for_the_manager_to_agree(self):
+        # Запасной путь для базы без пожеланий migration_v37: при ней числа записывает путь пожеланий
+        # (test_roster_wishes.OldPhraseDates).
         import days_off_chat
+        self.enterContext(patch.object(days_off_chat, 'wish_flow', new=AsyncMock(return_value=False)))
         store = {}
         async def update_data(**kw): store.update(kw)
         made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-30')

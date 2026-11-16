@@ -93,7 +93,8 @@ async def value_saved(message,entry):
     operation=str(uuid5(NAMESPACE_URL,f"ux-entry:{uid}:{entry['id']}"))
     import db
     try:
-        await research.record(uid,event,operation=operation)
+        # Каким путём записаны деньги в чате: пересланное уведомление банка или обычное сообщение.
+        await research.record(uid,event,operation=operation,step='bank' if entry.get('note')=='из банка' else 'message')
         user=await db.get_or_create_user(uid)
         step=user.get('tutorial_step')
         if step not in {'tip','expense'}:return
@@ -384,6 +385,7 @@ async def understand(message,state,text):
         await message.answer(FAQ['offs'][1],reply_markup=menu_buttons());return True
     if looks_like_wish(text):
         await offer_wish(message,state);return True
+    research.track(message.from_user.id,'message_not_understood',step='unclear')
     await message.answer('Не понял сообщение. Если это чаевые или расход, пришли сумму, например <i>чай 1500</i>. '
                          'Или выбери, чем помочь:',reply_markup=menu_buttons())
     return True

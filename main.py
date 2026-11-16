@@ -14,6 +14,7 @@ from aiogram.types import MenuButtonWebApp, WebAppInfo
 from aiohttp import web
 from aiogram.webhook.aiohttp_server import setup_application
 from dotenv import load_dotenv
+from httpx import NetworkError, RemoteProtocolError, TimeoutException
 
 import admin
 import handlers
@@ -70,19 +71,35 @@ def build_dispatcher() -> Dispatcher:
 
 async def db_ready():
     import db
+    from diagnostics import failure
+
+    # A single retry budget for startup reads, before periodic jobs start using the database.
+    retry_delays = iter((1, 2, 4, 8))
     try:
         for table,column in [('telegram_inbox','update_id'),('entries','revision'),
                              ('research_subjects','first_started_at'),('money_source_receipts','source_key'),
                              ('telegram_actor_state','actor_key')]:
-            await db._execute(db.supabase.table(table).select(column).limit(1))
+            while True:
+                try:
+                    await db._execute(db.supabase.table(table).select(column).limit(1), retries=0)
+                    break
+                except (NetworkError, RemoteProtocolError, TimeoutException):
+                    delay = next(retry_delays, None)
+                    if delay is None:
+                        raise
+                    logging.warning('Проверка Supabase при запуске прервалась. Повтор через %s с.', delay)
+                    await asyncio.sleep(delay)
     except Exception as error:
-        from diagnostics import failure
-        failure(error,area='startup',stage='migrations')
-        raise RuntimeError('Примените миграции v24–v26 перед запуском этой версии.') from None
+        code, _ = failure(error, area='startup', stage='db_ready')
+        message = {
+            'schema': 'Примените миграции v24–v26 перед запуском этой версии.',
+            'network': 'Не удалось подключиться к Supabase при запуске.',
+            'permissions': 'Не хватает прав для проверки базы Supabase при запуске.',
+        }.get(code, 'Не удалось проверить готовность Supabase при запуске.')
+        raise RuntimeError(message) from None
 
 
 async def run_polling(bot: Bot, dp: Dispatcher):
-    await db_ready()
     await bot.delete_webhook(drop_pending_updates=False)
     inbox=TelegramInbox(bot,dp)
     await dp.emit_startup(bot=bot)
@@ -104,7 +121,6 @@ async def run_polling(bot: Bot, dp: Dispatcher):
 
 
 async def run_webhook(bot: Bot, dp: Dispatcher):
-    await db_ready()
     me = await bot.get_me()
     app = web.Application(client_max_size=8 * 1024 ** 2)
     app.router.add_get("/", lambda _: web.Response(text="OK"))
@@ -152,18 +168,22 @@ async def main():
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     bot.session.middleware(replay_safe_responses)
     bot.session.middleware(RemoveLegacyKeyboard())
-    dp = build_dispatcher()
+    import research
+    bot.session.middleware(research.blocked_middleware)
 
-    scheduler = setup_scheduler(bot)
-    scheduler.start()
-
+    scheduler = None
     try:
+        await db_ready()
+        dp = build_dispatcher()
+        scheduler = setup_scheduler(bot)
+        scheduler.start()
         if WEBHOOK_HOST:
             await run_webhook(bot, dp)
         else:
             await run_polling(bot, dp)
     finally:
-        scheduler.shutdown(wait=False)
+        if scheduler is not None and scheduler.running:
+            scheduler.shutdown(wait=False)
         await bot.session.close()
 
 

@@ -8,9 +8,13 @@ import os
 from collections import deque
 from datetime import datetime, timezone
 
-EVENTS = frozenset('user_started activity onboarding_started onboarding_step onboarding_skipped onboarding_completed tip_added expense_added first_tip_added first_expense_added first_value_action cabinet_opened cabinet_loaded cabinet_load_error tab_opened shift_closed first_shift_closed shift_planned hours_recorded sales_report_started sales_report_completed sales_report_error vision_started vision_completed vision_failed help_opened problem_reported schedule_import_started schedule_previewed schedule_imported roster_created roster_variant_picked roster_built roster_dates_changed roster_published roster_republished days_off_asked days_off_answered roster_viewed'.split())
+EVENTS = frozenset('user_started activity onboarding_started onboarding_step onboarding_skipped onboarding_completed tip_added expense_added first_tip_added first_expense_added first_value_action cabinet_opened cabinet_loaded cabinet_load_error tab_opened shift_closed first_shift_closed shift_planned hours_recorded sales_report_started sales_report_completed sales_report_error vision_started vision_completed vision_failed help_opened problem_reported schedule_import_started schedule_previewed schedule_imported roster_created roster_variant_picked roster_built roster_dates_changed roster_published roster_republished days_off_asked days_off_answered roster_viewed reminder_sent message_not_understood entry_corrected bot_blocked calendar_synced private_mode_enabled private_mode_disabled sale_saved sales_plan_saved'.split())
 SCREENS = frozenset('chat earnings sales schedule restaurant research history help calendar'.split())
 ERRORS = frozenset('schema permissions backend network timeout auth invalid vision save'.split())
+# Уточнение события без содержимого: шаг знакомства, какое напоминание, почему бот не понял,
+# как исправили запись, каким путём записаны чаевые.
+STEPS = frozenset('''tip expense shift_tomorrow shift_end days_off no_amount ambiguous_amount short_number unclear
+bank_no_amount undo account amount delete message bank'''.split())
 _queue = deque(maxlen=500)
 _worker = None
 _client = None
@@ -22,8 +26,16 @@ def enabled():
 
 def version():
     import re
-    value=os.getenv('APP_VERSION','ux-1')
+    # Render сам передаёт коммит развёртывания: по нему видно, что было до правки и после.
+    value=os.getenv('APP_VERSION') or os.getenv('RENDER_GIT_COMMIT','')[:12] or 'ux-1'
     return value if re.fullmatch(r'[A-Za-z0-9._-]{1,40}',value) else 'ux-1'
+
+
+def daily(uid,name):
+    """Ключ «один раз в рабочий день»: повтор в тот же день база не запишет второй раз."""
+    from uuid import uuid5,NAMESPACE_URL
+    from workday import op_today
+    return str(uuid5(NAMESPACE_URL,f'ux-daily:{name}:{uid}:{op_today()}'))
 
 
 def client():
@@ -42,7 +54,7 @@ async def execute(query):
 
 def payload(uid,event,*,source='bot',screen='chat',step=None,error_code=None,operation=None):
     if (event not in EVENTS or source not in {'bot','miniapp','server'} or
-        screen not in SCREENS or step not in {None,'tip','expense'} or error_code not in ERRORS|{None}):
+        screen not in SCREENS or (step is not None and step not in STEPS) or error_code not in ERRORS|{None}):
         raise ValueError('Invalid telemetry enum')
     # No arbitrary context, metadata, URLs, exceptions or user messages.
     if operation is not None:
@@ -118,6 +130,12 @@ async def pages(table,fields,configure=lambda q:q,max_rows=50000):
         if len(rows)>=max_rows:raise ValueError('research_limit')
 
 
+async def people(since,until):
+    """Роль и даты смен участников (migration_v40). Telegram ID из базы не выходит."""
+    return (await execute(client().rpc('research_people',
+                                       {'since':since.isoformat(),'until':until.isoformat()}))).data or []
+
+
 async def export(uid):
     s=await subject(uid)
     if not s:return None
@@ -127,3 +145,15 @@ async def export(uid):
                          lambda q:q.eq('subject_id',s['id']).order('created_at').order('id'))
     return {'onboarding_version':s['onboarding_version'],'onboarding_state':s['onboarding_state'],
             'events':events,'feedback':feedback}
+
+
+async def blocked_middleware(make_request,bot,method):
+    """Человек заблокировал бота: Telegram отказывает в отправке. Отмечаем раз в день, без содержимого."""
+    from aiogram.exceptions import TelegramForbiddenError
+    try:
+        return await make_request(bot,method)
+    except TelegramForbiddenError:
+        chat=getattr(method,'chat_id',None)
+        if isinstance(chat,int) and chat>0:
+            track(chat,'bot_blocked',source='server',operation=daily(chat,'bot_blocked'))
+        raise

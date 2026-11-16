@@ -67,6 +67,8 @@ async def handle(request):
             price = number(body.get("glass_price"))
             await db.get_or_create_user(user_id)
             await sales_db.save_settings(user_id, month, targets, price)
+            import research
+            research.track(user_id, 'sales_plan_saved', source='miniapp', screen='sales')
         elif action == "save":
             return web.json_response({"error": "Новые продажи записываются в чате бота"}, status=405)
         elif action == "edit":

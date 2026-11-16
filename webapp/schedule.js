@@ -18,8 +18,11 @@
   const scroll=G.scroller(grid,sc,{sheet});
   const phone=matchMedia('(max-width: 700px)');
   async function api(body={}){
-    const r=await fetch('/api/schedule/view',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({...body,initData:tg?.initData||''}),signal:AbortSignal.timeout(20000)});
+    let r;
+    // Сеть не ответила: отмечаем для исследования только тип сбоя, без содержимого.
+    try{r=await fetch('/api/schedule/view',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({...body,initData:tg?.initData||''}),signal:AbortSignal.timeout(20000)});}
+    catch(e){window.uxEvent?.('cabinet_load_error','schedule',e.name==='TimeoutError'?'timeout':'network');throw e;}
     let json;try{json=await r.json();}catch(_){throw new Error('Сервер не ответил. Попробуй ещё раз.');}
     if(!r.ok)throw new Error(json.error||'График пока недоступен.');
     return json;

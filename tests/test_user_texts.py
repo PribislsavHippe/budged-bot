@@ -83,5 +83,79 @@ class NeverMoney(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn('✓', reply, text)
 
 
+class LoneShortNumbers(unittest.IsolatedAsyncioTestCase):
+    """Одно короткое число без слов не деньги (решение владельца 13.11.2026); суммы от 100 и с пометкой — деньги."""
+    NOT_MONEY = ('0', '1', '12', '23', '28', '31', '32', '99', ' 12 ')
+    MONEY = (('100', 100), ('300', 300), ('2000', 2000), ('чай 20', 20), ('такси 20', -20), ('кофе 12', -12))
+
+    def setUp(self):
+        with patch.dict(os.environ, {'SUPABASE_URL': 'https://example.invalid', 'SUPABASE_KEY': 'test'}), patch('supabase.create_client'):
+            import handlers, research
+        self.handlers, self.research = handlers, research
+
+    async def send(self, text, user):
+        handlers = self.handlers
+        message = NS(text=text, from_user=NS(id=5, first_name='Test'), forward_origin=None, answer=AsyncMock(),
+                     chat=NS(id=5), bot=NS(id=1, delete_message=AsyncMock()), message_id=100)
+        entry = {'id': 10, 'kind': 'income', 'account': 'cash', 'signed_amount': 1, 'category': 'Чаевые', 'note': None}
+        state = NS(clear=AsyncMock(), update_data=AsyncMock(), get_data=AsyncMock(return_value={}))
+        with patch.object(handlers.db, 'get_or_create_user', new=AsyncMock(return_value=user)), \
+             patch.object(handlers.db, 'get_recent_entries', new=AsyncMock(return_value=[])), \
+             patch.object(handlers.db, 'add_entries', new=AsyncMock(return_value=[entry])) as entries, \
+             patch.object(handlers.db, 'add_entry', new=AsyncMock(return_value=entry)) as single, \
+             patch.object(handlers.db, 'add_shifts', new=AsyncMock()) as shifts, \
+             patch.object(handlers.db, 'money_source_seen', new=AsyncMock(return_value=False)), \
+             patch.object(handlers, '_send_private_record', new=AsyncMock(return_value=True)) as private, \
+             patch.object(handlers, 'today_block', new=AsyncMock(return_value='Итог')), \
+             patch.object(self.research, 'record', new=AsyncMock(return_value={})):
+            await handlers.handle_text(message, state)
+        return message, entries, single, shifts, private
+
+    async def test_short_numbers_are_never_recorded_in_either_money_mode(self):
+        for private_mode in (False, True):
+            user = {'id': 5, 'onboarded': True, 'private_money_mode': private_mode}
+            for text in self.NOT_MONEY:
+                with self.subTest(text=text, private=private_mode):
+                    message, entries, single, shifts, private = await self.send(text, user)
+                    entries.assert_not_awaited()
+                    single.assert_not_awaited()
+                    shifts.assert_not_awaited()
+                    private.assert_not_awaited()
+                    message.answer.assert_awaited_once_with(self.handlers.SHORT_NUMBER_TEXT)
+                    reply = message.answer.await_args.args[0]
+                    for forbidden in ('✓', 'Не нашёл сумму', 'сумма неоднозначна', 'Записал'):
+                        self.assertNotIn(forbidden, reply)
+
+    async def test_bigger_and_marked_amounts_are_still_recorded(self):
+        user = {'id': 5, 'onboarded': True, 'private_money_mode': False}
+        for text, signed in self.MONEY:
+            with self.subTest(text=text):
+                message, entries, *_ = await self.send(text, user)
+                entries.assert_awaited_once()
+                self.assertEqual(entries.await_args.args[1][0]['signed_amount'], signed)
+
+    async def test_amount_in_an_open_expense_form_is_still_an_expense(self):
+        # Открытый вопрос «Сколько ушло на…?» сам задаёт контекст суммы: «20» здесь — расход.
+        handlers = self.handlers
+        message = NS(text='20', from_user=NS(id=5), chat=NS(id=5), message_id=100, answer=AsyncMock())
+        state = NS(clear=AsyncMock(), get_data=AsyncMock(return_value={'shift_category': 'Кофе'}))
+        entry = {'id': 10, 'kind': 'expense', 'account': 'cash', 'signed_amount': -20, 'category': 'Кофе', 'note': None}
+        with patch.object(handlers.db, 'get_or_create_user', new=AsyncMock(return_value={'id': 5, 'onboarded': True})), \
+             patch.object(handlers.db, 'add_entry', new=AsyncMock(return_value=entry)) as single, \
+             patch('ux_chat.value_saved', new=AsyncMock()):
+            await handlers.shift_spend_amount(message, state)
+        self.assertEqual(single.await_args.args[:3], (5, 'expense', handlers.db.CASH))
+        self.assertEqual(single.await_args.args[3], -20)
+        state.clear.assert_awaited()
+
+    async def test_bigger_and_marked_amounts_still_reach_the_private_journal(self):
+        user = {'id': 5, 'onboarded': True, 'private_money_mode': True}
+        for text, signed in self.MONEY:
+            with self.subTest(text=text):
+                message, entries, single, shifts, private = await self.send(text, user)
+                entries.assert_not_awaited()
+                self.assertEqual(private.await_args.args[1]['signed_amount'], signed)
+
+
 if __name__ == '__main__':
     unittest.main()

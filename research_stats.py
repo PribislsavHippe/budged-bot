@@ -4,7 +4,8 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 TZ=ZoneInfo('Europe/Moscow')
-ACTIVE={'activity','user_started','cabinet_opened','cabinet_loaded','tab_opened','help_opened','tip_added','expense_added',
+# Автоматическая загрузка данных не действие человека: мини-приложение обновляется само раз в минуту.
+ACTIVE={'activity','user_started','cabinet_opened','tab_opened','help_opened','tip_added','expense_added',
         'shift_planned','shift_closed','hours_recorded','sales_report_started','vision_started','problem_reported',
         'schedule_import_started','schedule_previewed','schedule_imported','days_off_answered','roster_viewed'}
 ERROR_EVENTS={'cabinet_load_error','sales_report_error','vision_failed'}
@@ -154,7 +155,37 @@ def summarize(subjects,events,days=30,now=None,ux_version=None):
             'users':users}
 
 
-def analysis_export(subjects, events, days=30, now=None, ux_version=None):
+def habits(people, shifts, worked, events, start, today):
+    """Привычка записывать по сменам человека: только количества, без дат.
+
+    people: {subject_id: {'label', 'role'}}; shifts и worked: [(subject_id, 'YYYY-MM-DD')];
+    events — исследовательские события. Смена в периоде — прошедшая дата графика до сегодняшней.
+    Чаевые засчитываются смене, если записаны в её рабочий день или на следующий."""
+    from workday import op_date
+    lo, hi = start.isoformat(), today.isoformat()
+    planned = defaultdict(set)
+    for sid, day in shifts:
+        if sid in people and lo <= day <= hi:
+            planned[sid].add(day)
+    hours = defaultdict(set)
+    for sid, day in worked:
+        hours[sid].add(day)
+    tips = defaultdict(set)
+    for e in events:
+        if e['event'] == 'tip_added' and e['subject_id'] in people:
+            tips[e['subject_id']].add(op_date(dt(e['occurred_at'])))
+    rows = []
+    for sid, person in people.items():
+        days = planned[sid]
+        tipped = {d for d in days if {datetime.fromisoformat(d).date(),
+                                       datetime.fromisoformat(d).date() + timedelta(days=1)} & tips[sid]}
+        rows.append({'person': person['label'], 'role': person['role'], 'shifts': len(days),
+                     'shifts_with_hours': len(days & hours[sid]), 'shifts_with_tips': len(tipped)})
+    rows.sort(key=lambda r: r['person'])
+    return rows
+
+
+def analysis_export(subjects, events, days=30, now=None, ux_version=None, habit_rows=None):
     """Share dashboard inputs without database IDs, money, or free text."""
     now=now or datetime.now(timezone.utc)
     summary=summarize(subjects,events,days,now,ux_version)
@@ -171,7 +202,7 @@ def analysis_export(subjects, events, days=30, now=None, ux_version=None):
                      'event':event['event'],'occurred_at':event['occurred_at'],
                      'source':event.get('source'),'screen':event.get('screen'),
                      'step':event.get('step'),'error_code':event.get('error_code'),
-                     'onboarding_version':event['onboarding_version']})
+                     'onboarding_version':event['onboarding_version'],'app_version':event.get('app_version')})
     rows.sort(key=lambda event:(event['occurred_at'],event['person'],event['event']))
     breakdown=defaultdict(lambda:{'events':0,'people':set()})
     for row in rows:
@@ -181,9 +212,11 @@ def analysis_export(subjects, events, days=30, now=None, ux_version=None):
     summary['users']=[{key:value for key,value in user.items() if key!='id'} for user in summary['users']]
     for task in summary['tasks'].values():
         task['recent']=[{key:value for key,value in user.items() if key!='id'} for user in task['recent']]
-    return {'format':'ux-research-analysis-v1','generated_at':now.isoformat(),
+    return {'format':'ux-research-analysis-v2','generated_at':now.isoformat(),
             'scope':{'days':days,'version':ux_version,'timezone':'Europe/Moscow',
                      'profiles':len(labels)},'summary':summary,
+            # None: подсчёт по сменам недоступен (нет migration_v40 или сбой), а не «смен нет».
+            'people':habit_rows,
             'event_breakdown':[{'event':key[0],'source':key[1],'screen':key[2],
                                 'events':value['events'],'people':len(value['people'])}
                                for key,value in sorted(breakdown.items(),key=lambda item:(item[0][0],str(item[0][1]),str(item[0][2])))],

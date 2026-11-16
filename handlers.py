@@ -79,6 +79,20 @@ async def today_block(user_id: int) -> str:
     return today_line(income, spent)
 
 
+def _not_understood(message, reason: str) -> None:
+    """Исследование: бот не понял сообщение. Только причина из короткого списка, без текста."""
+    user=getattr(message,'from_user',None)
+    if user is not None:
+        import research
+        research.track(user.id,'message_not_understood',step=reason)
+
+
+def _corrected(user_id: int, how: str, screen: str = 'chat', source: str = 'bot') -> None:
+    """Исследование: запись отменили или исправили. Без суммы и содержимого записи."""
+    import research
+    research.track(user_id,'entry_corrected',step=how,screen=screen,source=source)
+
+
 def hide_old_menu() -> ReplyKeyboardRemove:
     return ReplyKeyboardRemove()
 
@@ -235,6 +249,7 @@ async def cmd_undo(message: Message,user_id: int | None=None,expected_id: str | 
         await message.answer('Последняя запись уже изменилась. Открой историю ещё раз.')
         return
     await db.delete_entry(entry["id"], user_id)
+    _corrected(user_id,'undo')
     await message.answer(
         "Отменил:\n" + entry_line(entry) + "\n\n" + await today_block(user_id)
     )
@@ -497,6 +512,7 @@ async def cb_undo_batch(callback: CallbackQuery):
     if not deleted:
         await callback.answer('Уже отменено',show_alert=True)
         return
+    _corrected(callback.from_user.id,'undo')
     await callback.message.edit_text('Отменил записи из этого сообщения.\n\n'+await today_block(callback.from_user.id))
     await callback.answer()
 
@@ -510,6 +526,7 @@ async def cb_undo(callback: CallbackQuery):
     if not deleted:
         await callback.answer("Уже отменено", show_alert=True)
         return
+    _corrected(callback.from_user.id,'undo')
     await callback.message.edit_text("↩️ Отменено.\n\n" + await today_block(callback.from_user.id))
     await callback.answer()
 
@@ -538,6 +555,7 @@ async def cb_toggle_account(callback: CallbackQuery):
         return
     if entry['account']!=other:
         entry = await db.update_entry_account(entry_id, callback.from_user.id, other)
+        _corrected(callback.from_user.id,'account')
     await callback.message.edit_text(
         entry_line(entry) + "\n\n" + await today_block(callback.from_user.id),
         reply_markup=undo_kb([entry_id], toggle_entry=entry),
@@ -652,6 +670,7 @@ async def shift_spend_amount(message: Message, state: FSMContext):
     try:amount = p.extract_amount(message.text or "")
     except p.AmountFormatError:amount=None
     if amount is None:
+        _not_understood(message,'no_amount')
         await message.answer("Напиши сумму числом, например <i>350</i>, или нажми «Отмена».",reply_markup=shift_spend_cancel_kb())
         return
     data = await state.get_data()
@@ -819,6 +838,7 @@ async def cb_private_account(callback: CallbackQuery):
         failure(error,area='private_money',stage='account_change')
         await callback.answer('Не получилось изменить способ получения. Попробуй ещё раз.',show_alert=True)
         return
+    _corrected(callback.from_user.id,'account')
     label='наличные' if account==db.CASH else 'безналичные'
     updated=re.sub(r'· (наличные|безналичные)',f'· {label}',callback.message.text or '',count=1)
     other=db.CASH if account==db.CARD else db.CARD
@@ -859,6 +879,7 @@ async def cb_private_undo(callback: CallbackQuery):
         failure(error,area='private_money',stage='undo')
         await callback.answer('Не получил подтверждение отмены. Проверь запись в «Статистике» и попробуй ещё раз.',show_alert=True)
         return
+    _corrected(callback.from_user.id,'undo')
     summary=(callback.message.text or '').split(' В «Статистике»',1)[0]
     summary=re.sub(r'^Записал ', 'Отменил ', summary, count=1)
     if not summary.startswith('Отменил '):summary='Запись отменена.'
@@ -947,6 +968,7 @@ async def save_forwarded_tips(items):
     first=items[0][0]
     missing=sum(notif is None for _,notif in items)
     if missing:
+        _not_understood(first,'bank_no_amount')
         warning=('В пересланном сообщении не нашёл сумму чаевых. Ничего не записал. '
                  'Запиши вручную: <i>чай 500</i>.' if len(items)==1 else
                  f'Не нашёл сумму чаевых в {missing} из {len(items)} пересланных сообщений. '
@@ -977,6 +999,11 @@ async def flush_forwarded_tips_on_shutdown():
     await asyncio.gather(*(_flush_forwarded_tips(key) for key in keys))
 
 
+# ЧЕРНОВИК: текст ждёт согласования с владельцем (AGENTS.md, 13.10.2026) до публикации.
+SHORT_NUMBER_TEXT = ('Не записал: одного короткого числа мало, чтобы понять, что это. '
+                     'Если это чаевые, напиши, например, <i>чай 500</i>.')
+
+
 @router.message(F.text)
 async def handle_text(message: Message, state: FSMContext):
     text = message.text or ""
@@ -1005,6 +1032,7 @@ async def handle_text(message: Message, state: FSMContext):
         if notif is not None:
             await _save_bank_tips(message, notif)
         else:
+            _not_understood(message,'bank_no_amount')
             await message.answer('Не нашёл понятную сумму чаевых в уведомлении. Ничего не записал. Можно написать «чай 500».')
         return
 
@@ -1015,6 +1043,14 @@ async def handle_text(message: Message, state: FSMContext):
         from ux_chat import offer_wish
         await offer_wish(message,state,lead='Похоже на просьбу о выходных, поэтому деньгами не записываю. '
                          'Выходные в график записывают сотрудники ресторана, которых подтвердил менеджер.')
+        return
+
+    # Одно короткое число («12») не становится деньгами в обоих режимах хранения. Сотруднику ресторана его
+    # обычно забирает days_off_chat как день выходного; сюда оно доходит, если он не сотрудник, пожелания
+    # недоступны или число не день месяца («0», «32–99»). Черновой текст — до согласования с владельцем.
+    if days_off.lone_short_number(text) is not None:
+        _not_understood(message,'short_number')
+        await message.answer(SHORT_NUMBER_TEXT)
         return
 
     # Sales use their own journal; malformed sales must never become expenses.
@@ -1045,9 +1081,11 @@ async def handle_text(message: Message, state: FSMContext):
             if saved.get("voided"):
                 await message.answer("Эта продажа уже отменена.")
                 return
+            research.track(message.from_user.id,'sale_saved',screen='sales',operation=oid)
             await message.answer(f"✓ {names[sale['kind']]}: {fmt(sale['value'])} {unit} · смена {human_date(sale['work_date'])}",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Отменить", callback_data=f"saleundo:{oid}")]]))
         else:
+            if sale['action']=='settings':research.track(message.from_user.id,'sales_plan_saved',screen='sales',operation=oid)
             await message.answer("✓ " + ("Записал отчёт по " + human_date(sale["cutoff"]) + " включительно." if sale["action"] == "report" else "План продаж обновлён на " + human_month(sale["month"]) + ".") + " Исправления — в разделе «План».")
         return
 
@@ -1103,6 +1141,7 @@ async def handle_text(message: Message, state: FSMContext):
             return
         if looks_like_wish(text):
             await offer_wish(message,state);return
+        _not_understood(message,'ambiguous_amount')
         await message.answer('Не стал записывать: сумма неоднозначна. '
                              'Напиши положительную сумму с копейками, например «чай 500,50».')
         return
@@ -1112,6 +1151,7 @@ async def handle_text(message: Message, state: FSMContext):
             return
         if looks_like_wish(text):
             await offer_wish(message,state);return
+        _not_understood(message,'no_amount')
         await message.answer(
             "Не нашёл сумму. Примеры:\n"
             "<i>чай 500</i> · <i>смена 2500</i>\n"

@@ -92,6 +92,18 @@ def parse(text):
     return {'numbers': sorted(set(numbers)), 'months': months}
 
 
+_LONE_SHORT = re.compile(r'[0-9]{1,2}')
+
+
+def lone_short_number(text):
+    """Одно число из одной-двух цифр и больше ничего: «12». Иначе None.
+
+    Решение владельца 13.11.2026: такое сообщение — не деньги. «1–31» — кандидат на день месяца, остальное
+    («0», «32–99») бот переспрашивает. С «100» и больше, а также «чай 20» и «такси 20» — обычные записи."""
+    t = (text or '').strip()
+    return int(t) if _LONE_SHORT.fullmatch(t) else None
+
+
 def resolve(parsed, start, end, today, limit):
     """Превращает числа в даты периода. Возвращает (даты, None) или (None, что ответить сотруднику)."""
     if parsed.get('none'):
@@ -234,6 +246,8 @@ async def ask(bot, restaurant_id, start, end, links, answered):
         limit = roster.off_limit((end - start).days + 1, await is_student(restaurant_id, row['id']))
         try:
             await asyncio.wait_for(bot.send_message(row['user_id'], prompt_text(start, end, limit, today)), timeout=5)
+            import research
+            research.track(row['user_id'], 'reminder_sent', source='server', screen='schedule', step='days_off')
             wait = {'link_id': row['id'], 'restaurant_id': restaurant_id, 'start_date': start.isoformat(),
                     'end_date': end.isoformat(), 'days': [], 'answered': False, 'waiting': True}
             await db._execute(db.supabase.table('day_off_requests')

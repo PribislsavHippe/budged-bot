@@ -834,6 +834,8 @@ async def notify(bot, publisher, old, new, start, end, restaurant_id):
 def _failure(response, uid, error, stage):
     from diagnostics import failure
     code, reference = failure(error, area='roster', stage=stage)
+    if uid:
+        _track(uid, 'cabinet_load_error', error_code='backend')
     message = ('Не удалось подтвердить отправку.' if stage == 'check_offs'
                else 'Не получилось открыть график. Попробуй ещё раз чуть позже.')
     return response({'error': message,

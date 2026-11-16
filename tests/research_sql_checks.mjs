@@ -46,8 +46,50 @@ await db.query(`SELECT record_ux_event($1,'roster_viewed','server','schedule',NU
 q=await db.query(`SELECT count(*)::int n FROM analytics_events e JOIN research_subjects s ON s.id=e.subject_id WHERE s.user_id=2 AND e.event='roster_viewed' AND e.screen='schedule'`);
 assert.equal(q.rows[0].n,2); // одна запись без ключа и одна с ключом дня: повтор того же дня не дублируется
 await db.exec('RESET ROLE');
+// v40: напоминания, «не понял», исправления, блокировка и подсчёт смен без Telegram ID наружу.
+// Таблицы смен и роль — в том виде, как их создают v31 и v12/schema.sql.
+await db.exec(`ALTER TABLE employee_links ADD COLUMN role TEXT NOT NULL DEFAULT 'staff' CHECK(role IN ('staff','manager','director'));
+CREATE TABLE shifts(id BIGSERIAL PRIMARY KEY,user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,shift_date DATE NOT NULL,UNIQUE(user_id,shift_date));
+CREATE TABLE worked_shifts(user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,shift_date DATE NOT NULL,PRIMARY KEY(user_id,shift_date));
+REVOKE ALL ON shifts,worked_shifts FROM anon,authenticated;GRANT ALL ON shifts,worked_shifts TO service_role;`);
+await db.exec(await fs.readFile(new URL('../migration_v40.sql',import.meta.url),'utf8'));
+await db.exec('SET ROLE service_role');
+const step=async(kind,detail)=>db.query(`SELECT record_ux_event($1,$2,'server','chat',$3,NULL,'test',NULL)`,[2,kind,detail]);
+for(const [kind,detail] of [['reminder_sent','shift_tomorrow'],['reminder_sent','shift_end'],['reminder_sent','days_off'],
+  ['message_not_understood','no_amount'],['message_not_understood','ambiguous_amount'],['message_not_understood','short_number'],
+  ['message_not_understood','unclear'],['message_not_understood','bank_no_amount'],['entry_corrected','undo'],
+  ['entry_corrected','account'],['entry_corrected','amount'],['entry_corrected','delete'],['tip_added','bank'],
+  ['tip_added','message'],['bot_blocked',null],['calendar_synced',null],['private_mode_enabled',null],
+  ['private_mode_disabled',null],['sale_saved',null],['sales_plan_saved',null],['onboarding_step','tip']])await step(kind,detail);
+await assert.rejects(step('reminder_sent','23:30'),/check constraint/);
+await assert.rejects(step('message_not_understood','чай 500'),/check constraint/);
+await db.exec('RESET ROLE');
+await db.exec(`INSERT INTO users VALUES(5),(6),(7);
+INSERT INTO restaurants(id,name,owner_id) VALUES('00000000-0000-0000-0000-0000000000a1','Ресторан',5);
+INSERT INTO employee_links(id,restaurant_id,user_id,report_name,name_key,status,role) VALUES
+ ('00000000-0000-0000-0000-0000000000b1','00000000-0000-0000-0000-0000000000a1',6,'Аня','аня','approved','manager'),
+ ('00000000-0000-0000-0000-0000000000b2','00000000-0000-0000-0000-0000000000a1',7,'Боря','боря','pending','staff');
+INSERT INTO shifts(user_id,shift_date) VALUES(6,'2026-11-10'),(6,'2026-11-12'),(6,'2026-10-01');
+INSERT INTO worked_shifts(user_id,shift_date) VALUES(6,'2026-11-12');`);
+await db.exec('SET ROLE service_role');
+q=await db.query(`SELECT * FROM research_people('2026-11-01','2026-11-15')`);
+await db.exec('RESET ROLE');
+const people=Object.fromEntries(q.rows.map(r=>[r.subject_id,r]));
+const sid=async uid=>(await db.query('SELECT id FROM research_subjects WHERE user_id=$1',[uid])).rows[0].id;
+assert.equal(people[await sid(5)].role,'owner');
+assert.equal(people[await sid(6)].role,'manager');
+assert.equal(people[await sid(7)].role,'pending');
+assert.equal(people[await sid(3)].role,'none');
+assert.equal(people[await sid(6)].planned.length,2);   // октябрьская смена вне периода
+assert.equal(people[await sid(6)].worked.length,1);
+assert.ok(!Object.keys(q.rows[0]).includes('user_id'));
+for(const role of ['anon','authenticated']){
+  await db.exec('SET ROLE '+role);
+  await assert.rejects(db.query(`SELECT * FROM research_people('2026-11-01','2026-11-15')`),/permission denied/);
+  await db.exec('RESET ROLE');
+}
 await db.exec(`INSERT INTO feedback(subject_id,category,body,screen,app_version) SELECT id,'idea','Test only','help','test' FROM research_subjects WHERE user_id=2`);
 await db.exec('DELETE FROM users WHERE id=2');
 q=await db.query('SELECT count(*)::int n FROM feedback');assert.equal(q.rows[0].n,0);
-console.log('Research SQL checks passed: v18, v34 schedule steps, baseline, milestones, dedupe, skip, service role, RLS, cascade deletion.');
+console.log('Research SQL checks passed: v18, v34 schedule steps, v40 habit events and research_people, baseline, milestones, dedupe, skip, service role, RLS, cascade deletion.');
 await db.close();

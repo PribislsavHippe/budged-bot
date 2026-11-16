@@ -79,13 +79,18 @@ class ResearchMetricsTests(unittest.TestCase):
                 event('1','hours_recorded',20,source='bot'),
                 event('1','cabinet_loaded',28,screen='earnings')]
         user=summarize(self.subjects(),events,now=NOW)['users'][0]
-        self.assertEqual((user['active_days'],user['shift_saves'],user['tip_saves'],user['hours_saves']),(3,1,2,1))
+        # 28-го была только автоматическая загрузка данных: это не день с действием человека.
+        self.assertEqual((user['active_days'],user['shift_saves'],user['tip_saves'],user['hours_saves']),(2,1,2,1))
 
-    def test_server_confirmed_cabinet_load_counts_as_activity(self):
+    def test_automatic_cabinet_load_is_not_a_return(self):
+        # Мини-приложение само обновляет данные раз в минуту; открытое приложение не «возвращение».
         d=summarize(self.subjects(),[event('1','cabinet_loaded',28,screen='earnings')],now=NOW)
-        self.assertEqual(d['active_today'],1)
-        self.assertEqual(d['active_users'],1)
+        self.assertEqual(d['active_today'],0)
+        self.assertEqual(d['active_users'],0)
+        self.assertEqual(d['event_count'],1)
         self.assertEqual(len(d['daily_activity']),30)
+        d=summarize(self.subjects(),[event('1','cabinet_opened',28,screen='earnings')],now=NOW)
+        self.assertEqual((d['active_today'],d['active_users']),(1,1))
 
     def test_task_metrics_count_people_and_repeat_tips_on_different_days(self):
         events=[event('1','tip_added',19,source='bot'),event('1','tip_added',19,11,source='bot'),
@@ -154,10 +159,60 @@ class ResearchMetricsTests(unittest.TestCase):
         data=analysis_export(subjects,events,days=7,now=NOW)
         self.assertEqual(data['summary']['event_count'],3)
         self.assertEqual(len(data['events']),3)
-        self.assertEqual(data['summary']['active_users'],2)
+        self.assertEqual(data['summary']['active_users'],1)
         loaded=next(row for row in data['event_breakdown'] if row['event']=='cabinet_loaded')
         self.assertEqual((loaded['events'],loaded['people']),(2,1))
         self.assertEqual(data['events'][0]['person'],'U-0001')
+        self.assertIsNone(data['people'])  # подсчёт по сменам не передан — не путать с «смен нет»
         encoded=str(data)
         for secret in ('private-event','private','amount','body','subject_id',"'id': '1'"):
             self.assertNotIn(secret,encoded)
+
+
+class HabitTests(unittest.TestCase):
+    def test_tips_and_hours_are_counted_per_planned_shift_without_dates(self):
+        from datetime import date
+        from research_stats import habits
+        people={'1':{'label':'U-0001','role':'staff'},'2':{'label':'U-0002','role':'manager'}}
+        shifts=[('1','2026-09-20'),('1','2026-09-22'),('1','2026-09-24'),('1','2026-09-10'),
+                ('2','2026-09-21'),('9','2026-09-21')]
+        worked=[('1','2026-09-20'),('1','2026-09-23')]
+        events=[event('1','tip_added',20,19),       # 22:00 МСК в день смены
+                event('1','tip_added',23,1),        # 04:00 МСК 23-го — ещё рабочий день 22-го
+                event('1','tip_added',26),          # не день смены и не следующий
+                event('1','cabinet_loaded',24),
+                event('9','tip_added',21)]          # не участник выгрузки
+        rows=habits(people,shifts,worked,events,date(2026,9,15),date(2026,9,28))
+        self.assertEqual(rows,[
+            {'person':'U-0001','role':'staff','shifts':3,'shifts_with_hours':1,'shifts_with_tips':2},
+            {'person':'U-0002','role':'manager','shifts':1,'shifts_with_hours':0,'shifts_with_tips':0}])
+        self.assertNotIn('2026-09',str(rows))
+
+    def test_export_rows_carry_the_release_and_the_habit_table(self):
+        rows=[{'person':'U-0001','role':'staff','shifts':2,'shifts_with_hours':1,'shifts_with_tips':1}]
+        data=analysis_export([dict(id='1',label=1,cohort='new',onboarding_version=1)],
+                             [event('1','tip_added',28,app_version='abc123',step='bank',onboarding_version=1)],days=7,now=NOW,habit_rows=rows)
+        self.assertEqual(data['format'],'ux-research-analysis-v2')
+        self.assertEqual(data['people'],rows)
+        self.assertEqual((data['events'][0]['app_version'],data['events'][0]['step']),('abc123','bank'))
+
+
+class BlockedBotTests(unittest.IsolatedAsyncioTestCase):
+    async def test_refused_private_message_is_marked_once_a_day_and_still_raises(self):
+        from unittest.mock import AsyncMock, patch
+        from types import SimpleNamespace as NS
+        from aiogram.exceptions import TelegramForbiddenError
+        import research
+        method = NS(chat_id=7)
+        refused = AsyncMock(side_effect=TelegramForbiddenError(method=method, message='Forbidden: bot was blocked by the user'))
+        with patch.object(research, 'track') as track:
+            for _ in range(2):
+                with self.assertRaises(TelegramForbiddenError):
+                    await research.blocked_middleware(refused, None, method)
+            await research.blocked_middleware(AsyncMock(return_value=True), None, method)
+            group = NS(chat_id=-100500)
+            with self.assertRaises(TelegramForbiddenError):
+                await research.blocked_middleware(AsyncMock(side_effect=TelegramForbiddenError(method=group, message='Forbidden')), None, group)
+        self.assertEqual([c.args for c in track.call_args_list], [(7, 'bot_blocked'), (7, 'bot_blocked')])
+        keys = {c.kwargs['operation'] for c in track.call_args_list}
+        self.assertEqual(len(keys), 1)  # один ключ на день: база запишет только первый отказ

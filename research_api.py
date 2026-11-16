@@ -8,7 +8,7 @@ from aiohttp import web
 from aiogram.types import BufferedInputFile
 import json
 import research
-from research_stats import summarize,analysis_export
+from research_stats import summarize,analysis_export,habits
 
 CLIENT_EVENTS={'cabinet_opened','cabinet_loaded','cabinet_load_error','tab_opened','help_opened'}
 PRIVATE_MONEY_EVENTS={'tip_added','expense_added'}
@@ -21,6 +21,24 @@ def allowed(uid,channel,limit):
     _limits[key]=(count+1,until);_limits.move_to_end(key)
     while len(_limits)>5000:_limits.popitem(last=False)
     return count<limit
+
+async def habit_rows(subjects,events,days):
+    """Роль и смены каждого человека за период: в выгрузку идут только U-NNNN, роль и количества.
+    None — подсчёт недоступен (например, migration_v40 ещё не применена); выгрузка уходит без него."""
+    from workday import op_today
+    today=op_today();start=today-timedelta(days=days-1)
+    try:
+        rows=await research.people(start,today)
+    except Exception as error:
+        from diagnostics import failure
+        failure(error,area='research',stage='people')
+        return None
+    wanted={s['id']:f"U-{s['label']:04d}" for s in subjects}
+    people={r['subject_id']:{'label':wanted[r['subject_id']],'role':r['role']} for r in rows if r['subject_id'] in wanted}
+    shifts=[(r['subject_id'],day) for r in rows for day in r['planned'] or []]
+    worked=[(r['subject_id'],day) for r in rows for day in r['worked'] or []]
+    return habits(people,shifts,worked,events,start,today)
+
 
 async def handle(request):
     from webapp_api import _auth,NO_CACHE
@@ -64,12 +82,14 @@ async def handle(request):
                 q=q.gte('occurred_at',since)
                 if owner_sid:q=q.neq('subject_id',owner_sid)
                 return q.order('occurred_at').order('id')
-            events=await research.pages('analytics_events','id,subject_id,event,occurred_at,onboarding_version,source,screen,step,error_code',
+            events=await research.pages('analytics_events','id,subject_id,event,occurred_at,onboarding_version,app_version,source,screen,step,error_code',
                                         event_query)
             subjects=[s for s in subjects if s['id']!=owner_sid]
             events=[e for e in events if e['subject_id']!=owner_sid]
             if action=='export':
-                data=analysis_export(subjects,events,days,ux_version=version)
+                selected=[s for s in subjects if version is None or s['onboarding_version']==version]
+                data=analysis_export(subjects,events,days,ux_version=version,
+                                     habit_rows=await habit_rows(selected,events,days))
                 filename=f"ux-research-{data['summary']['from']}-{data['summary']['through']}.json"
                 document=BufferedInputFile(json.dumps(data,ensure_ascii=False,separators=(',',':')).encode('utf-8'),filename=filename)
                 await request.app['bot'].send_document(chat_id=uid,document=document,

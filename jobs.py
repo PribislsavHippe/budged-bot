@@ -32,7 +32,7 @@ async def tomorrow_shift_reminder(bot):
             when=f" с {start[:5]}" if start else ''
             import shift_widget
             await send_shift_notice(shift['id'],'start',lambda:shift_widget.send_or_text(
-                bot,uid,f'Завтра у тебя смена{when}. Хорошего вечера!',day,start,shift.get('ends_at')))
+                bot,uid,f'Завтра у тебя смена{when}. Хорошего вечера!',day,start,shift.get('ends_at')),uid=uid)
             await asyncio.sleep(0.04)
         except Exception as error:
             from diagnostics import failure

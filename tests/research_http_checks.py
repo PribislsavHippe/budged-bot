@@ -105,7 +105,8 @@ async def main():
                     await post('/api/research/event',uid=2,expected=400,event='tip_added',screen='earnings')
                     await post('/api/research/event',uid=2,expected=400,event='tip_added',
                                screen='calendar',operation=str(uuid4()))
-                with patch.object(research,'owner_subject_id',new=AsyncMock(return_value=None)),patch.object(research,'pages',new=AsyncMock(return_value=[])) as pages:
+                with patch.object(research,'owner_subject_id',new=AsyncMock(return_value=None)),patch.object(research,'pages',new=AsyncMock(return_value=[])) as pages,\
+                     patch.object(research,'people',new=AsyncMock(side_effect=RuntimeError('no v40'))):
                     d=await post('/api/research/overview',days=7)
                     assert d['new_users']==0 and d['retention']['d1']['rate'] is None
                     assert all('user_id' not in call.args[1] for call in pages.await_args_list)
@@ -114,6 +115,7 @@ async def main():
                     sent=app['bot'].send_document.await_args.kwargs
                     assert sent['chat_id']==1 and sent['document'].filename.startswith('ux-research-')
                     assert b'"event_count":0' in sent['document'].data
+                    assert b'"people":null' in sent['document'].data  # без v40 выгрузка уходит без подсчёта смен
                     assert all('user_id' not in call.args[1] for call in pages.await_args_list)
                     app['bot'].send_document.side_effect=RuntimeError('delivery failed')
                     failed=await post('/api/research/export',days=7,expected=503)
@@ -127,15 +129,19 @@ async def main():
                        'onboarding_version':0,'source':'server','screen':'earnings','step':None,'error_code':None},
                       {'id':2,'subject_id':staff_sid,'event':'tip_added','occurred_at':stamp,
                        'onboarding_version':0,'source':'bot','screen':'chat','step':None,'error_code':None}]
+                people=[{'subject_id':owner_sid,'role':'owner','planned':[],'worked':[]},
+                        {'subject_id':staff_sid,'role':'staff','planned':[datetime.now(timezone.utc).date().isoformat()],'worked':[]}]
                 with patch.object(research,'owner_subject_id',new=AsyncMock(return_value=owner_sid)),\
-                     patch.object(research,'pages',new=AsyncMock(side_effect=[subjects,rows,subjects,rows])):
+                     patch.object(research,'pages',new=AsyncMock(side_effect=[subjects,rows,subjects,rows])),\
+                     patch.object(research,'people',new=AsyncMock(return_value=people)):
                     d=await post('/api/research/overview')
                     assert d['active_users']==1 and d['event_count']==1 and d['users'][0]['label']=='U-0005'
                     assert d['versions']==[0]
                     assert (await post('/api/research/export'))=={'sent':True}
                     document=app['bot'].send_document.await_args.kwargs['document']
                     assert b'U-0005' in document.data and b'U-0004' not in document.data
-                    assert owner_sid.encode() not in document.data
+                    assert owner_sid.encode() not in document.data and staff_sid.encode() not in document.data
+                    assert b'"person":"U-0005","role":"staff"' in document.data and b'"role":"owner"' not in document.data
                     await post('/api/research/journey',expected=404,subject=owner_sid)
                 class JourneyQuery:
                     def __init__(self):self.calls=[]

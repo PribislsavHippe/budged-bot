@@ -74,6 +74,26 @@ async def off_request(message):
     return {'found': found, 'link': link}
 
 
+async def wish_flow(message, state):
+    """Числа из обычной фразы («хочу 17 и 19», «свободен 17») записывает путь пожеланий: в нужный график,
+    с вопросом «обязательные или желательные» и так, чтобы их видел менеджер. Прежняя запись в обход
+    графика молча терялась (ревью 15.11.2026). False — путь пожеланий недоступен, остаётся прежний."""
+    from identity_chat import enabled
+    parsed = roster_wish_chat.parse_wish(message.text, bare=True)
+    if not enabled() or not parsed or not parsed['dates']:
+        return False
+    try:
+        matched = await roster_wish_chat.match_message(message, parsed, days_off.parse(message.text))
+    except Exception as error:
+        from diagnostics import failure
+        failure(error, area='roster_wishes', stage='request_match')
+        matched = {'parsed_wish': parsed, 'unavailable': True}
+    if not matched:
+        return False
+    await roster_wish_chat.write_reply(message, state, **matched)
+    return True
+
+
 @router.message(off_request)
 async def write_request(message, found, link, state):
     from postgrest.exceptions import APIError
@@ -81,6 +101,8 @@ async def write_request(message, found, link, state):
     # Такую фразу нельзя принимать за деньги («нужны выходные 17, 19» — не расход 17 ₽).
     if not link:
         await message.answer('Выходные записывают сотрудники ресторана. Когда менеджер подтвердит тебя, напиши ещё раз.')
+        return
+    if found['dates'] and await wish_flow(message, state):
         return
     saved, problems, buttons = [], [], []
     try:

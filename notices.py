@@ -5,7 +5,10 @@ import db
 from diagnostics import failure
 
 
-async def send_shift_notice(shift_id,kind,send):
+REMINDER_STEPS={'start':'shift_tomorrow','end':'shift_end'}
+
+
+async def send_shift_notice(shift_id,kind,send,uid=None):
     token=str(uuid4())
     claimed=(await db._execute(db.supabase.rpc('claim_shift_notice',{
         'shift':shift_id,'notice':kind,'token':token}))).data
@@ -14,6 +17,9 @@ async def send_shift_notice(shift_id,kind,send):
     try:
         await send()
         delivered=True
+        if uid is not None:
+            import research
+            research.track(uid,'reminder_sent',source='server',screen='calendar',step=REMINDER_STEPS[kind])
         return True
     finally:
         try:

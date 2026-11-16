@@ -475,7 +475,7 @@ async def prompt_work_end(bot):
                 await send_shift_notice(row['id'],'end',lambda:bot.send_message(
                     uid,f'Во сколько заканчиваешь смену {human_date(day)}? '
                         'Ответь на это сообщение временем, например 23:30.',
-                    reply_markup=buttons([('Записать окончание',f'work:close:{day}')])) )
+                    reply_markup=buttons([('Записать окончание',f'work:close:{day}')])),uid=uid)
             except Exception as error:
                 from diagnostics import failure
                 failure(error,area='work_time',stage='notify')
