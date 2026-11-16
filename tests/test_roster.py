@@ -30,8 +30,8 @@ def solved(request, full=False):
 class SlotTests(unittest.TestCase):
     def test_slots_follow_the_owner_rules_for_every_weekday(self):
         expected = {0: [9, 10, 11, 12, 14], 3: [9, 10, 11, 12, 14],
-                    # Пятница: двое в 9, один в 10, один в 11, двое в 13 (решение владельца 16.11.2026).
-                    4: [9, 9, 10, 11, 13, 13], 5: [8, 8, 9, 11, 12, 14], 6: [8, 8, 9, 11, 12, 14]}
+                    # Пятница: двое в 9, один в 10, один в 11, двое в 12 (решение владельца 16.11.2026).
+                    4: [9, 9, 10, 11, 12, 12], 5: [8, 8, 9, 11, 12, 14], 6: [8, 8, 9, 11, 12, 14]}
         for offset, hours in expected.items():
             day = START + timedelta(days=offset)
             count = roster.WEEKEND_COUNT if day.weekday() >= 4 else roster.WEEKDAY_COUNT
@@ -254,7 +254,7 @@ class WishTests(unittest.TestCase):
 
     def test_when_short_closing_is_kept_and_one_person_still_opens(self):
         friday = START + timedelta(days=4)
-        self.assertEqual(sorted(roster.day_slots(friday, 6)[:4]), [9, 11, 13, 13])
+        self.assertEqual(sorted(roster.day_slots(friday, 6)[:4]), [9, 11, 12, 12])
         self.assertEqual(roster.day_slots(friday, 1), [9])
 
     def test_saturday_opener_after_friday_is_reported_as_unavoidable_rise(self):

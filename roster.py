@@ -157,8 +157,8 @@ def day_slots(day, count, holiday=False, closing=CLOSERS, opening=None):
     """Приходы на день, самые важные первыми. Если людей не хватит, пустует середина смены,
     затем второй на открытие: закрывают всегда трое, но кто-то должен и открыть."""
     first = open_hour(day, holiday)
-    # Пятница: закрывают с 11 и двое с 13; выходные и праздники — 11, 12, 14 (решение владельца 16.11.2026).
-    pattern = [11, 13, 13] if day.weekday() == 4 and not holiday else [11, 12, 14]
+    # Пятница: двое в 9, один в 10, один в 11, двое в 12; выходные и праздники — 11, 12, 14 (владелец, 16.11.2026).
+    pattern = [11, 12, 12] if day.weekday() == 4 and not holiday else [11, 12, 14]
     closers = (pattern + [12] * closing)[:closing]
     opening = openers_needed(day, holiday) if opening is None else opening
     important = [first] * min(1, opening) + closers + [first] * max(0, opening - 1)
