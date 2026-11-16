@@ -1000,6 +1000,12 @@ async def flush_forwarded_tips_on_shutdown():
 
 
 # ЧЕРНОВИК: текст ждёт согласования с владельцем (AGENTS.md, 13.10.2026) до публикации.
+# ЧЕРНОВИК: текст ждёт согласования с владельцем до публикации (ревью 15.11.2026, P1 №8).
+def bad_shift_days_text(days):
+    return (f'Не записал: такого дня нет — {", ".join(map(str, days))}. '
+            'Напиши дни смен ещё раз, например <i>работаю 22 24 26</i>.')
+
+
 SHORT_NUMBER_TEXT = ('Не записал: одного короткого числа мало, чтобы понять, что это. '
                      'Если это чаевые, напиши, например, <i>чай 500</i>.')
 
@@ -1116,7 +1122,13 @@ async def handle_text(message: Message, state: FSMContext):
         await message.answer("✓ " + entry_line(entry), reply_markup=undo_kb([entry["id"]]))
         return
 
-    # 3. Расписание смен: «работаю 22 24 26» → ставим смены
+    # 3. Расписание смен: «работаю 22 24 26» → ставим смены. Если среди чисел есть не день
+    # («работаю 31» в ноябре, «работаю 5 500»), ничего не записываем: ни смену, ни деньги.
+    bad_days = p.shift_day_problems(text, op_today())
+    if bad_days:
+        _not_understood(message,'unclear')
+        await message.answer(bad_shift_days_text(bad_days))
+        return
     shift_dates = p.parse_shift_days(text, op_today())
     if shift_dates is not None:
         iso = [d.isoformat() for d in shift_dates]

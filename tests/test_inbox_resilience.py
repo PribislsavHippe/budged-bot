@@ -88,6 +88,28 @@ class InboxTests(unittest.IsolatedAsyncioTestCase):
         claim, finish = calls[0][1], calls[1][1]
         self.assertEqual((finish['batch'], finish['token'], finish['succeeded']), (claim['batch'], claim['token'], False))
 
+    async def test_a_message_set_aside_after_many_attempts_is_logged_without_content(self):
+        # migration_v41: после 10 попыток и 30 минут база откладывает сообщение и сообщает, сколько отложено.
+        inbox = self.inbox()
+        claimed = [{'update_id': 7, 'batch_id': None, 'actor_key': 'a'}]
+
+        def rpc(name, params):
+            return NS(name=name)
+
+        async def execute(query, retries=None):
+            if query.name == 'claim_telegram_batch':
+                return NS(data=claimed)
+            return NS(data=1)
+
+        with patch.object(db, 'supabase', NS(rpc=rpc)), patch.object(db, '_execute', new=execute), \
+                patch.object(inbox, 'unpack', side_effect=RuntimeError('handler keeps failing')), \
+                patch('telegram_inbox.failure') as failure:
+            with self.assertRaises(RuntimeError):
+                await inbox.process([{'update_id': 7, 'batch_id': None}])
+        stages = [call.kwargs['stage'] for call in failure.call_args_list]
+        self.assertEqual(stages, ['abandoned'])
+        self.assertNotIn('handler keeps failing', str(failure.call_args_list))
+
     async def test_a_new_message_wakes_one_idle_worker_not_all(self):
         inbox = self.inbox()
         loop = asyncio.get_running_loop()

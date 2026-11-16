@@ -247,3 +247,46 @@ class OldPhraseDates(unittest.IsolatedAsyncioTestCase):
         message = NS(text='хочу 17 и 19', from_user=NS(id=7))
         with patch('identity_chat.enabled', return_value=False):
             self.assertFalse(await days_off_chat.wish_flow(message, NS()))
+
+
+class PhotoQuestionFirst(unittest.TestCase):
+    def test_answer_to_a_report_date_question_is_not_a_day_off(self):
+        # Ревью 15.11.2026: на «По какой день этот отчёт?» сотрудник отвечает «13» — это дата отчёта, не выходной.
+        modules()
+        with patch.dict(os.environ, {'SUPABASE_URL': 'https://example.invalid', 'SUPABASE_KEY': 'test'}), patch('supabase.create_client'):
+            import days_off_chat
+            import report_photo
+        message = NS(from_user=NS(id=7), text='13')
+        self.assertTrue(days_off_chat.no_photo_question(message))
+        for phase in ('date', 'edit', 'schedule_month'):
+            with self.subTest(phase=phase), patch.dict(report_photo.drafts, {7: NS(phase=phase)}):
+                self.assertFalse(days_off_chat.no_photo_question(message))
+        with patch.dict(report_photo.drafts, {7: NS(phase='review')}):
+            self.assertTrue(days_off_chat.no_photo_question(message))
+        self.assertIn(days_off_chat.no_photo_question,
+                      [f.callback for f in days_off_chat.router.message._handler.filters or []])
+
+
+class OneWeekday(unittest.IsolatedAsyncioTestCase):
+    """«Не могу в пятницу» — ближайшая пятница графика, а не пожелание на все пятницы (ревью 15.11.2026)."""
+
+    def test_singular_weekday_is_the_nearest_day_and_plural_stays_a_habit(self):
+        chat, _ = modules()
+        parsed = chat.parse_wish('не могу в пятницу')
+        self.assertEqual((parsed['weekdays'], parsed['upcoming']), ([], [[4, 'required']]))
+        self.assertEqual(chat.upcoming_dates(parsed['upcoming'], PERIOD, START), {'2026-11-20': 'required'})
+        for text, day in (('по пятницам не могу', 4), ('хочу воскресенья и 2/2', 6), ('выходной каждую пятницу', 4)):
+            with self.subTest(text=text):
+                parsed = chat.parse_wish(text)
+                self.assertEqual((parsed['weekdays'], parsed['upcoming']), ([day], []))
+        late = {**PERIOD, 'start_date': '2026-11-16', 'end_date': '2026-11-18'}
+        self.assertIsNone(chat.upcoming_dates([[4, None]], late, START))  # пятницы в периоде нет
+
+    async def test_nearest_friday_is_saved_as_a_required_day_off_not_a_weekly_wish(self):
+        chat, wishes = modules()
+        message = NS(text='Не могу в пятницу', from_user=NS(id=7), chat=NS(id=7), message_id=42, answer=AsyncMock())
+        with patch.object(chat.days_off, 'roster_today', return_value=START), \
+                patch.object(wishes, 'save', new=AsyncMock(return_value={'status': 'ok', 'days': ['2026-11-20']})) as save:
+            await chat.write_reply(message, NS(update_data=AsyncMock()), chat.parse_wish(message.text), EMPLOYEE, [PERIOD])
+        self.assertEqual(save.await_args.args[4], {'2026-11-20': 'required'})
+        self.assertEqual(save.await_args.kwargs['weekdays'], [])

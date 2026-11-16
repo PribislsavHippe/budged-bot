@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from parser import (
     CARD,
     CASH,
+    classify,
     extract_amount,
     looks_like_bank_tips,
     parse_bank_tips,
@@ -322,6 +323,24 @@ def test_bank_tips_ignore_date_and_time_after_the_heading():
         assert parse_bank_tips(text) == 500.0, text
 
 
+
+def test_standalone_k_is_a_preposition_unless_it_ends_the_amount():
+    # Ревью 15.11.2026: «к» после пробела перед словом — предлог, а не тысячи.
+    for text, amount in (("добавил 500 к зарплате", 500), ("такси 300 к дому", 300), ("кофе 200 к обеду", 200),
+                         ("зп 30 к", 30000), ("30 к нал", 30000), ("зп 30к", 30000), ("30 тыс", 30000)):
+        (tx,) = parse_transactions(text)
+        assert tx["amount"] == amount, text
+
+
+
+def test_categories_match_the_start_of_a_word():
+    # Ревью 15.11.2026: «среда» — не «еда», «клубника» — не «клуб», «выиграл» — не «игр», «бармен» — не «бар».
+    for text in ("среда 2500", "клубника 300", "выиграл 1000", "бармен дал 500", "светлана 200"):
+        assert classify(text) == ("expense", "Прочее"), text
+    for text, category in (("на еду 300", "Еда"), ("в баре 500", "Развлечения"), ("игрушки 700", "Развлечения"),
+                           ("свет 1500", "Жильё"), ("продукты 1500", "Еда")):
+        assert classify(text) == ("expense", category), text
+
 def load_tests(loader, suite, pattern):
     import unittest
     return unittest.TestSuite(unittest.FunctionTestCase(fn) for name,fn in sorted(globals().items())
@@ -340,3 +359,4 @@ if __name__ == "__main__":
                 print(f"FAIL  {name}: {e}")
     print("\nFAILED" if failed else "\nALL PASSED")
     sys.exit(1 if failed else 0)
+

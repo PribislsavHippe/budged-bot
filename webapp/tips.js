@@ -152,7 +152,7 @@
   async function post(path,body){
     const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',signal:AbortSignal.timeout(20000),body:JSON.stringify({initData:tg?.initData||'',...body})});
     const data=await r.json();
-    if(!r.ok)throw new Error(r.status===401?'Открой бота и зайди в приложение ещё раз.':data.error||'Не получилось сохранить.');
+    if(!r.ok)throw Object.assign(new Error(r.status===401?'Открой бота и зайди в приложение ещё раз.':data.error||'Не получилось сохранить.'),{status:r.status});
     return window.PrivateFinance.view(path,body,data);
   }
   function changed(){closeDetail();document.dispatchEvent(new Event('tips-money-changed'));}
@@ -238,7 +238,12 @@
         signed_amount:amount,category:'Чаевые',note:'из миниаппа',work_date:day,created_at:new Date().toISOString()},pendingTip.mode==='server');
       else await post('/api/calendar_edit',{date:day,action:'tip_add',amount,account,operation_id:pendingTip.operation_id});
       pendingTip=null;changed();
-    }catch(error){$('tips-detail-status').textContent=error.message;}
+    }catch(error){
+      // Сервер ответил отказом (4xx) — запись точно не сохранилась, следующая попытка может быть другой.
+      // При обрыве связи или 5xx исход неизвестен: повтор только с той же суммой, чтобы не было дубля.
+      if(error.status>=400&&error.status<500)pendingTip=null;
+      $('tips-detail-status').textContent=error.message;
+    }
     finally{busy=false;}
   }
 

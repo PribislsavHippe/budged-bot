@@ -632,7 +632,8 @@ async def handle(request):
             # Смены попадают в личный календарь, подписку iPhone и напоминания; публикацию это не задерживает.
             import roster_sync
             task = asyncio.create_task(roster_sync.sync_published(row['restaurant_id'], start, end, draft,
-                                                                  row.get('published'), version=saved['revision'], roster_id=row['id']))
+                                                                  row.get('published'), version=saved['revision'], roster_id=row['id'],
+                                                                  published_at=saved.get('published_at')))
             _sending.add(task)
             task.add_done_callback(_sending.discard)
             stage = 'notify'

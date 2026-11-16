@@ -21,6 +21,8 @@ _CYCLE = re.compile(
 _CYCLE_ALONE = re.compile(rf'(?:(?:и|работать)\s+)?{days_off.PATTERN.pattern}[.!]?')
 _CYCLE_SUFFIX = re.compile(rf'{days_off.PATTERN.pattern}\s+(?:удобно|нравится)\b')
 _ISO = re.compile(r'\b(\d{4})-(\d{2})-(\d{2})\b')
+# «в пятницу», «во вторник» — один ближайший день, а не пожелание на все пятницы («по пятницам», «пятницы»).
+_ONE_DAY = {0: 'понедельник', 1: 'вторник', 2: 'среду', 3: 'четверг', 4: 'пятницу', 5: 'субботу', 6: 'воскресенье'}
 _MONTH = '|'.join(roster.MONTHS)
 _DATE = re.compile(
     rf'(?<![\d./:])(?P<day>\d{{1,2}})(?:\s*[-–—]\s*(?P<last>\d{{1,2}}))?'
@@ -46,7 +48,7 @@ def parse_wish(text, *, bare=False):
         return None
     pattern = f'{pattern_match[1]}/{pattern_match[2]}' if pattern_match else None
     plain = text[:pattern_match.start()] + ' ' + text[pattern_match.end():] if pattern_match else text
-    dates, weekdays = [], set()
+    dates, weekdays, upcoming = [], set(), []
     kind = None
     for part in _SPLIT.split(plain):
         part = part.strip()
@@ -58,11 +60,29 @@ def parse_wish(text, *, bare=False):
             kind = 'required'
         for number, rule in days_off.WEEKDAY_WORDS:
             if re.search(rf'\b(?:{rule})\b', part):
-                weekdays.add(number)
+                if re.search(rf'(?<!\w)во?\s+{_ONE_DAY[number]}\b', part) and not re.search(r'кажд', part):
+                    upcoming.append([number, kind])
+                else:
+                    weekdays.add(number)
         dates.extend(date_references(part, kind))
-    if not (dates or weekdays or pattern):
+    if not (dates or weekdays or pattern or upcoming):
         return None
-    return {'dates': dates, 'weekdays': sorted(weekdays), 'pattern': pattern, 'empty': None}
+    return {'dates': dates, 'weekdays': sorted(weekdays), 'pattern': pattern, 'empty': None, 'upcoming': upcoming}
+
+
+def upcoming_dates(upcoming, row, today):
+    """«в пятницу» → ближайшая пятница периода не раньше сегодня. None, если такого дня в периоде нет."""
+    first = max(today, date.fromisoformat(row['start_date']))
+    last = date.fromisoformat(row['end_date'])
+    changes = {}
+    for weekday, kind in upcoming:
+        day = first + timedelta(days=(weekday - first.weekday()) % 7)
+        if day > last:
+            return None
+        if changes.get(day.isoformat(), kind) != kind:
+            return None
+        changes[day.isoformat()] = kind
+    return changes
 
 
 def date_references(text, kind=None):
@@ -235,12 +255,16 @@ async def write_reply(message, state, parsed_wish, wish_link=None, wish_rows=(),
         await message.answer(wishes.NO_PERIOD)
         return
     parsed, row, changes = parsed_wish, None, {}
-    if parsed['dates']:
+    upcoming = parsed.get('upcoming') or []
+    if parsed['dates'] or upcoming:
+        today = days_off.roster_today()
         for candidate in wish_rows:
-            found = resolve_dates(parsed['dates'], candidate, days_off.roster_today())
-            if found:
-                row, changes = candidate, found
-                break
+            found = resolve_dates(parsed['dates'], candidate, today) if parsed['dates'] else {}
+            near = upcoming_dates(upcoming, candidate, today) if upcoming else {}
+            if found is None or near is None or any(found.get(day, kind) != kind for day, kind in near.items()):
+                continue
+            row, changes = candidate, {**found, **near}
+            break
         if not row:
             await message.answer(wishes.outside(wish_rows[0]) if wish_rows else wishes.NO_PERIOD)
             return

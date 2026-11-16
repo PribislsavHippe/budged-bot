@@ -13,13 +13,16 @@
   const storage='sales-correction-'+(tg?.initDataUnsafe?.user?.id||'local');
   try {pending=JSON.parse(sessionStorage.getItem(storage)||'null');} catch(_){}
   function persist(){try{pending?sessionStorage.setItem(storage,JSON.stringify(pending)):sessionStorage.removeItem(storage);}catch(_){}}
+  // Поля официального отчёта — только базовые показатели: свои категории ресторана render() дописывает
+  // в labels позже, а полей для них в форме нет, и сервер их в отчёте не принимает (ревью 15.11.2026).
+  const reportKeys=Object.keys(labels);
   $('sales-panel').innerHTML=`<div class="sales-toolbar"><button id="sales-period" class="period-link" aria-expanded="false" aria-controls="sales-month-picker">Выбрать месяц ›</button></div><div id="sales-month-picker" class="sales-month-picker" hidden><label>Месяц плана<input id="sales-month" aria-label="Месяц плана" type="month" min="2000-01" max="2100-12"></label></div>
     <div id="sales-error" role="alert"></div><p id="sales-status" role="status"></p>
     <button class="btn btn-ghost" id="sales-reload" hidden>Загрузить ещё раз</button><button class="btn" id="sales-retry" hidden>Сохранить ещё раз</button>
     <div id="sales-content" hidden><div id="sales-turnover"></div><p id="sales-freshness" class="sales-muted"></p><div id="sales-metrics"></div><div id="sales-counts" class="sales-counts"></div>
     <details class="sales-form" id="sales-settings"><summary>Исправить план и цену бокала</summary><form id="sales-settings-form">${fields('target',['wine','cocktails','desserts','turnover'])}<label>Оценка цены бокала · ₽<input id="glass-price" inputmode="decimal" required></label><button class="btn" data-change>Сохранить план</button></form></details>
     <div id="sales-reports"></div>
-    <section class="sales-form" id="sales-report" hidden><h2>Исправить отчет</h2><form id="sales-report-form"><label>По какой день отчёт<input id="report-cutoff" type="date" readonly></label>${fields('report',Object.keys(labels))}<label><input id="report-complete" type="checkbox"> Я записал все продажи за этот период</label><button class="btn" data-change>Сохранить отчет</button></form></section>
+    <section class="sales-form" id="sales-report" hidden><h2>Исправить отчет</h2><form id="sales-report-form"><label>По какой день отчёт<input id="report-cutoff" type="date" readonly></label>${fields('report',reportKeys)}<label><input id="report-complete" type="checkbox"> Я записал все продажи за этот период</label><button class="btn" data-change>Сохранить отчет</button></form></section>
     <section class="sales-form" id="sales-edit" hidden><h2 id="sales-edit-title">Исправить запись</h2><form id="sales-edit-form"><label>Сумма или количество<input id="sales-edit-value" inputmode="decimal" required></label><label>Дата смены<input id="sales-edit-date" type="date" required></label><button class="btn" data-change>Сохранить запись</button></form></section>
     <details class="sales-form"><summary>История продаж</summary><div id="sales-history"></div></details></div>
     <section id="service-charge" class="service-charge" aria-labelledby="service-charge-heading">
@@ -82,11 +85,11 @@
   $('sales-panel').addEventListener('click',e=>{const b=e.target.closest('button');if(!b||busy||pending)return;
     if(b.dataset.undo)mutate('undo',{operation_id:b.dataset.undo});
     if(b.dataset.edit){editing=data.events.find(x=>x.id===b.dataset.edit);$('sales-edit-title').textContent=kinds[editing.kind];$('sales-edit-value').value=editing.value;$('sales-edit-date').value=editing.work_date;$('sales-edit-date').max=data.today;$('sales-edit').hidden=false;$('sales-edit').scrollIntoView({behavior:'smooth'});}
-    if(b.dataset.report!==undefined){const r=data.reports[Number(b.dataset.report)];$('report-cutoff').value=r.cutoff;for(const k of Object.keys(labels))$('report-'+k).value=r.totals[k]??'';$('report-complete').checked=r.records_complete;$('sales-report').hidden=false;$('sales-report').scrollIntoView({behavior:'smooth'});}
+    if(b.dataset.report!==undefined){const r=data.reports[Number(b.dataset.report)];$('report-cutoff').value=r.cutoff;for(const k of reportKeys)$('report-'+k).value=r.totals[k]??'';$('report-complete').checked=r.records_complete;$('sales-report').hidden=false;$('sales-report').scrollIntoView({behavior:'smooth'});}
   });
   $('sales-edit-form').onsubmit=e=>{e.preventDefault();if(!pending)mutate('edit',{operation_id:editing.id,value:$('sales-edit-value').value,work_date:$('sales-edit-date').value,month:$('sales-edit-date').value.slice(0,7)});};
   $('sales-settings-form').onsubmit=e=>{e.preventDefault();if(!pending)mutate('settings',{targets:values('target',['wine','cocktails','desserts','turnover']),glass_price:$('glass-price').value});};
-  $('sales-report-form').onsubmit=e=>{e.preventDefault();if(!pending)mutate('report',{cutoff:$('report-cutoff').value,totals:values('report',Object.keys(labels)),records_complete:$('report-complete').checked,operation_id:crypto.randomUUID()});};
+  $('sales-report-form').onsubmit=e=>{e.preventDefault();if(!pending)mutate('report',{cutoff:$('report-cutoff').value,totals:values('report',reportKeys),records_complete:$('report-complete').checked,operation_id:crypto.randomUUID()});};
   $('sales-period').onclick=()=>{const box=$('sales-month-picker');box.hidden=!box.hidden;$('sales-period').setAttribute('aria-expanded',String(!box.hidden));if(!box.hidden)$('sales-month').focus();};
   $('sales-month').onchange=()=>{$('sales-month-picker').hidden=true;$('sales-period').setAttribute('aria-expanded','false');$('sales-content').hidden=true;$('sales-edit').hidden=true;$('sales-report').hidden=true;$('sales-settings').open=false;$('sales-settings-form').reset();load();};
   $('sales-reload').onclick=load;$('sales-retry').onclick=()=>{if(pending)mutate(pending.action,pending.body);};

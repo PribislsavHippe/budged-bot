@@ -981,9 +981,21 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(left, ['2026-11-08', '2026-11-16'])
         # Менеджер, которого в графике нет, личных смен не получает.
         self.assertNotIn(MANAGER, {uid for uid, _ in saved})
-        # Повторная синхронизация ничего не ломает.
+        # Ревью 15.11.2026: разложенная публикация отмечена, и запуск бота её не повторяет —
+        # личная правка после публикации (поменялся сменой) остаётся.
+        row = next(r for r in self.fake.rows['rosters'] if r['id'] == made['id'])
+        self.assertEqual(row['shifts_synced_at'], row['published_at'])
+        self.fake.rows['shifts'].append({'user_id': WAITER, 'shift_date': '2026-11-21'})
+        saved.clear()
+        with patch('schedule.save', new=save), patch('db.get_or_create_user', new=fake_user):
+            self.assertEqual(await roster_sync.resync_all(), 0)
+        self.assertEqual(saved, [])
+        self.assertIn('2026-11-21', [r['shift_date'] for r in self.fake.rows['shifts'] if r['user_id'] == WAITER])
+        # Публикация, которая не успела разложиться (процесс остановился), догоняется при запуске.
+        row['shifts_synced_at'] = None
         with patch('schedule.save', new=save), patch('db.get_or_create_user', new=fake_user):
             self.assertGreaterEqual(await roster_sync.resync_all(), 1)
+        self.assertEqual(row['shifts_synced_at'], row['published_at'])
 
     # ─── аудит 11 ноября: G04–G06 ───
     async def test_employee_requests_follow_the_period(self):

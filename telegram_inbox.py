@@ -226,8 +226,12 @@ class TelegramInbox:
             except Exception as error:
                 failure(error,area='telegram_inbox',stage='renew')
             # On a killed process the claim expires; retrying preserves source IDs.
-            await asyncio.shield(db._execute(db.supabase.rpc('finish_telegram_batch',{
+            finished=await asyncio.shield(db._execute(db.supabase.rpc('finish_telegram_batch',{
                 'batch':batch,'token':token,'succeeded':succeeded}),retries=3))
+            # migration_v41: after 10 attempts and 30 minutes the update is set aside so the person's
+            # next messages are processed. Logged without content.
+            if not succeeded and isinstance(finished.data,int) and finished.data>0:
+                failure(RuntimeError('telegram_update_abandoned'),area='telegram_inbox',stage='abandoned')
 
     async def run_once(self):
         rows=(await db._execute(db.supabase.rpc('ready_telegram_heads',{}),retries=2)).data

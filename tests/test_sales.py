@@ -15,6 +15,16 @@ def report(day, totals, version=1):
 
 
 class SalesTests(unittest.TestCase):
+    def test_plan_month_without_a_year_is_the_nearest_one(self):
+        # Ревью 15.11.2026: в декабре «план на январь» — январь следующего года.
+        from datetime import date
+        from sales_chat import parse_sales_message
+        for today, text, month in ((date(2026, 12, 28), 'план продаж на январь вино 143 тыс', '2027-01'),
+                                   (date(2026, 12, 28), 'план продаж на ноябрь вино 143 тыс', '2026-11'),
+                                   (date(2026, 1, 10), 'план продаж на декабрь вино 1000', '2025-12'),
+                                   (date(2026, 3, 1), 'план продаж на январь 2027 вино 1000', '2027-01')):
+            self.assertEqual(parse_sales_message(text, today)['month'], month, (today, text))
+
     def test_official_example(self):
         targets = dict(wine=143000, cocktails=110, desserts=82000, turnover=1570000)
         totals = dict(wine=73238, cocktails=57, desserts=33724, turnover=919783.5, postcards=5, dvd=2)

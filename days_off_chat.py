@@ -15,8 +15,16 @@ import roster
 import roster_time_chat
 import roster_wish_chat
 
+def no_photo_question(message):
+    """Бот ждёт ответ по фото — дату отчёта, правку или месяц графика: такой ответ («13») не выходные.
+    Ожидание живёт в черновике фото, а не в состоянии диалога, поэтому StateFilter его не видит (ревью 15.11.2026)."""
+    from report_photo import drafts
+    draft = drafts.get(message.from_user.id)
+    return not (draft and draft.phase in ('date', 'edit', 'schedule_month'))
+
+
 router = Router()
-router.message.filter(F.chat.type == 'private', F.text, StateFilter(None))
+router.message.filter(F.chat.type == 'private', F.text, StateFilter(None), no_photo_question)
 router.callback_query.filter(F.message.chat.type == 'private', F.data.startswith(days_off.PREFIX + ':'))
 router.message.register(roster_time_chat.begin, roster_time_chat.time_filter)
 router.callback_query.register(roster_time_chat.action, F.data.regexp(r'^off:time:[sxr]:[0-9a-f]{32}$'))
@@ -80,7 +88,7 @@ async def wish_flow(message, state):
     графика молча терялась (ревью 15.11.2026). False — путь пожеланий недоступен, остаётся прежний."""
     from identity_chat import enabled
     parsed = roster_wish_chat.parse_wish(message.text, bare=True)
-    if not enabled() or not parsed or not parsed['dates']:
+    if not enabled() or not parsed or not (parsed['dates'] or parsed.get('upcoming')):
         return False
     try:
         matched = await roster_wish_chat.match_message(message, parsed, days_off.parse(message.text))
@@ -102,7 +110,7 @@ async def write_request(message, found, link, state):
     if not link:
         await message.answer('Выходные записывают сотрудники ресторана. Когда менеджер подтвердит тебя, напиши ещё раз.')
         return
-    if found['dates'] and await wish_flow(message, state):
+    if await wish_flow(message, state):
         return
     saved, problems, buttons = [], [], []
     try:

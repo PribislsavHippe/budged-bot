@@ -7,10 +7,10 @@ const source=html.slice(html.indexOf('let iphoneCalendarData='),html.indexOf("do
 const data={available:true,enabled:true,feed_url:'https://example.test/feed.ics',
   setup_url:'https://example.test/setup',subscribe_url:'https://example.test/setup/subscribe',
   google_subscribe_url:'https://www.google.com/calendar/render?cid=webcal%3A%2F%2Fexample.test%2Ffeed.ics'};
-function scenario(platform){
+function scenario(platform,storage){
   const elements=new Map(),calls=[],opened=[];
   const document={getElementById(id){if(!elements.has(id))elements.set(id,{});return elements.get(id);}};
-  const context={document,navigator:{userAgent:'',maxTouchPoints:0},AbortSignal,
+  const context={document,navigator:{userAgent:'',maxTouchPoints:0},AbortSignal,localStorage:storage,
     tg:{platform,initData:'signed',openLink(url){opened.push(url);}},
     window:{location:{assign(url){opened.push(url);}}},
     fetch:async (url,options)=>{calls.push(JSON.parse(options.body).action);return {ok:true,json:async()=>data};}};
@@ -67,4 +67,13 @@ failure.context.fetch=ios.context.fetch;
 await failure.context.iphoneCalendarRefresh();
 await failure.button.onclick();
 assert.deepEqual(failure.opened,[data.subscribe_url],'failed creation remains retryable');
+// Ревью 15.11.2026: после «Отключить ссылку» открытие приложения её заново не создаёт; нажатие «Подключить» — создаёт.
+const saved=new Map([['calendar-link-revoked','1']]);
+const storage={getItem:k=>saved.get(k)??null,setItem:(k,v)=>saved.set(k,v),removeItem:k=>saved.delete(k)};
+const revoked=scenario('ios',storage);
+await revoked.context.iphoneCalendarRefresh();
+assert.deepEqual(revoked.calls,['status'],'a revoked link is not recreated on open');
+revoked.context.markCalendarRevoked(false);
+await revoked.context.iphoneCalendarRefresh();
+assert.deepEqual(revoked.calls,['status','create']);
 console.log('Calendar subscription UI checks passed.');

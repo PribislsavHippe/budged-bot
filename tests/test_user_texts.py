@@ -159,3 +159,30 @@ class LoneShortNumbers(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ImpossibleShiftDays(unittest.IsolatedAsyncioTestCase):
+    """«работаю 31» в ноябре и «работаю 5 500»: ни смены, ни денег (ревью 15.11.2026, P1 №8)."""
+    setUp = LoneShortNumbers.setUp
+    send = LoneShortNumbers.send
+
+    async def test_a_number_that_is_not_a_day_records_nothing(self):
+        from datetime import date
+        user = {'id': 5, 'onboarded': True, 'private_money_mode': False}
+        for text, bad in (('работаю 31', '31'), ('работаю 5 500', '500'), ('работаю 29 30 31', '31')):
+            with self.subTest(text=text), patch.object(self.handlers, 'op_today', return_value=date(2026, 11, 15)):
+                message, entries, single, shifts, private = await self.send(text, user)
+                entries.assert_not_awaited()
+                single.assert_not_awaited()
+                shifts.assert_not_awaited()
+                reply = message.answer.await_args.args[0]
+                self.assertEqual(reply, self.handlers.bad_shift_days_text([int(bad)]))
+
+    async def test_real_days_are_still_saved_as_shifts(self):
+        from datetime import date
+        user = {'id': 5, 'onboarded': True, 'private_money_mode': False}
+        with patch.object(self.handlers, 'op_today', return_value=date(2026, 11, 15)), \
+                patch('ux_chat.schedule_saved', new=AsyncMock()):
+            message, entries, single, shifts, private = await self.send('работаю 22 24 26', user)
+        shifts.assert_awaited_once_with(5, ['2026-11-22', '2026-11-24', '2026-11-26'])
+        entries.assert_not_awaited()

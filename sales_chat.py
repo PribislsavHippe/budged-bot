@@ -68,7 +68,10 @@ def parse_sales_message(text, today):
             if named and named[1] not in ALIASES:
                 matches=[i+1 for i,name in enumerate(MONTHS) if name[:3]==named[1][:3]]
                 if len(matches)!=1:raise ValueError('Не понял месяц. Например: «план на октябрь, вино 143 тыс».')
-                month=month_key(f'{int(named[2]) if named[2] else today.year:04}-{matches[0]:02}')
+                # Без года — ближайший такой месяц: в декабре «на январь» — это январь следующего года,
+                # а «на ноябрь» в декабре — только что прошедший (ревью 15.11.2026). Окно: 5 месяцев назад, 6 вперёд.
+                year=int(named[2]) if named[2] else today.year+(1 if matches[0]-today.month<-5 else -1 if matches[0]-today.month>6 else 0)
+                month=month_key(f'{year:04}-{matches[0]:02}')
                 rest=rest[named.end():]
         targets = _pairs(rest, ('wine','cocktails','desserts','turnover'))
         if any(v<=0 for v in targets.values()):raise ValueError('Планы должны быть больше нуля')

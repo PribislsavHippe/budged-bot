@@ -796,7 +796,10 @@ function workClock(iso) {
 
 function openDay(view, d) {
   const nextDay = view.year + "-" + String(view.month).padStart(2,"0") + "-" + String(d.day).padStart(2,"0");
-  if (lastOpenedDayISO !== nextDay) {
+  // Автообновление раз в минуту снова открывает тот же день: введённое время и сообщение не стираем.
+  const dayChanged = lastOpenedDayISO !== nextDay;
+  if (dayChanged) dayShiftEdited = false;
+  if (dayChanged) {
     if (!dayTipPending) dayTipOperation = null;
     document.getElementById('day-tips-details').open=false;
     document.getElementById('day-shift-details').open=false;
@@ -831,15 +834,17 @@ function openDay(view, d) {
   document.getElementById("day-body").innerHTML = rows.length
     ? rows.join("")
     : '<p class="day-note">Записей пока нет.</p>';
-  document.getElementById("day-start").value = planned && planned.starts_at ? planned.starts_at.slice(0,5) : "";
-  document.getElementById("day-end").value = planned && planned.ends_at ? planned.ends_at.slice(0,5) : "";
+  if (!dayShiftEdited) {
+    document.getElementById("day-start").value = planned && planned.starts_at ? planned.starts_at.slice(0,5) : "";
+    document.getElementById("day-end").value = planned && planned.ends_at ? planned.ends_at.slice(0,5) : "";
+  }
   document.getElementById("day-shift-save").textContent = planned ? "Изменить время смены" : "Добавить смену";
   document.getElementById("day-shift-summary").textContent = planned ? "Изменить смену в графике" : "Добавить смену в график";
   document.getElementById("day-shift-delete").hidden = !planned;
   document.getElementById('day-tips-details').hidden=privateMoney.state.lost;
   document.getElementById('day-tip-inputs').hidden=privateMoney.state.lost;
   document.getElementById('day-tip-add').hidden=privateMoney.state.lost;
-  document.getElementById("day-status").textContent = calendarNotice?.date===selectedDayISO ? calendarNotice.text : "";
+  if (dayChanged) document.getElementById("day-status").textContent = calendarNotice?.date===selectedDayISO ? calendarNotice.text : "";
   const tips = privateMoney.state.lost ? [] : (view.tip_entries || []).filter(function (e) { return e.date === selectedDayISO; });
   document.getElementById('day-tips-summary').textContent=tips.length?'Чаевые: добавить или убрать':'Добавить чаевые';
   const list = document.getElementById("day-tip-list");
@@ -943,6 +948,7 @@ async function saveCalendarWish(wish,kind) {
 
 let selectedDayISO = null;
 let lastOpenedDayISO = null;
+let dayShiftEdited = false;
 let dayTipOperation = null;
 let dayTipPending = null;
 let dayTipBusy = false;
@@ -977,17 +983,25 @@ function calendarEdit(payload) {
   status.textContent = "Сохраняю…";
   fetch("/api/calendar_edit", {method:"POST",headers:{"Content-Type":"application/json"},cache:"no-store",
     body:JSON.stringify(Object.assign({initData:tg ? tg.initData : "",date:editDay},payload))})
-    .then(function (r) { return r.json().then(function (v) { if (!r.ok) throw new Error(v.error || "Не получилось сохранить"); return v; }); })
+    .then(function (r) { return r.json().then(function (v) { if (!r.ok) throw Object.assign(new Error(v.error || "Не получилось сохранить"), {status: r.status}); return v; }); })
     .then(function (result) {
       calendarNotice={date:editDay,text:result.warning || "Сохранено."};
       if(selectedDayISO===editDay)status.textContent = calendarNotice.text;
+      if (payload.action === "shift_save" || payload.action === "shift_delete") dayShiftEdited = false;
       if (payload.action === "tip_add" && dayTipOperation===payload.operation_id) {
         dayTipOperation=null;dayTipPending=null;
         if (lastOpenedDayISO===editDay) document.getElementById("day-tip-amount").value = "";
       }
       loadMonth(calYear,calMonth);load();
     })
-    .catch(function (e) { if(selectedDayISO===editDay)status.textContent = e.message || "Не получилось сохранить. Проверь данные и попробуй ещё раз."; })
+    .catch(function (e) {
+      // Отказ сервера (4xx): чаевые точно не записаны, следующая попытка может быть с другой суммой или днём.
+      // Обрыв связи или 5xx: исход неизвестен, повтор только с той же суммой — иначе возможен дубль.
+      if (payload.action === "tip_add" && e.status >= 400 && e.status < 500 && dayTipOperation === payload.operation_id) {
+        dayTipOperation = null; dayTipPending = null;
+      }
+      if(selectedDayISO===editDay)status.textContent = e.message || "Не получилось сохранить. Проверь данные и попробуй ещё раз.";
+    })
     .finally(function () {dayTipBusy=false;});
 }
 document.getElementById("day-shift-save").onclick = function () {
@@ -995,6 +1009,8 @@ document.getElementById("day-shift-save").onclick = function () {
   const end=document.getElementById("day-end").value;
   calendarEdit({action:"shift_save",start:start || null,end:end || null});
 };
+document.getElementById("day-start").addEventListener("input", function () { dayShiftEdited = true; });
+document.getElementById("day-end").addEventListener("input", function () { dayShiftEdited = true; });
 document.getElementById("day-start").onchange = function () {
   const end=document.getElementById("day-end");
   if (!this.value || end.value) return;
@@ -1175,7 +1191,8 @@ async function submitSpend() {
     const historical=spendPending.historical;
     const r=await fetch(historical?'/api/calendar_edit':'/api/shift_spend',{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',signal:AbortSignal.timeout(20000),body:JSON.stringify({...spendPending,...(historical?{action:'expense_add',operation_id:spendPending.operation_id}:{}),initData:tg?.initData||''})});
     const data=await r.json();
-    if(!r.ok){if(r.status===400)spendPending=null;throw new Error(data.error||'Не получил подтверждение. Повтори — дубля не будет.');}
+    // Любой отказ сервера (4xx) значит «не записано»: поля снова доступны. Повтор только при неизвестном исходе (5xx, сеть).
+    if(!r.ok){if(r.status>=400&&r.status<500)spendPending=null;throw new Error(data.error||'Не получил подтверждение. Повтори — дубля не будет.');}
     load();
     document.getElementById('spend-note').textContent='Расход '+
       spendPending.amount.toLocaleString('ru-RU',{maximumFractionDigits:2})+' ₽ записан. Обновляю итог…';
@@ -1195,6 +1212,11 @@ document.getElementById("spend").addEventListener("click", function (e) {
 });
 
 let iphoneCalendarData=null,iphoneCalendarBusy=false;
+// Человек отключил ссылку: при следующем открытии приложения не создаём её заново (ревью 15.11.2026).
+// Включает её снова только нажатие «Подключить». Хранится лишь отметка, без ссылки и данных.
+const CALENDAR_REVOKED='calendar-link-revoked';
+function calendarRevoked(){try{return localStorage.getItem(CALENDAR_REVOKED)==='1';}catch(e){return false;}}
+function markCalendarRevoked(on){try{on?localStorage.setItem(CALENDAR_REVOKED,'1'):localStorage.removeItem(CALENDAR_REVOKED);}catch(e){}}
 function usesAppleCalendar(){
   return tg?.platform==='ios'||/iPhone|iPad|iPod/.test(navigator.userAgent||'')
     ||(/Macintosh/.test(navigator.userAgent||'')&&navigator.maxTouchPoints>1);
@@ -1239,7 +1261,7 @@ async function iphoneCalendarRefresh(){
   try{
     // Prepare only our read-only URL. The calendar provider still asks for consent.
     // openLink must run within one second of the tap, without an API round trip.
-    paintIphoneCalendar(await iphoneCalendarRequest('create'));
+    paintIphoneCalendar(await iphoneCalendarRequest(calendarRevoked()?'status':'create'));
   }
   catch(e){document.getElementById('iphone-calendar').hidden=true;}
   finally{iphoneCalendarBusy=false;button.disabled=false;}
@@ -1252,7 +1274,7 @@ document.getElementById('iphone-calendar-toggle').onclick=async function(){
   }
   iphoneCalendarBusy=true;
   this.disabled=true;iphoneCalendarStatus('Подготавливаю календарь…');
-  try{paintIphoneCalendar(await iphoneCalendarRequest('create'));
+  try{paintIphoneCalendar(await iphoneCalendarRequest('create'));markCalendarRevoked(false);
     // After explicit revocation, a fresh tap is needed to keep
     // Telegram's browser handoff within the allowed user-interaction window.
     iphoneCalendarStatus('Ссылка готова. Нажми «Подключить iPhone», чтобы добавить подписку.');
@@ -1284,7 +1306,7 @@ document.getElementById('iphone-calendar-rotate').onclick=async function(){
 document.getElementById('iphone-calendar-revoke').onclick=async function(){
   if(iphoneCalendarBusy||!confirm('Отключить ссылку? Удали подписку и в календаре телефона: сохранённые там события могут исчезнуть не сразу.'))return;
   iphoneCalendarBusy=true;
-  try{paintIphoneCalendar(await iphoneCalendarRequest('revoke'));
+  try{paintIphoneCalendar(await iphoneCalendarRequest('revoke'));markCalendarRevoked(true);
     iphoneCalendarStatus('Ссылка отключена.');}
   catch(e){iphoneCalendarStatus(e.message);}
   finally{iphoneCalendarBusy=false;}
@@ -1571,9 +1593,15 @@ async function syncPrivateRecords(refresh=true) {
   }
 }
 
+// Первый запуск мог не дойти до сервера (сеть, сон телефона): повторяем его по таймеру и при возврате
+// в приложение, а не оставляем вкладку пустой до перезапуска (ревью 15.11.2026).
+let appStarting=false;
 async function startApp() {
+  if (appStarting) return;
+  appStarting=true;
   try {
     await privateMoney.init();
+    document.getElementById('err').style.display='none';
     if (privateMoney.state.exitArchivePending)
       document.getElementById('private-sync-status').textContent='Обычный режим включён. Открой «Суперконфиденциальность», чтобы завершить сохранение архивной копии на телефоне.';
     if (privateMoney.state.exitConflict)
@@ -1589,15 +1617,22 @@ async function startApp() {
     privateButtonText();
     load();iphoneCalendarRefresh();
   } catch (error) {
-    if (privateMoney.state.ready) document.getElementById('private-sync-status').textContent=error.message;
-    else {const el=document.getElementById('err');el.style.display='block';el.textContent=error.message;}
+    // Сеть или таймаут дают английский текст браузера («Failed to fetch»): показываем понятный.
+    const message=error.name==='TypeError'||error.name==='TimeoutError'?'Не получилось загрузить данные. Попробуй ещё раз.':error.message;
+    if (privateMoney.state.ready) document.getElementById('private-sync-status').textContent=message;
+    else {const el=document.getElementById('err');el.style.display='block';el.textContent=message;}
     return;
-  }
+  } finally { appStarting=false; }
 }
 startApp();
-setInterval(async function () {if(await syncPrivateRecords()!==null)load();}, 60000);
+setInterval(async function () {
+  // Без подтверждённого режима записей нельзя показывать месяц: у приватного журнала он выглядел бы пустым.
+  if(!privateMoney.state.ready){startApp();return;}
+  if(await syncPrivateRecords()!==null)load();
+}, 60000);
 document.addEventListener("visibilitychange", async function () {
-  if (document.hidden || !privateMoney.state.ready) return;
+  if (document.hidden) return;
+  if (!privateMoney.state.ready) { startApp(); return; }
   if (await syncPrivateRecords(false)===null) return;
   window.dispatchEvent(new Event('private-money-ready'));
   load();iphoneCalendarRefresh();
