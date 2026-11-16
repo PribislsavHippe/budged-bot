@@ -124,6 +124,42 @@ try {
   await assert.rejects(exec("UPDATE rosters SET end_date='2026-12-18' WHERE id=$1",D),/roster_overlap/);
   await exec("UPDATE rosters SET draft='{\"people\":[]}' WHERE id=$1",D);   // правка без смены дат не проверяется заново
   console.log('v42 SQL passed: wish reminder retries, broadcast deliveries, transfer carries wishes and guards director, roster periods never overlap.');
+
+  // ─── v43: корзина черновиков ───
+  await db.exec(await source('migration_v43.sql'));
+  const TR='dddddddd-0000-0000-0000-000000000006';
+  const L=NEW;  // сотрудник уже в ресторане R2 после переноса
+  await exec("INSERT INTO rosters(id,restaurant_id,start_date,end_date,draft) VALUES($1,$2,'2027-01-01','2027-01-14',$3)",TR,R2,JSON.stringify({people:[{name:'Аня',link:L}]}));
+  await exec("INSERT INTO day_off_requests(link_id,restaurant_id,start_date,end_date,days,roster_id,answered) VALUES($1,$2,'2027-01-01','2027-01-14','[\"2027-01-03\"]',$3,true)",L,R2,TR);
+  await exec("INSERT INTO roster_wish_notices(roster_id,link_id,stage,claimed_at,sent_at) VALUES($1,$2,1,now(),now())",TR,L);
+  await assert.rejects(exec('SELECT trash_roster(1,$1)',P),/roster_published/);   // опубликованный — нельзя
+  await exec('SELECT trash_roster(1,$1)',TR);
+  assert.equal((await exec('SELECT count(*)::int n FROM rosters WHERE id=$1',TR)).rows[0].n,0);
+  q=await exec('SELECT roster_id,days FROM day_off_requests WHERE link_id=$1 AND start_date=$2',L,'2027-01-01');
+  assert.deepEqual(q.rows,[{roster_id:null,days:['2027-01-03']}]);   // ответ сотрудника не потерян
+  q=await exec('SELECT deleted_by,answers FROM roster_trash WHERE id=$1',TR);
+  assert.deepEqual(q.rows,[{deleted_by:1,answers:[L]}]);
+  // Вернули: график, ответ и отметка напоминания на месте.
+  await exec('SELECT restore_roster(1,$1)',TR);
+  q=await exec('SELECT roster_id FROM day_off_requests WHERE link_id=$1 AND start_date=$2',L,'2027-01-01');
+  assert.equal(q.rows[0].roster_id,TR);
+  assert.equal((await exec('SELECT count(*)::int n FROM roster_wish_notices WHERE roster_id=$1',TR)).rows[0].n,1);
+  assert.equal((await exec('SELECT count(*)::int n FROM roster_trash')).rows[0].n,0);
+  // Пересекающийся график, созданный за это время, не даёт вернуть; корзина при этом цела.
+  await exec('SELECT trash_roster(1,$1)',TR);
+  await exec("INSERT INTO rosters(id,restaurant_id,start_date,end_date,draft) VALUES('dddddddd-0000-0000-0000-000000000007',$1,'2027-01-10','2027-01-20','{}')",R2);
+  await assert.rejects(exec('SELECT restore_roster(1,$1)',TR),/roster_overlap/);
+  assert.equal((await exec('SELECT count(*)::int n FROM roster_trash')).rows[0].n,1);
+  // Неделя прошла — корзина чистится.
+  await exec("UPDATE roster_trash SET deleted_at=now()-interval '8 days'");
+  assert.equal((await exec('SELECT purge_roster_trash() AS n')).rows[0].n,1);
+  for(const role of ['anon','authenticated']){
+    await db.exec('SET ROLE '+role);
+    await assert.rejects(exec('SELECT * FROM roster_trash'),/permission denied/);
+    await assert.rejects(exec('SELECT purge_roster_trash()'),/permission denied/);
+    await db.exec('RESET ROLE');
+  }
+  console.log('v43 SQL passed: drafts go to the trash with answers and reminders, come back, overlap blocks restore, purge after a week.');
 } finally {
   await db.close();
 }

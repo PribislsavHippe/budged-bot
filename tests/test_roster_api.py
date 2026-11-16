@@ -52,6 +52,10 @@ class Query:
         self.filters.append(lambda r: r.get(key) < value)
         return self
 
+    def gt(self, key, value):
+        self.filters.append(lambda r: r.get(key) > value)
+        return self
+
     def in_(self, key, values):
         self.filters.append(lambda r: r.get(key) in values)
         return self
@@ -129,6 +133,47 @@ class Fake:
     def table(self, name):
         return Query(self.rows, name)
 
+    def rpc(self, name, params):
+        """Корзина черновиков (migration_v43) так, как её делает база: всё, что привязано к графику, едет с ним."""
+        def run():
+            from datetime import datetime, timezone
+            rosters = self.rows.setdefault('rosters', [])
+            trash = self.rows.setdefault('roster_trash', [])
+            answers = self.rows.setdefault('day_off_requests', [])
+            if name == 'trash_roster':
+                row = next((r for r in rosters if r['id'] == params['p_id']), None)
+                if row is None:
+                    raise APIError({'code': 'P0001', 'message': 'roster_missing'})
+                if row.get('published_at'):
+                    raise APIError({'code': 'P0001', 'message': 'roster_published'})
+                at = datetime.now(timezone.utc).isoformat()
+                trash.append({'id': row['id'], 'restaurant_id': row['restaurant_id'], 'start_date': row['start_date'],
+                              'end_date': row['end_date'], 'deleted_at': at, 'roster': dict(row),
+                              'answers': [a['link_id'] for a in answers if a.get('roster_id') == row['id']]})
+                rosters.remove(row)
+                for a in answers:
+                    if a.get('roster_id') == row['id']:
+                        a['roster_id'], a['waiting'] = None, False
+                return NS(data={'id': row['id'], 'deleted_at': at})
+            if name == 'restore_roster':
+                kept = next((t for t in trash if t['id'] == params['p_id']), None)
+                if kept is None:
+                    raise APIError({'code': 'P0001', 'message': 'roster_trash_missing'})
+                back = kept['roster']
+                for r in rosters:
+                    if r['restaurant_id'] == back['restaurant_id'] and r['start_date'] == back['start_date']:
+                        raise APIError({'code': '23505', 'message': 'duplicate'})
+                    if r['restaurant_id'] == back['restaurant_id'] and r['start_date'] <= back['end_date'] and r['end_date'] >= back['start_date']:
+                        raise APIError({'code': '23P01', 'message': 'roster_overlap'})
+                rosters.append(dict(back))
+                for a in answers:
+                    if a['link_id'] in kept['answers'] and a.get('roster_id') is None and a['start_date'] == back['start_date']:
+                        a['roster_id'] = back['id']
+                trash.remove(kept)
+                return NS(data=dict(back))
+            raise APIError({'code': 'PGRST202', 'message': 'function not found'})
+        return NS(execute=run)
+
 
 def fast():
     """Сборка в тестах короче: для проверки правил хватает нескольких тысяч шагов."""
@@ -150,6 +195,26 @@ class DraftTests(unittest.TestCase):
     def draft(self, **extra):
         people = [{'name': n} for n in NAMES]
         return self.api.normalize({'people': people, **extra}, START, END)
+
+    def test_a_removed_person_waits_a_week_greyed_and_never_reaches_the_team(self):
+        # Правило владельца 16.11.2026: убранный из черновика неделю стоит серым и возвращается целиком.
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        fresh = {'person': {'name': 'Ира', 'student': True, 'link': None}, 'index': 2,
+                 'removed_at': (now - timedelta(days=1)).isoformat(),
+                 'cells': {'2026-11-16': '9', '2026-12-31': '9', '2026-11-17': 'кривое'},
+                 'off': ['2026-11-18', '2026-12-31'], 'wish_off': [], 'wish_starts': [10, 99]}
+        old = {**fresh, 'person': {'name': 'Ося'}, 'removed_at': (now - timedelta(days=8)).isoformat()}
+        twin = {**fresh, 'person': {'name': 'аня'}}            # такое имя уже есть среди действующих
+        draft = self.draft(removed=[fresh, old, twin, 'мусор'])
+        self.assertEqual([x['person']['name'] for x in draft['removed']], ['Ира'])
+        kept = draft['removed'][0]
+        self.assertEqual((kept['cells'], kept['off'], kept['wish_starts'], kept['index']),
+                         ({'2026-11-16': '9'}, ['2026-11-18'], [10], 2))
+        self.assertNotIn('Ира', [p['name'] for p in draft['people']])
+        # Сборка и команда его не видят: в опубликованном снимке корзины нет.
+        self.assertEqual(self.api.to_request(draft, START, END).people, list(NAMES))
+        self.assertNotIn('removed', self.api.without_removed(draft))
 
     def test_cells_accept_hours_intervals_and_marks_only(self):
         self.assertEqual(self.api.parse_cell('9'), (9, None, False))
@@ -1082,6 +1147,33 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         await self.roster('publish', OWNER, id=again['id'], revision=1)
         await self.roster('delete', OWNER, 400, id=again['id'])
         await self.roster('open', OWNER, id=again['id'])
+
+    async def test_a_deleted_draft_waits_a_week_in_the_trash_and_comes_back(self):
+        # Правило владельца 16.11.2026: любое удаление можно отменить.
+        made = await self.roster('create', OWNER, restaurant_id=PLACE, start='2026-12-01', end='2026-12-14')
+        self.fake.rows.setdefault('day_off_requests', []).append(
+            {'link_id': 'answer', 'restaurant_id': PLACE, 'roster_id': made['id'], 'start_date': '2026-12-01',
+             'end_date': '2026-12-14', 'days': ['2026-12-03'], 'answered': True, 'waiting': True})
+        await self.roster('delete', OWNER, id=made['id'])
+        listed = await self.roster('list', OWNER, restaurant_id=PLACE)
+        self.assertNotIn(made['id'], [p['id'] for p in listed['periods']])
+        self.assertEqual([t['id'] for t in listed['trash']], [made['id']])
+        self.assertEqual(self.fake.rows['day_off_requests'][-1]['roster_id'], None)
+        # Вернули — график на месте, ответ сотрудника снова при нём.
+        back = await self.roster('restore', OWNER, id=made['id'])
+        self.assertEqual((back['id'], back['start']), (made['id'], '2026-12-01'))
+        self.assertEqual(self.fake.rows['day_off_requests'][-1]['roster_id'], made['id'])
+        self.assertEqual((await self.roster('list', OWNER, restaurant_id=PLACE))['trash'], [])
+        # Пока лежал в корзине, на те же даты создали другой график: вернуть нельзя, объясняем почему.
+        await self.roster('delete', OWNER, id=made['id'])
+        await self.roster('create', OWNER, restaurant_id=PLACE, start='2026-12-05', end='2026-12-20')
+        refused = await self.roster('restore', OWNER, 400, id=made['id'])
+        self.assertIn('пересекаются', refused['error'])
+        # Через неделю корзина его не показывает.
+        self.fake.rows['roster_trash'][0]['deleted_at'] = '2026-01-01T00:00:00+00:00'
+        self.assertEqual((await self.roster('list', OWNER, restaurant_id=PLACE))['trash'], [])
+        # Посторонний не вернёт.
+        await self.roster('restore', STRANGER, 404, id=made['id'])
 
     async def test_new_manager_gets_the_site_link(self):
         sent = []

@@ -344,3 +344,7 @@ html.sg-land-open body>*:not(.sg-land):not(#bg){visibility:hidden}
 /* Весь график — значок поворота экрана в правом верхнем углу, рядом со стрелками. */
 .sg-nav .sg-rotate{display:grid;place-items:center;padding:0}
 .sg-nav .sg-rotate svg{width:22px;height:22px}
+/* Убранный из черновика сотрудник: серый на своей строке, клетки не правятся; имя открывает «Вернуть в график». */
+.sg tbody tr.sg-gone{opacity:.4}
+.sg-edit tbody tr.sg-gone td.sg-c{cursor:default}
+.sg-edit tbody tr.sg-gone .sg-name{cursor:pointer}

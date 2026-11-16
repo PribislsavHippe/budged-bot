@@ -70,7 +70,18 @@
       html+=(gap(iso,k)?g('th'):'')+`<th scope="col" data-day="${iso}" tabindex="0" class="sg-day ${iso===o.today?'sg-today':''}" title="${o.edit?'Настройки дня':'Поставить этот день рядом с именами'}">`
         +`${o.near?(o.events?.[iso]?`<em class="ev">${esc(o.events[iso])}</em>`:`<em>${rel>=0&&rel<3?labels[rel]:runLabel[iso]?esc(runLabel[iso]):'&nbsp;'}</em>`):''}<span class="sg-wd">${WD[d.getDay()]}</span><b>${d.getDate()}</b></th>`;});
     html+=tail('th')+'</tr></thead><tbody>';
-    o.people.forEach((p,r)=>{
+    // o.removed (только редактор): убранные из черновика стоят серыми на своих местах и не правятся,
+    // пока их не вернут; в счёт людей в смене не входят.
+    const rows=o.people.map((p,r)=>({p,r}));
+    (o.removed||[]).map((p,i)=>({p,i})).sort((a,b)=>a.p.index-b.p.index)
+      .forEach(x=>rows.splice(Math.min(x.p.index,rows.length),0,{p:x.p,gone:x.i}));
+    rows.forEach(({p,r,gone})=>{
+      if(gone!=null){
+        html+=`<tr class="sg-gone"><th class="sg-name" scope="row" data-gone="${gone}" tabindex="0">${esc(p.name)}</th>`;
+        days.forEach((iso,k)=>{html+=(gap(iso,k)?g('td'):'')+`<td class="sg-c sg-gone">${shift(p,iso)}</td>`;});
+        html+=tail('td')+'</tr>';
+        return;
+      }
       html+=`<tr class="${p.me?'sg-me':''}"><th class="sg-name" scope="row" data-r="${r}" ${o.edit?'tabindex="0"':''}>${esc(p.name)}${o.edit?`<button type="button" class="sg-x" data-remove="${r}" aria-label="Убрать из графика: ${esc(p.name)}" title="Убрать из графика">×</button>`:''}</th>`;
       days.forEach((iso,k)=>{
         // В редакторе смену можно взять и перетащить в другую клетку.

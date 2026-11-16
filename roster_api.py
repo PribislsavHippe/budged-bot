@@ -25,6 +25,24 @@ from workday import op_today
 # Ошибки «таблицы или колонки нет»: база ещё не обновлена до migration_v30.
 MISSING = ('42P01', 'PGRST205', '42703', 'PGRST204')
 NOT_READY = 'График пока недоступен: владельцу нужно обновить базу (migration_v30.sql).'
+# ЧЕРНОВИК: текст ждёт согласования с владельцем. Без корзины (migration_v43) черновик не удаляется вовсе:
+# стирать без возможности вернуть нельзя (правило владельца 16.11.2026).
+TRASH_NOT_READY = 'Удаление пока недоступно: владельцу нужно обновить базу (migration_v43.sql).'
+TRASH_DAYS = 7
+
+
+async def trashed(restaurant_id):
+    """Удалённые черновики ресторана, которые ещё можно вернуть. Без migration_v43 — пусто."""
+    since = (datetime.now(timezone.utc) - timedelta(days=TRASH_DAYS)).isoformat()
+    try:
+        rows = (await db._execute(db.supabase.table('roster_trash').select('id,start_date,end_date,deleted_at')
+                                  .eq('restaurant_id', restaurant_id).gt('deleted_at', since)
+                                  .order('deleted_at', desc=True))).data
+    except APIError as error:
+        if error.code in MISSING:
+            return []
+        raise
+    return [{'id': r['id'], 'start': r['start_date'], 'end': r['end_date'], 'deleted_at': r['deleted_at']} for r in rows]
 MAX_EVENT = 40
 CELL = re.compile(r'^(?:(\d{1,2}(?::[0-5]\d)?)(?:-(\d{1,2}(?::[0-5]\d)?))?)?(\*)?$')
 # Сборка занимает процессор на десятки секунд: одна за раз на весь сервер.
@@ -164,11 +182,59 @@ def normalize(draft, start, end):
                 clean[in_period(key)] = str(value).strip()
         if clean:
             result['cells'][name] = clean
+    result['removed'] = clean_removed(draft.get('removed'), {n.casefold() for n in names}, days)
     result['variants'] = clean_variants(draft.get('variants'), names, in_period)
     result['picked'] = bool(draft.get('picked'))
     chosen = str(draft.get('variant') or '')
     result['variant'] = chosen if any(v['id'] == chosen for v in result['variants']) else None
     return without_auto_days_off(result)
+
+
+# Убранный из черновика сотрудник неделю лежит серым на своей строке и возвращается со сменами и выходными;
+# потом исчезает сам (правило владельца 16.11.2026: любое удаление можно отменить).
+REMOVED_DAYS = 7
+
+
+def clean_removed(raw, active, days, now=None):
+    """Корзина черновика: только свежие записи, известные поля и дни периода; имя не совпадает с действующими."""
+    now = now or datetime.now(timezone.utc)
+    out, seen = [], set(active)
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict) or not isinstance(item.get('person'), dict):
+            continue
+        try:
+            at = datetime.fromisoformat(str(item.get('removed_at')).replace('Z', '+00:00'))
+            name = identity.name(str(item['person'].get('name', '')))
+            link = item['person'].get('link')
+            link = str(UUID(str(link))) if link else None
+        except (ValueError, TypeError):
+            continue
+        if at.tzinfo is None or at > now + timedelta(minutes=5) or now - at > timedelta(days=REMOVED_DAYS):
+            continue
+        if name.casefold() in seen:
+            continue
+        seen.add(name.casefold())
+        cells = {}
+        for day, value in (item.get('cells') or {}).items() if isinstance(item.get('cells'), dict) else ():
+            if day in days and str(value).strip():
+                try:
+                    parse_cell(value)
+                except ValueError:
+                    continue
+                cells[day] = str(value).strip()
+        dated = lambda key: sorted({d for d in item.get(key) or [] if isinstance(d, str) and d in days})
+        starts = sorted({h for h in item.get('wish_starts') or [] if type(h) is int and 6 <= h <= 22})
+        index = item.get('index')
+        out.append({'person': {'name': name, 'student': bool(item['person'].get('student')), 'link': link},
+                    'index': index if type(index) is int and 0 <= index <= roster.MAX_PEOPLE else 0,
+                    'removed_at': at.astimezone(timezone.utc).isoformat(),
+                    'cells': cells, 'off': dated('off'), 'wish_off': dated('wish_off'), 'wish_starts': starts})
+    return out[:roster.MAX_PEOPLE]
+
+
+def without_removed(draft):
+    """Снимок для команды: корзина менеджера в опубликованный график не попадает."""
+    return {k: v for k, v in draft.items() if k != 'removed'}
 
 
 def trim(draft, start, end):
@@ -186,6 +252,10 @@ def trim(draft, start, end):
     out['time_rules'] = {name: {day: rule for day, rule in rules.items() if day in inside}
                          for name, rules in draft.get('time_rules', {}).items()}
     out['variants'], out['variant'], out['picked'] = [], None, True
+    out['removed'] = [{**item, 'cells': {d: v for d, v in (item.get('cells') or {}).items() if d in inside},
+                       'off': [d for d in item.get('off') or [] if d in inside],
+                       'wish_off': [d for d in item.get('wish_off') or [] if d in inside]}
+                      for item in draft.get('removed') or [] if isinstance(item, dict)]
     return out
 
 
@@ -430,7 +500,7 @@ def _period(row):
 def _summary(row):
     published = row.get('published') or {}
     changed = bool(row.get('published_at')) and (
-        without_auto_days_off(published) != without_auto_days_off(row['draft'])
+        without_removed(without_auto_days_off(published)) != without_removed(without_auto_days_off(row['draft']))
     )
     return {'id': row['id'], 'start': row['start_date'], 'end': row['end_date'],
             'published_at': row.get('published_at'), 'updated_at': row.get('updated_at'), 'changed': changed}
@@ -446,6 +516,10 @@ async def _load(roster_id, allowed):
 def _opened(row):
     start, end = _period(row)
     draft = without_auto_days_off(row['draft'])
+    if draft.get('removed'):
+        # Срок вышел — убранного больше не показываем, даже если черновик с тех пор не сохраняли.
+        days = {date.fromordinal(start.toordinal() + i).isoformat() for i in range((end - start).days + 1)}
+        draft = {**draft, 'removed': clean_removed(draft['removed'], {p['name'].casefold() for p in draft.get('people', [])}, days)}
     return {**_summary(row), 'revision': row['revision'], 'restaurant_id': row['restaurant_id'],
             'draft': draft, 'check': check(draft, start, end),
             'holidays': {d.isoformat(): name for d, name in holidays_ru.between(start, end).items()}}
@@ -510,7 +584,24 @@ async def handle(request):
                                    .select('id,start_date,end_date,published_at,updated_at,draft,published')
                                    .eq('restaurant_id', restaurant_id).order('start_date', desc=True).order('id'))
             return response({'restaurants': places, 'restaurant_id': restaurant_id,
-                             'periods': [_summary(r) for r in rows]})
+                             'periods': [_summary(r) for r in rows], 'trash': await trashed(restaurant_id)})
+        if action == 'restore':
+            stage = 'restore'
+            trash_id = str(UUID(str(body.get('id', ''))))
+            found = (await db._execute(db.supabase.table('roster_trash').select('restaurant_id,start_date,end_date')
+                                       .eq('id', trash_id).limit(1))).data
+            if not found or found[0]['restaurant_id'] not in allowed:
+                return response({'error': 'График не найден или доступ изменился.'}, 404)
+            try:
+                restored = (await db._execute(db.supabase.rpc('restore_roster', {'actor': uid, 'p_id': trash_id}))).data
+            except APIError as error:
+                if error.code == '23505':
+                    raise ValueError('График с этой даты начала уже есть — открой его в списке.') from None
+                if 'roster_overlap' in str(error):
+                    raise await _clash_error(found[0]['restaurant_id'], _day(found[0]['start_date']),
+                                             _day(found[0]['end_date'])) from None
+                raise
+            return response(_opened(restored))
         if action == 'create':
             restaurant_id = str(UUID(str(body.get('restaurant_id', ''))))
             if restaurant_id not in allowed:
@@ -559,10 +650,18 @@ async def handle(request):
             if row.get('published_at'):
                 raise ValueError('Опубликованный график не удаляется.')
             stage = 'delete'
-            await db._execute(db.supabase.table('rosters').delete().eq('id', row['id']).is_('published_at', 'null'))
+            # В корзину на неделю, а не насовсем: случайное нажатие отменяется (правило владельца 16.11.2026).
+            try:
+                trashed_row = (await db._execute(db.supabase.rpc('trash_roster', {'actor': uid, 'p_id': row['id']}))).data
+            except APIError as error:
+                if error.code in ('PGRST202', '42883', *MISSING):
+                    return response({'error': TRASH_NOT_READY}, 503)
+                if 'roster_published' in str(error):
+                    raise ValueError('Опубликованный график не удаляется.') from None
+                raise
             if not roster_wishes.migrated(row):
                 await days_off.close_period(row['restaurant_id'], start)
-            return response({'ok': True})
+            return response({'ok': True, 'trash': trashed_row})
         if action in ('offs', 'ask_offs'):
             result = await offs_action(request, uid, row, start, end, action == 'ask_offs')
             if action == 'ask_offs' and result.get('sent'):
@@ -646,7 +745,8 @@ async def handle(request):
             unavailable = roster.audit(to_request(draft, start, end), to_schedule(draft)).unavailable
             if unavailable:
                 raise ValueError(roster.time_problem(*unavailable[0]))
-            saved = await _save(row, uid, revision, {'draft': draft, 'published': draft, 'published_at': now})
+            saved = await _save(row, uid, revision, {'draft': draft, 'published': without_removed(draft),
+                                                     'published_at': now})
             _track(uid, 'roster_republished' if row.get('published_at') else 'roster_published')
             stage = 'sync'
             # Смены попадают в личный календарь, подписку iPhone и напоминания; публикацию это не задерживает.

@@ -41,6 +41,7 @@
           <button type="button" class="re-all" hidden>Все варианты</button>
           <button type="button" class="re-delete is-off">Удалить черновик</button>
         </div>
+        <p class="re-trash" hidden></p>
         <div class="re-actions">
           <button type="button" class="re-ask" disabled>Запросить выходные</button>
           <button type="button" class="re-check-offs" disabled>Попросить проверить выходные</button>
@@ -109,10 +110,25 @@
     }
     async function list(openId){
       error('');
-      try{const data=await api('list',{restaurant_id:placeId});places=data.restaurants;placeId=data.restaurant_id;periods=data.periods;renderPeriods();
+      try{const data=await api('list',{restaurant_id:placeId});places=data.restaurants;placeId=data.restaurant_id;periods=data.periods;trash=data.trash||[];renderPeriods();renderTrash();
         const target=openId||periods[0]?.id;if(target)await load(target);else{cur=null;q('.re-editor').hidden=true;}}
       catch(e){failed(e);}
     }
+    // Корзина черновиков: удалённый неделю можно вернуть, потом он исчезает сам (правило владельца 16.11.2026).
+    // ЧЕРНОВИК: временный экран и тексты ждут макета и согласования владельца.
+    let trash=[];
+    function renderTrash(){
+      const box=q('.re-trash');box.hidden=!trash.length;
+      const until=x=>{const d=new Date(x.deleted_at);d.setDate(d.getDate()+7);return d.toLocaleDateString('ru-RU',{day:'numeric',month:'long'});};
+      box.innerHTML=trash.length?'Удалённые черновики: '+trash.map(x=>`${esc(G.period(x.start,x.end))} — можно вернуть до ${esc(until(x))} <button type="button" data-restore-roster="${esc(x.id)}">Вернуть</button>`).join(' · '):'';
+    }
+    q('.re-trash').addEventListener('click',async e=>{
+      const b=e.target.closest('[data-restore-roster]');if(!b||b.disabled)return;
+      if(!(await flush()))return;
+      b.disabled=true;
+      try{const data=await api('restore',{id:b.dataset.restoreRoster});toast('');await list(data.id);}
+      catch(err){failed(err);b.disabled=false;}
+    });
     async function load(id){
       if(!(await flush()))return;
       try{const data=await api('open',{id});team=data.team||[];wishes=data.wishes||{};toast('');accept(data,true);sel=null;side=null;renderAll();refreshOffs();
@@ -218,6 +234,10 @@
       const d=D();
       return d.people.map(p=>({name:p.name,cells:d.cells[p.name]||{},off:d.off[p.name]||[],asked:offsInfo?.requests?.[p.name]||[]}));
     }
+    // Корзина черновика: убранный сотрудник неделю стоит серым на своей строке и возвращается целиком.
+    const REMOVED_DAYS=7;
+    function gone(){return (D().removed||[]).map(x=>({name:x.person.name,cells:x.cells||{},off:x.off||[],index:x.index}));}
+    function purgeDay(x){const d=new Date(x.removed_at);d.setDate(d.getDate()+REMOVED_DAYS);return d.toLocaleDateString('ru-RU',{day:'numeric',month:'long'});}
     // Весь график помещается на экране: ширина колонок подбирается под место, а не наоборот.
     // Совсем узкое окно прокручивается, но без ползунка.
     // Колонка с необычным временем (9–17) шире остальных: вокруг плашки остаётся внешнее поле, которое
@@ -244,7 +264,7 @@
     // График целиком на первом экране: высота строк подбирается под окно (30–40 px), а не наоборот.
     function fitRows(){
       grid.style.setProperty('--rh','40px');
-      const top=grid.getBoundingClientRect().top+scrollY,room=innerHeight-top-20,rows=Math.max(1,D().people.length);
+      const top=grid.getBoundingClientRect().top+scrollY,room=innerHeight-top-20,rows=Math.max(1,D().people.length+(D().removed||[]).length);
       let rh=40;
       for(let pass=0;pass<4;pass++){
         grid.style.setProperty('--rh',rh+'px');
@@ -255,7 +275,7 @@
     }
     function renderGrid(){
       const left=sc.scrollLeft;
-      grid.innerHTML=G.table({days:cur.days,people:people(),events:D().events,holidays:holidayLabels(),today:iso(new Date()),scrolls:true,edit:true,weekGap:false,need,flagged:cur.check?.days});
+      grid.innerHTML=G.table({days:cur.days,people:people(),removed:gone(),events:D().events,holidays:holidayLabels(),today:iso(new Date()),scrolls:true,edit:true,weekGap:false,need,flagged:cur.check?.days});
       sizeGrid();sc.scrollLeft=left;
       if(sel)grid.querySelector(`td.sg-c[data-r="${sel.r}"][data-day="${sel.day}"]`)?.classList.add('sg-sel');
       renderReport();
@@ -343,6 +363,16 @@
       // Пока ничего не выбрано, вместо пустой карточки справа стоит проверка правил.
       q('.re-panel').hidden=!sel&&!side;
       if(!sel&&!side)return;
+      if(side?.kind==='gone'){
+        const x=(D().removed||[])[side.i];
+        if(!x){side=null;q('.re-panel').hidden=true;return;}
+        // ЧЕРНОВИК: временный экран и тексты ждут макета и согласования владельца.
+        q('.re-who').innerHTML=`${esc(x.person.name)}<small>Убран из графика</small>`;
+        q('.re-person').innerHTML=`<h4 class="re-sub">Сотрудник</h4><p class="re-wish">Смены и выходные сохранены. Насовсем уберётся ${esc(purgeDay(x))}.</p>
+          <div class="re-row"><button type="button" data-restore="${side.i}">Вернуть в график</button></div>`;
+        q('.re-cell').innerHTML='';q('.re-day').innerHTML='';blockAdd();
+        return;
+      }
       const f=focusOf(),p=f.r!=null?person(f.r):null;
       q('.re-who').innerHTML=`${p?esc(p.name):f.day?esc(G.dayName(f.day)):'Смена'}<small>${p&&f.day?esc(G.dayName(f.day)):''}</small>`;
       blockPerson(p);blockCell(f,p);blockDay(f);blockAdd();
@@ -385,7 +415,8 @@
     }
     // Добавить можно только подтверждённого официанта и только из списка, не по имени.
     function blockAdd(){
-      const addable=team.filter(t=>!D().people.some(p=>p.link===t.id)),box=q('.re-adder');
+      // Убранного не добавляют заново: его возвращают из серой строки вместе со сменами.
+      const addable=team.filter(t=>!D().people.some(p=>p.link===t.id)&&!(D().removed||[]).some(x=>x.person.link===t.id)),box=q('.re-adder');
       box.hidden=!addable.length;
       q('.re-chips').innerHTML=addable.map(t=>`<button type="button" data-add="${esc(t.id)}">${esc(t.report_name)}</button>`).join('');
     }
@@ -440,7 +471,7 @@
     function dropTyped(){clearTimeout(grid._commit);pend=null;typed='';}
     grid.addEventListener('keydown',e=>{
       if(busy)return;
-      const cell=e.target.closest('td.sg-c');
+      const cell=e.target.closest('td.sg-c:not(.sg-gone)');
       if(!cell){if((e.key==='Enter'||e.key===' ')&&e.target.closest('th')){e.preventDefault();e.target.click();}return;}
       const r=+cell.dataset.r,i=cur.days.indexOf(cell.dataset.day);
       const move=(dr,di)=>{const nr=Math.min(Math.max(r+dr,0),D().people.length-1),ni=Math.min(Math.max(i+di,0),cur.days.length-1);e.preventDefault();typed='';select(nr,cur.days[ni]);};
@@ -469,17 +500,17 @@
     let drag=null;
     const mark=cell=>{grid.querySelectorAll('.sg-drop').forEach(x=>x.classList.remove('sg-drop'));cell?.classList.add('sg-drop');};
     grid.addEventListener('dragstart',e=>{
-      const c=e.target.closest('td.sg-c');if(!c)return;
+      const c=e.target.closest('td.sg-c:not(.sg-gone)');if(!c)return;
       drag={r:+c.dataset.r,day:c.dataset.day};e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain','Смена');
       requestAnimationFrame(()=>c.classList.add('sg-drag'));
     });
     grid.addEventListener('dragover',e=>{
-      const c=e.target.closest('td.sg-c');if(!drag||!c)return;
+      const c=e.target.closest('td.sg-c:not(.sg-gone)');if(!drag||!c)return;
       e.preventDefault();e.dataTransfer.dropEffect='move';mark(c);
     });
     grid.addEventListener('dragend',()=>{drag=null;grid.querySelectorAll('.sg-drag,.sg-drop').forEach(x=>x.classList.remove('sg-drag','sg-drop'));});
     grid.addEventListener('drop',e=>{
-      const c=e.target.closest('td.sg-c');if(!drag||!c)return;
+      const c=e.target.closest('td.sg-c:not(.sg-gone)');if(!drag||!c)return;
       e.preventDefault();const from=drag,to={r:+c.dataset.r,day:c.dataset.day};drag=null;mark(null);moveShift(from,to);
     });
     function moveShift(from,to){
@@ -495,19 +526,34 @@
     }
     grid.addEventListener('click',e=>{
       const x=e.target.closest('.sg-x');if(x){e.stopPropagation();return removePerson(+x.dataset.remove);}
-      const cell=e.target.closest('td.sg-c');if(cell)return select(+cell.dataset.r,cell.dataset.day);
+      const cell=e.target.closest('td.sg-c:not(.sg-gone)');if(cell)return select(+cell.dataset.r,cell.dataset.day);
       const head=e.target.closest('thead th.sg-day');if(head){sel=null;clearSel();side={kind:'day',day:head.dataset.day};scroll.go(head.dataset.day);renderPanel();return;}
-      const name=e.target.closest('tbody th.sg-name');if(name){sel=null;clearSel();side={kind:'person',r:+name.dataset.r};renderPanel();}
+      const name=e.target.closest('tbody th.sg-name');
+      if(name&&name.dataset.gone!=null){sel=null;clearSel();side={kind:'gone',i:+name.dataset.gone};renderPanel();return;}
+      if(name){sel=null;clearSel();side={kind:'person',r:+name.dataset.r};renderPanel();}
     });
 
     // ─── настройки дня и человека ───
-    // Убрать человека из графика (уволился): его смены и выходные удаляются из черновика.
+    // Убрать человека из графика (уволился): он уходит в корзину черновика вместе со сменами и выходными
+    // и неделю стоит серым на своей строке — вернуть можно одним нажатием (правило владельца 16.11.2026).
     function removePerson(r){
       const p=person(r);if(!p)return;
       if(!confirm(`Убрать ${p.name} из графика?`))return;
-      D().people.splice(r,1);
-      for(const key of ['cells','off','wish_off','wish_starts'])delete D()[key][p.name];
+      const d=D(),take=key=>{const v=d[key][p.name];delete d[key][p.name];return v;};
+      (d.removed=d.removed||[]).push({person:{...p},index:r,removed_at:new Date().toISOString(),
+        cells:take('cells')||{},off:take('off')||[],wish_off:take('wish_off')||[],wish_starts:take('wish_starts')||[]});
+      d.people.splice(r,1);
       side=null;sel=null;clearSel();changed();renderPanel();
+    }
+    function restorePerson(i){
+      const d=D(),x=(d.removed||[])[i];if(!x)return;
+      // ЧЕРНОВИК: текст ждёт согласования с владельцем.
+      if(d.people.some(p=>p.name.toLowerCase()===x.person.name.toLowerCase()))return error(`В графике уже есть «${x.person.name}».`);
+      const at=Math.min(x.index,d.people.length);
+      d.people.splice(at,0,x.person);
+      for(const key of ['cells','off','wish_off','wish_starts']){const v=x[key];if(v&&(Array.isArray(v)?v.length:Object.keys(v).length))d[key][x.person.name]=v;}
+      d.removed.splice(i,1);error('');
+      side={kind:'person',r:at};sel=null;clearSel();changed();renderPanel();
     }
     q('.re-day').addEventListener('change',e=>{
       const t=e.target,day=focusOf().day;if(!day)return;
@@ -527,6 +573,7 @@
       changed();renderPanel();
     });
     q('.re-person').addEventListener('click',e=>{
+      const back=e.target.closest('[data-restore]');if(back)return restorePerson(+back.dataset.restore);
       const b=e.target.closest('button'),f=focusOf();if(!b||f.r==null)return;
       const list=D().people,r=f.r;
       if(b.dataset.move){const to=r+(+b.dataset.move);if(to<0||to>=list.length)return;[list[r],list[to]]=[list[to],list[r]];side={kind:'person',r:to};sel=null;clearSel();changed();renderPanel();}
@@ -603,7 +650,8 @@
     q('.re-delete').onclick=async()=>{
       if(!cur||cur.published_at||!confirm('Удалить черновик?'))return;
       clearTimeout(timer);
-      try{await api('delete',{id:cur.id});periods=periods.filter(p=>p.id!==cur.id);cur=null;edits=saved=0;q('.re-editor').hidden=true;await list();}
+      try{await api('delete',{id:cur.id});periods=periods.filter(p=>p.id!==cur.id);cur=null;edits=saved=0;q('.re-editor').hidden=true;await list();
+        toast('Черновик в корзине. Вернуть можно неделю.');}
       catch(e){failed(e);}
     };
     async function createPeriod(start,end,done){

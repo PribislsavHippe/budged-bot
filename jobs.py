@@ -69,6 +69,15 @@ async def prune_private_money_backups():
         failure(error,area='private_money',stage='prune')
 
 
+async def purge_roster_trash():
+    """Удалённые черновики графика лежат в корзине неделю, потом исчезают (migration_v43)."""
+    try:
+        await db._execute(db.supabase.rpc('purge_roster_trash', {}), retries=1)
+    except Exception as error:
+        from diagnostics import failure
+        failure(error, area='roster', stage='trash_purge')
+
+
 def setup_scheduler(bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
     from category_notifications import send_pending
@@ -86,6 +95,7 @@ def setup_scheduler(bot) -> AsyncIOScheduler:
     scheduler.add_job(prompt_work_end,"interval",minutes=5,args=[bot],max_instances=1)
     scheduler.add_job(self_ping, "interval", minutes=10)
     scheduler.add_job(prune_private_money_backups, "interval", hours=1, max_instances=1)
+    scheduler.add_job(purge_roster_trash, "interval", hours=1, max_instances=1)
     scheduler.add_job(prune_private_money_backups, max_instances=1)
     async def prune_finished_inbox():
         try:

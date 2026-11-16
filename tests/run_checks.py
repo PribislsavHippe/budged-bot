@@ -37,7 +37,7 @@ def main():
     run([sys.executable, '-m', 'pip', 'check'])
     run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_*.py', '-v'])
     scripts = ['calendar_time_checks.mjs', 'calendar_subscription_ui_checks.mjs', 'help_ui_checks.mjs', 'private_device_check.js',
-               'private_concurrency_check.cjs', 'private_finance_check.cjs']
+               'private_concurrency_check.cjs', 'private_finance_check.cjs', 'roster_trash_ui_checks.mjs']
     scripts += [p.name for p in sorted(ROOT.joinpath('tests').glob('*sql_checks.mjs'))]
     for script in scripts:
         run(['node', ROOT / 'tests' / script])
