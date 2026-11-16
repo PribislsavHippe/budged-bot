@@ -30,7 +30,8 @@ def solved(request, full=False):
 class SlotTests(unittest.TestCase):
     def test_slots_follow_the_owner_rules_for_every_weekday(self):
         expected = {0: [9, 10, 11, 12, 14], 3: [9, 10, 11, 12, 14],
-                    4: [9, 9, 10, 11, 12, 12], 5: [8, 8, 9, 11, 12, 14], 6: [8, 8, 9, 11, 12, 14]}
+                    # Пятница: двое в 9, один в 10, один в 11, двое в 13 (решение владельца 16.11.2026).
+                    4: [9, 9, 10, 11, 13, 13], 5: [8, 8, 9, 11, 12, 14], 6: [8, 8, 9, 11, 12, 14]}
         for offset, hours in expected.items():
             day = START + timedelta(days=offset)
             count = roster.WEEKEND_COUNT if day.weekday() >= 4 else roster.WEEKDAY_COUNT
@@ -64,11 +65,38 @@ class BuildTests(unittest.TestCase):
         self.assertLessEqual(max(shifts) - min(shifts), 1)
         self.assertEqual(found.streaks, [])
 
+    def test_everyone_both_opens_and_closes(self):
+        # Решение владельца 16.11.2026: никто не открывает всегда и никто всегда не закрывает.
+        request = fortnight()
+        schedule = solved(request, full=True)
+        opens, closes = {}, {}
+        for name, own in schedule.items():
+            opens[name] = sum(roster.start_of(s) == roster.open_hour(d) for d, s in own.items())
+            closes[name] = sum(roster.start_of(s) >= roster.LAST_CLOSER_START and roster.end_of(s) >= roster.CLOSE_HOUR
+                               for s in own.values())
+        self.assertLessEqual(max(opens.values()) - min(opens.values()), 2, opens)
+        self.assertLessEqual(max(closes.values()) - min(closes.values()), 2, closes)
+        self.assertTrue(all(opens.values()) and all(closes.values()), (opens, closes))
+
+    def test_the_last_two_weeks_limit_rest_and_work_runs_across_periods(self):
+        # Решение владельца 16.11.2026: составитель учитывает две последние недели прошлого графика.
+        request = fortnight()
+        request.pattern_history = {NAMES[0]: '1' * 11 + '000', NAMES[1]: '0' * 11 + '111'}
+        self.assertEqual((request.prior_rest(NAMES[0]), request.prior_streak(NAMES[1])), (3, 3))
+        schedule = solved(request, full=True)
+        self.assertIn(START, schedule[NAMES[0]])          # отдыхал три дня — четвёртого подряд не будет
+        self.assertNotIn(START, schedule[NAMES[1]])       # отработал три подряд — первым днём отдыхает
+        for name, own in schedule.items():
+            run = request.prior_rest(name)
+            for day in request.days:
+                run = 0 if day in own else run + 1
+                self.assertLessEqual(run, roster.MAX_REST, (name, day))
+
     def test_two_on_two_off_when_it_fits(self):
         days = [START + timedelta(days=i) for i in range(8)]
         request = roster.Request(START, days[-1], NAMES[:4], counts=dict.fromkeys(days, 2),
                                  openers=dict.fromkeys(days, 0), closers=dict.fromkeys(days, 2))
-        schedule = solved(request)
+        schedule = solved(request, full=True)  # проверка качества — полный поиск
         for own in schedule.values():
             worked = sum(1 << i for i, day in enumerate(days) if day in own)
             self.assertEqual(len(own), 4)
@@ -183,7 +211,7 @@ class WishTests(unittest.TestCase):
         request = fortnight(self.OFF)
         request.wish_starts = {NAMES[0]: set(roster.MORNING_STARTS), NAMES[1]: {11, 12}}
         request.wish_off = {NAMES[2]: {START + timedelta(days=12)}}
-        found = roster.audit(request, solved(request))
+        found = roster.audit(request, solved(request, full=True))  # проверка качества — полный поиск
         self.assertEqual((found.rises, found.shortages, found.closers, found.openers), ([], [], [], []))
         self.assertEqual(found.missed_off, [])
         self.assertEqual(found.missed_starts, [])
@@ -209,22 +237,15 @@ class WishTests(unittest.TestCase):
         self.assertEqual(len(found.missed_off), roster.WEEKEND_COUNT)
         self.assertIn('выходной просят 11, отпустить можно только 5', roster.report(request, schedule, found))
 
-    def test_more_than_three_mandatory_days_off_is_flagged(self):
-        request = fortnight({NAMES[0]: [0, 1, 2, 3]})
-        found = roster.audit(request, solved(request))
-        self.assertEqual(found.too_many_off, [(NAMES[0], 4)])
-
-    def test_limit_is_three_per_fifteen_days_and_students_may_have_more(self):
-        day = lambda n: START + timedelta(days=n)
-        self.assertEqual(roster.Request(START, day(14), []).mandatory_limit, 3)
-        self.assertEqual(roster.Request(START, day(29), []).mandatory_limit, 6)
-        self.assertEqual(roster.Request(START, day(30), []).mandatory_limit, 6)
-        request = fortnight({NAMES[0]: [0, 1, 2, 3, 4, 5], NAMES[1]: [0, 1, 2, 3]})
-        request.students = {NAMES[0]}
+    def test_many_mandatory_days_off_in_a_row_are_not_an_error(self):
+        # Решение владельца 16.11.2026: лимита на обязательные выходные нет, три и больше подряд — не ошибка.
+        request = fortnight({NAMES[0]: [0, 1, 2, 3], NAMES[1]: [5, 6, 7]})
         schedule = solved(request)
         found = roster.audit(request, schedule)
-        self.assertEqual(found.too_many_off, [(NAMES[1], 4)])
-        self.assertIn('«; учёба»', roster.report(request, schedule, found))
+        self.assertEqual(found.too_many_off, [])
+        text = roster.report(request, schedule, found)
+        self.assertNotIn('Обязательных выходных больше', text)
+        self.assertFalse(any(day in schedule.get(NAMES[0], {}) for day in [START + timedelta(days=i) for i in range(4)]))
 
     def test_person_away_for_whole_period_does_not_distort_the_report(self):
         request = fortnight({NAMES[0]: list(range(14))})
@@ -233,7 +254,7 @@ class WishTests(unittest.TestCase):
 
     def test_when_short_closing_is_kept_and_one_person_still_opens(self):
         friday = START + timedelta(days=4)
-        self.assertEqual(sorted(roster.day_slots(friday, 6)[:4]), [9, 11, 12, 12])
+        self.assertEqual(sorted(roster.day_slots(friday, 6)[:4]), [9, 11, 13, 13])
         self.assertEqual(roster.day_slots(friday, 1), [9])
 
     def test_saturday_opener_after_friday_is_reported_as_unavoidable_rise(self):

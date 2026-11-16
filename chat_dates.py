@@ -3,6 +3,8 @@ import re
 from datetime import date, timedelta
 
 MONTHS=('января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря')
+# Люди пишут и «13 май», «3 сентябрь» (ревью 15.11.2026).
+MONTHS_NOMINATIVE=('январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь')
 MONTHS_NOM=('январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь')
 
 def human_date(value):
@@ -33,7 +35,7 @@ def parse_date(text,today):
             else:
                 words=re.fullmatch(r'(\d{1,2})(?:-?(?:го|е))?\s+([а-я]+)\.?(?:\s+(\d{4}))?',text)
                 if words:
-                    matches=[i+1 for i,name in enumerate(MONTHS) if words[2]==name or (len(words[2])>=3 and name.startswith(words[2]))]
+                    matches=[i+1 for i,name in enumerate(MONTHS) if words[2] in (name,MONTHS_NOMINATIVE[i]) or (len(words[2])>=3 and name.startswith(words[2]))]
                     if len(matches)!=1:raise ValueError()
                     result=date(int(words[3]) if words[3] else today.year,matches[0],int(words[1]))
                 elif re.fullmatch(r'\d{1,2}(?:-?го)?',text):

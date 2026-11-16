@@ -365,10 +365,14 @@ def test_tips_range_scopes_user_and_dates():
 
 
 def test_tips_range_rejects_future_and_unauthorized():
+    # Период целиком в будущем — отказ. Конец позже сегодняшнего (часы телефона спешат) — обрезается до сегодня.
     with patch.object(webapp_api, 'op_today', return_value=date(2026, 7, 20)):
         r = run(webapp_api.api_tips_range(Req({'initData': init_data(TOKEN, 42),
+            'start': '2026-07-21', 'end': '2026-07-22'})))
+        assert r.status == 400
+        r = run(webapp_api.api_tips_range(Req({'initData': init_data(TOKEN, 42),
             'start': '2026-07-18', 'end': '2026-07-21'})))
-    assert r.status == 400
+        assert r.status == 200 and r.data['today'] == '2026-07-20'
     assert run(webapp_api.api_tips_range(Req({'initData': ''}))).status == 401
 
 

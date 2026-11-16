@@ -46,16 +46,14 @@ def prompt_text(start, end, limit, today=None, again=False):
     example = ', '.join(str(d.day) for d in (days[1], days[8])) if len(days) > 8 else ''
     head = 'Напиши числа заново' if again else f'График на {period_text(start, end)}. Напиши числа обязательных выходных'
     tail = f' Например: {example}.' if example else ''
-    return (f'{head}.{tail} Обязательных — {limit}; если нужно больше, менеджер решит, получится ли учесть эти даты.\n'
+    # Нормы обязательных выходных больше нет (решение владельца 16.11.2026): о ней не пишем.
+    return (f'{head}.{tail}\n'
             'Если пожеланий нет, напиши «пожеланий нет».')
 
 
 def over_note(chosen, limit):
-    """Больше нормы: записываем все, но сверх нормы — по согласованию с менеджером."""
-    if not limit or len(chosen) <= limit:
-        return ''
-    return (f' Обязательных выходных {limit}, остальные — по согласованию с менеджером: '
-            'он увидит всю просьбу в графике.')
+    """Нормы обязательных выходных больше нет (решение владельца 16.11.2026): примечания тоже нет."""
+    return ''
 
 
 def summary_text(start, end, chosen, limit=None):

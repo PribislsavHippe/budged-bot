@@ -334,8 +334,10 @@ def check(draft, start, end):
     request = to_request(draft, start, end)
     schedule = to_schedule(draft)
     found = roster.audit(request, schedule)
+    # Красным — только нехватка людей (решение владельца 16.11.2026). Открытие и закрытие остаются
+    # в списке «Что не получилось»: день с нужным числом людей не должен выглядеть сорванным.
     flagged = {}
-    for day, *_ in found.shortages + found.closers + found.openers:
+    for day, *_ in found.shortages:
         flagged[day.isoformat()] = True
     text = roster.report(request, schedule, found, editor=True)
     # Нарушения тем же порядком, что в тексте разбора, но с днём и человеком:
@@ -383,7 +385,8 @@ def build_all(draft, start, end, requested=None, weekdays=None, *, preferred=Non
     for name, days in (requested or {}).items():
         if name not in {p['name'] for p in draft['people']}:
             continue
-        keep = sorted({d for d in days if start.isoformat() <= d <= end.isoformat()})[:roster.off_limit(period, name in students)]
+        # Лимита на обязательные выходные нет (решение владельца 16.11.2026): берём все даты периода.
+        keep = sorted({d for d in days if start.isoformat() <= d <= end.isoformat()})
         if keep:
             asked[name] = keep
     fixed = {name: sorted(set(manual.get(name, [])) | set(asked.get(name, []))) for name in set(manual) | set(asked)}
@@ -835,11 +838,8 @@ async def offs_action(request, uid, row, start, end, send):
             'weekdays': {links[link]: w['days'] for link, w in wishes.items() if link in links and w['days']},
             'patterns': {links[link]: w['pattern'] for link, w in wishes.items() if link in links and w['pattern']},
             'time': time_summaries,
-            # Больше нормы — согласовать: сборка сама ставит только норму, остальное решает менеджер.
-            'over': {links[link]: limit for link in answered
-                     for limit in [roster.off_limit((end - start).days + 1,
-                                                    any(p.get('link') == link and p.get('student') for p in people))]
-                     if len(got[link]) > limit}}
+            # Нормы обязательных выходных больше нет (решение владельца 16.11.2026): согласовывать нечего.
+            'over': {}}
 
 
 # ─── сообщения команде ───────────────────────────────────────────────────────

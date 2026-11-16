@@ -417,5 +417,16 @@ class ReviewP2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(error), 'Даты пересекаются с графиком 20.11–30.11.')
 
 
+
+class ChatDates(unittest.TestCase):
+    def test_month_in_the_nominative_is_understood(self):
+        # Ревью 15.11.2026: «13 май», «3 сентябрь» бот не понимал.
+        import chat_dates
+        today = date(2026, 11, 15)
+        for text, expected in (('13 май', date(2026, 5, 13)), ('3 сентябрь', date(2026, 9, 3)),
+                               ('13 мая', date(2026, 5, 13)), ('1 март', date(2026, 3, 1))):
+            self.assertEqual(chat_dates.parse_date(text, today), expected, text)
+
+
 if __name__ == '__main__':
     unittest.main()

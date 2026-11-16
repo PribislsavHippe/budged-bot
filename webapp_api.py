@@ -416,6 +416,10 @@ async def api_tips_range(request: web.Request) -> web.Response:
             tip_days = [_entry_date(e) for e in entries if e['kind'] == 'income'
                         and e['category'] == 'Чаевые' and _entry_date(e) <= today]
             start = end = today if has_shift or not tip_days else max(tip_days)
+        # Часы телефона могут спешить (или запрос пришёл около 06:00 МСК): «сегодня» клиента позже серверного.
+        # Конец периода обрезаем до сегодняшнего дня, а не отказываем (ревью 15.11.2026).
+        if end > today and start <= today:
+            end = today
         if start.year < 2000 or end.year > 2100 or start > end or end > today:
             raise ValueError()
         if custom and start == end:

@@ -137,6 +137,8 @@ class TelegramInbox:
             for row in group[:100]:
                 if row['batch_id'] or not ready(row) or self.forwarded_key(self.unpack(row))!=key:break
                 selected.append(row)
+            # Голову успел забрать другой обработчик между двумя запросами: сообщений этого человека нет.
+            if not selected:continue
             received=datetime.fromisoformat(selected[-1]['received_at'].replace('Z','+00:00'))
             if len(selected)==100 or now-received>=timedelta(seconds=2):return selected
         return []

@@ -380,7 +380,7 @@
       <p class="sheet-sub" id="spend-sub"></p>
       <div class="chips" id="spend-chips"></div>
       <div class="spend-inputs" id="spend-inputs">
-        <input type="text" id="spend-name" aria-label="Название расхода" placeholder="Название" style="display:none">
+        <input type="text" id="spend-name" aria-label="Название расхода" placeholder="Название" maxlength="60" style="display:none">
         <input type="number" inputmode="decimal" step="0.01" min="0.01" max="10000000" id="spend-amount" aria-label="Сумма расхода" placeholder="Сумма ₽">
         <button id="spend-submit">Внести</button>
       </div>
@@ -1342,7 +1342,7 @@ function renderHistory() {
       '</div>' +
       '<div class="hist-edit">' +
         '<div class="hist-edit-row">' +
-          '<input type="number" inputmode="numeric" class="hist-amt-input" value="' + amt + '">' +
+          '<input type="number" inputmode="decimal" step="0.01" class="hist-amt-input" value="' + amt + '">' +
           (accrual ? '' : '<div class="acc-toggle">' +
             '<button class="acc-btn" data-acc="cash">Нал</button>' +
             '<button class="acc-btn" data-acc="card">Карта</button>' +

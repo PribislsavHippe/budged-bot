@@ -47,7 +47,8 @@
     select.hidden=!many;
     if(standalone)$('restaurant-title').hidden=many;
   }
-  function lock(){panel.querySelectorAll('button,input,select').forEach(el=>el.disabled=busy);}
+  // Редактор графика сам ведёт свои кнопки («Опубликовано» выключено): общая блокировка кабинета их не трогает.
+  function lock(){panel.querySelectorAll('button,input,select').forEach(el=>{if(!el.closest('.re'))el.disabled=busy;});}
   function member(row){
     const states={pending:'Ждёт подтверждения',rejected:'Заявка отклонена',revoked:'Доступ закрыт'};
     const sales=row.sales;const m=sales?.metrics,cutoffs=sales?.report_dates||[];

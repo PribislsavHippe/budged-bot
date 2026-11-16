@@ -348,3 +348,9 @@ html.sg-land-open body>*:not(.sg-land):not(#bg){visibility:hidden}
 .sg tbody tr.sg-gone{opacity:.4}
 .sg-edit tbody tr.sg-gone td.sg-c{cursor:default}
 .sg-edit tbody tr.sg-gone .sg-name{cursor:pointer}
+/* Желательный выходной: мягче обязательного «вых» и просьбы из Telegram — точечная обводка. */
+.sg-s.wish{justify-content:center;padding:0 6px;font-size:12px;font-weight:400;color:color-mix(in srgb,var(--sg-off-ink) 60%,transparent);
+  border:1.5px dotted color-mix(in srgb,var(--sg-off-ink) 40%,transparent)}
+.sg-s.wished{outline:1.5px dotted color-mix(in srgb,var(--sg-off-ink) 55%,transparent);outline-offset:-1px}
+/* Число смен у каждого — справа в колонке имён. */
+.sg .sg-name .sg-cnt{float:right;margin-left:8px;font-size:12px;font-weight:400;color:var(--sg-muted);font-variant-numeric:tabular-nums}

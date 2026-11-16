@@ -306,8 +306,9 @@ class DraftTests(unittest.TestCase):
         asked = {'Аня': [f'2026-11-{d}' for d in (16, 17, 18, 19, 20, 21, 22)], 'Боря': ['2026-11-18', '2026-12-30', '2026-11-19'], 'Чужой': ['2026-11-17']}
         with fast():
             self.api.build_all(draft, START, END, asked)
-        # Норма на 7 дней — 1 выходной, студенту — 3: лишние просьбы отбрасываются, даты вне периода тоже.
-        self.assertEqual(draft['off_requested'], {'Аня': ['2026-11-16', '2026-11-17', '2026-11-18'], 'Боря': ['2026-11-18']})
+        # Лимита нет (решение владельца 16.11.2026): все просьбы периода берутся, даты вне периода — нет.
+        self.assertEqual(draft['off_requested'], {'Аня': [f'2026-11-{d}' for d in (16, 17, 18, 19, 20, 21, 22)],
+                                                  'Боря': ['2026-11-18', '2026-11-19']})
         for name, days in draft['off_requested'].items():
             for day in days:
                 self.assertIn(day, draft['off'][name])
@@ -352,11 +353,10 @@ class DraftTests(unittest.TestCase):
             ok, problem = days_off.resolve(parse(text), start, end, today, 3)
             self.assertIsNone(ok, text)
             self.assertIn('16–30 ноября', problem)
-        # Больше нормы — принимается; сверх нормы согласует менеджер.
+        # Лимита нет (решение владельца 16.11.2026): четыре подряд принимаются без примечания.
         many, problem = days_off.resolve(parse('17 18 19 20'), start, end, today, 3)
         self.assertEqual((len(many), problem), (4, None))
-        self.assertIn('по согласованию с менеджером', days_off.over_note(many, 3))
-        self.assertEqual(days_off.over_note(many, 5), '')
+        self.assertEqual(days_off.over_note(many, 3), '')
         self.assertIn('уже прошли', days_off.resolve(parse('17'), start, end, date(2026, 11, 20), 3)[1])
         self.assertIsNone(days_off.resolve(parse('17 декабря'), start, end, today, 3)[0])
         self.assertEqual(days_off.resolve(parse('нет'), start, end, today, 3), (set(), None))
@@ -408,7 +408,10 @@ class DraftTests(unittest.TestCase):
                                   'Гоша': {friday: '12-13'}, 'Даша': {friday: '12'}, 'Ева': {friday: '10'}})
         found = roster.audit(self.api.to_request(draft, START, END), self.api.to_schedule(draft))
         self.assertIn((date(2026, 11, 20), 2, 3), found.closers)
-        self.assertTrue(self.api.check(draft, START, END)['days'][friday])
+        # Людей шесть из шести: день не красный (решение владельца 16.11.2026), а закрытие — в списке проблем.
+        checked = self.api.check(draft, START, END)
+        self.assertNotIn(friday, checked['days'])
+        self.assertIn({'day': friday, 'name': None, 'text': '20 ноября: в закрытии 2, нужно 3.'}, checked['items'])
 
     def test_problems_point_to_their_day_and_person(self):
         draft = self.draft(cells={'Аня': {d: '9' for d in ('2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19')}})
@@ -930,7 +933,12 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
         self.assertEqual(made['draft']['wish_off'], {'Аня': ['2026-11-17']})
         self.assertEqual(made['draft']['off'], {})
-        self.assertTrue(any('2026-11-17' not in v['cells'].get('Аня', {}) for v in made['draft']['variants']))
+        # Пожелание мягкое: в плотной неделе (7 человек на 7 дней) правило о сериях смен важнее, и его можно не выполнить.
+        # Тогда оно видно в разборе и в таблице (точечная обводка), а не теряется молча.
+        report = made['check']['text']
+        self.assertIn('Пожелания: выполнено', report)
+        if all('2026-11-17' in v['cells'].get('Аня', {}) for v in made['draft']['variants']):
+            self.assertIn('Аня: выходной не получился 17 ноября', report)
         opened = await self.roster('open', MANAGER, id=made['id'])
         self.assertEqual(list(opened['wishes'].values()), [{'days': [1], 'pattern': None}])
         # «Убрать пожелание» стирает его; следующая сборка его уже не учитывает.
@@ -1011,15 +1019,15 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         await days_off_chat.write_request(message, state=NS(update_data=update_data), **(await days_off_chat.off_request(message)))
         reply = message.answer.await_args.args[0]
         self.assertIn('16, 17, 20, 24, 27 ноября', reply)
-        self.assertIn('по согласованию с менеджером', reply)
+        self.assertNotIn('согласован', reply)   # лимита нет — и примечания про него нет
         status = await self.roster('offs', MANAGER, id=made['id'])
         self.assertEqual(status['requests']['Аня'], ['2026-11-16', '2026-11-17', '2026-11-20', '2026-11-24', '2026-11-27'])
-        self.assertEqual(status['over'], {'Аня': 3})
+        self.assertEqual(status['over'], {})
         mine = (await self.post('/api/schedule/view', WAITER))['mine']
         self.assertEqual(mine['requests'][0]['limit'], 3)
-        # Сборка сама ставит только норму; остальное менеджер добавляет вручную после согласования.
+        # Лимита нет (решение владельца 16.11.2026): сборка ставит все пять обязательных выходных.
         rebuilt = await self.roster('build', MANAGER, id=made['id'], revision=made['revision'], draft=made['draft'])
-        self.assertEqual(len(rebuilt['draft']['off_requested']['Аня']), 3)
+        self.assertEqual(len(rebuilt['draft']['off_requested']['Аня']), 5)
 
     async def test_publishing_writes_waiters_shifts_into_their_personal_calendar(self):
         import asyncio

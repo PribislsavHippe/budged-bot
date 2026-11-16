@@ -22,14 +22,18 @@
   const works=v=>!!v&&v.start!=null;
   function shift(person,iso){
     const v=parse(person.cells?.[iso]),off=(person.off||[]).includes(iso),asked=!off&&(person.asked||[]).includes(iso);
+    // Желательный выходной (по дню недели или на дату) — мягче обязательного: точечная обводка.
+    const wish=!off&&!asked&&(person.wish||[]).includes(iso);
     if(works(v)){
       // Выход в обязательный выходной — тоже «необычное», но цветом выходного.
       // Смена в день, когда человек просит выходной (ещё не учтённый сборкой), обведена пунктиром.
       const cls=off?'off':v.note||v.end!=null?'note':'';
-      return `<span class="sg-s ${cls}${v.end!=null?' rng':''}${asked?' clash':''}"${asked?' title="Просит выходной"':''}><b>${clock(v.start,true)}${v.end!=null?'–'+clock(v.end,true):''}</b></span>`;
+      const title=asked?' title="Просит выходной"':wish?' title="Желательный выходной"':'';
+      return `<span class="sg-s ${cls}${v.end!=null?' rng':''}${asked?' clash':''}${wish?' wished':''}"${title}><b>${clock(v.start,true)}${v.end!=null?'–'+clock(v.end,true):''}</b></span>`;
     }
     if(off)return '<span class="sg-s off">вых</span>';
     if(asked)return '<span class="sg-s ask" title="Просит выходной">вых</span>';
+    if(wish)return '<span class="sg-s wish" title="Желательный выходной">жел</span>';
     if(v&&v.note)return '<span class="sg-s note"></span>';
     return '<span class="sg-e"></span>';
   }
@@ -65,7 +69,8 @@
       const event=o.events?.[iso],holiday=event?'':runLabel[iso]||'';
       return (gap(iso,k)?g('th'):'')+`<th class="sg-ev" scope="col">${event?`<i>${esc(event)}</i>`:holiday?`<i class="sg-hol">${esc(holiday)}</i>`:''}</th>`;}).join('')}${tail('th')}</tr>`;
     // Строка 2: день недели бледным, число жирным.
-    html+=`<tr class="sg-hd"><th class="sg-name" scope="col">${o.corner??''}</th>`;
+    // o.counts (редактор): число смен у каждого справа в колонке имён — видно при любой прокрутке.
+    html+=`<tr class="sg-hd"><th class="sg-name" scope="col">${o.corner??''}${o.counts?'<small class="sg-cnt">смен</small>':''}</th>`;
     days.forEach((iso,k)=>{const d=at(iso),rel=ti>=0?k-ti:-1;
       html+=(gap(iso,k)?g('th'):'')+`<th scope="col" data-day="${iso}" tabindex="0" class="sg-day ${iso===o.today?'sg-today':''}" title="${o.edit?'Настройки дня':'Поставить этот день рядом с именами'}">`
         +`${o.near?(o.events?.[iso]?`<em class="ev">${esc(o.events[iso])}</em>`:`<em>${rel>=0&&rel<3?labels[rel]:runLabel[iso]?esc(runLabel[iso]):'&nbsp;'}</em>`):''}<span class="sg-wd">${WD[d.getDay()]}</span><b>${d.getDate()}</b></th>`;});
@@ -82,7 +87,8 @@
         html+=tail('td')+'</tr>';
         return;
       }
-      html+=`<tr class="${p.me?'sg-me':''}"><th class="sg-name" scope="row" data-r="${r}" ${o.edit?'tabindex="0"':''}>${esc(p.name)}${o.edit?`<button type="button" class="sg-x" data-remove="${r}" aria-label="Убрать из графика: ${esc(p.name)}" title="Убрать из графика">×</button>`:''}</th>`;
+      const total=o.counts?days.filter(iso=>works(parse(p.cells?.[iso]))).length:null;
+      html+=`<tr class="${p.me?'sg-me':''}"><th class="sg-name" scope="row" data-r="${r}" ${o.edit?'tabindex="0"':''}>${esc(p.name)}${total!=null?`<small class="sg-cnt" title="Смен за период">${total}</small>`:''}${o.edit?`<button type="button" class="sg-x" data-remove="${r}" aria-label="Убрать из графика: ${esc(p.name)}" title="Убрать из графика">×</button>`:''}</th>`;
       days.forEach((iso,k)=>{
         // В редакторе смену можно взять и перетащить в другую клетку.
         const drag=o.edit&&works(parse(p.cells?.[iso]))?' draggable="true"':'';
@@ -93,7 +99,8 @@
     // отклонение — красное: заметно только то, что требует внимания.
     html+=`</tbody><tfoot><tr><th class="sg-name" scope="row">В смене</th>`;
     days.forEach((iso,k)=>{const have=onDay(o.people,iso),need=o.need?.(iso);
-      const bad=o.flagged?.[iso]||(need!=null&&have!==need);
+      // Красное — людей меньше, чем нужно. Лишний человек или неточное открытие красным не отмечаются.
+      const bad=o.flagged?.[iso]||(need!=null&&have<need);
       html+=(gap(iso,k)?g('td'):'')+`<td class="${bad?'sg-bad':'sg-ok'}"${need!=null?` title="Нужно: ${need}"`:''}><b>${have}</b></td>`;});
     return html+tail('td')+'</tr></tfoot>';
   }

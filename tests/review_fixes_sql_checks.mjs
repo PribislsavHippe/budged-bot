@@ -160,6 +160,13 @@ try {
     await db.exec('RESET ROLE');
   }
   console.log('v43 SQL passed: drafts go to the trash with answers and reminders, come back, overlap blocks restore, purge after a week.');
+
+  // ─── v44: старой функции, стиравшей журнал без копий, больше нет ───
+  assert.equal((await exec("SELECT count(*)::int n FROM pg_proc WHERE proname='activate_private_money'")).rows[0].n,1);
+  await db.exec(await source('migration_v44.sql'));
+  assert.equal((await exec("SELECT count(*)::int n FROM pg_proc WHERE proname='activate_private_money'")).rows[0].n,0);
+  assert.equal((await exec("SELECT count(*)::int n FROM pg_proc WHERE proname='deactivate_private_money'")).rows[0].n,1);
+  console.log('v44 SQL passed: the unused journal-wiping function is gone, exit still exists.');
 } finally {
   await db.close();
 }

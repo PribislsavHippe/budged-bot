@@ -232,7 +232,13 @@
     }
     function people(){
       const d=D();
-      return d.people.map(p=>({name:p.name,cells:d.cells[p.name]||{},off:d.off[p.name]||[],asked:offsInfo?.requests?.[p.name]||[]}));
+      // Желательные выходные видны сразу, ещё до сборки: дни недели («по воскресеньям») и даты из свежих
+      // пожеланий плюс то, что учла последняя сборка (решение владельца 16.11.2026).
+      const weekday=iso=>(new Date(iso+'T12:00:00').getDay()+6)%7;
+      const wished=n=>[...new Set([...((d.wish_off||{})[n]||[]),...((d.wish_dates||{})[n]||[]),...(offsInfo?.desired?.[n]||[]),
+        ...cur.days.filter(iso=>(offsInfo?.weekdays?.[n]||[]).includes(weekday(iso)))])];
+      return d.people.map(p=>({name:p.name,cells:d.cells[p.name]||{},off:d.off[p.name]||[],asked:offsInfo?.requests?.[p.name]||[],
+        wish:wished(p.name)}));
     }
     // Корзина черновика: убранный сотрудник неделю стоит серым на своей строке и возвращается целиком.
     const REMOVED_DAYS=7;
@@ -275,7 +281,7 @@
     }
     function renderGrid(){
       const left=sc.scrollLeft;
-      grid.innerHTML=G.table({days:cur.days,people:people(),removed:gone(),events:D().events,holidays:holidayLabels(),today:iso(new Date()),scrolls:true,edit:true,weekGap:false,need,flagged:cur.check?.days});
+      grid.innerHTML=G.table({days:cur.days,people:people(),removed:gone(),counts:true,events:D().events,holidays:holidayLabels(),today:iso(new Date()),scrolls:true,edit:true,weekGap:false,need,flagged:cur.check?.days});
       sizeGrid();sc.scrollLeft=left;
       if(sel)grid.querySelector(`td.sg-c[data-r="${sel.r}"][data-day="${sel.day}"]`)?.classList.add('sg-sel');
       renderReport();

@@ -20,4 +20,13 @@ assert.ok(!gone.includes('sg-x'),'no second removal button');
 assert.ok(!gone.includes('draggable'),'removed shifts cannot be dragged');
 const footer=html.slice(html.indexOf('<tfoot>'));
 assert.deepEqual([...footer.matchAll(/<b>(\d+)<\/b>/g)].map(m=>+m[1]),[1,0],'removed shifts are not counted');
-console.log('Roster trash UI checks passed: greyed row in place, not editable, not counted, escaped.');
+// Решения владельца 16.11.2026: желательные выходные видны, у каждого счётчик смен.
+const marked=G.table({days,edit:true,counts:true,weekGap:false,people:[
+  {name:'Аня',cells:{'2026-11-16':'9'},wish:['2026-11-16','2026-11-17']},
+  {name:'Боря',cells:{},off:['2026-11-16'],wish:['2026-11-16']}]});
+assert.match(marked,/class="sg-s  wished" title="Желательный выходной"><b>9<\/b>/,'a shift on a wished day is outlined');
+assert.match(marked,/<span class="sg-s wish" title="Желательный выходной">жел<\/span>/,'an empty wished day is marked');
+assert.ok(!/sg-s off">вых<\/span>[^<]*<span class="sg-s wish/.test(marked),'mandatory day off wins over a wish');
+assert.deepEqual([...marked.matchAll(/<small class="sg-cnt"[^>]*>([^<]+)<\/small>/g)].map(m=>m[1]),['смен','1','0'],'shift counts per person');
+assert.ok(!G.table({days,people:[{name:'Аня',cells:{}}]}).includes('sg-cnt'),'team view has no counter');
+console.log('Roster grid UI checks passed: greyed row in place, not editable, not counted, escaped; wished days marked; shift counts.');

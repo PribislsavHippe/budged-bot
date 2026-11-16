@@ -84,10 +84,8 @@ def limit_for(row, link):
 
 
 def over_limit(row, link, saved):
-    limit = limit_for(row, link)
-    if len(saved['days']) <= limit:
-        return ''
-    return f'На этот период обязательных выходных — {limit}. Остальные даты тоже записаны, их нужно согласовать с менеджером.'
+    """Нормы обязательных выходных больше нет (решение владельца 16.11.2026): примечания тоже нет."""
+    return ''
 
 
 def saved_dates(kind, days):
