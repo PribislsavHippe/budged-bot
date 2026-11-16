@@ -183,7 +183,9 @@ async def sync(bot, bound, now=None):
     if not doc:
         return {}
     async with _lock(doc):
-        found = upcoming(await sheet.read(doc, today), today)
+        problems = []
+        found = upcoming(await sheet.read(doc, today, problems), today)
+        await _warn(bot, problems)
         rid = bound['restaurant_id']
         known = {r['session_key']: r for r in await _rows('training_sessions', rid)}
         for s in found:
@@ -215,6 +217,28 @@ async def sync(bot, bound, now=None):
                 if s['date'] == today + timedelta(days=1) and not known[s['key']].get('reported_at'):
                     done['reported'] += await _report(bot, rid, s, now)
         return done
+
+
+_warned = set()
+
+
+def unreadable(tab, text):
+    """ЧЕРНОВИК: владельцу бота, когда в таблице дата, которую бот не понял (формат поменяли)."""
+    return (f'Тренинги: не понял дату на листе «{tab.strip()}»: «{text}». '
+            'Это занятие бот пропустит, пока дату не запишут как раньше, например «18.11 с 12:00 до 14:30».')
+
+
+async def _warn(bot, problems):
+    """Таблицу ведут руками: если формат поменяется, бот скажет об этом, а не замолчит. Каждую строку — один раз."""
+    from admin import ADMIN_ID
+    for tab, text in problems:
+        if not ADMIN_ID or (tab, text) in _warned:
+            continue
+        _warned.add((tab, text))
+        try:
+            await bot.send_message(ADMIN_ID, unreadable(tab, text))
+        except Exception as error:
+            logging.warning('training warning failed: %s', type(error).__name__)
 
 
 async def _invite(bot, bound, sessions, doc):

@@ -63,6 +63,38 @@ class Sheet(unittest.TestCase):
         self.assertIsNone(sheet._when('31.02 с 12:00-13:00', TODAY))
         self.assertIsNone(sheet._when('18.11', TODAY))
 
+    def test_the_tab_name_gives_the_month_and_leftovers_are_skipped(self):
+        self.assertEqual(sheet.tab_month('ЗАПИСЬ НА ТРЕНИНГИ (НОЯБРЬ)26'), (2026, 11))
+        self.assertEqual(sheet.tab_month('ЗАПИСЬ НА ТРЕНИНГИ (декабрь)26 '), (2026, 12))
+        self.assertEqual(sheet.tab_month('ЗАПИСЬ НА ТРЕНИНГИ (ОКТЯБРЬ26)'), (2026, 10))
+        self.assertEqual(sheet.tab_month('Запись май 2027'), (2027, 5))
+        self.assertIsNone(sheet.tab_month('Ноябрь'))
+        # Октябрьское «Вино», оставшееся на листе декабря, весной не станет занятием следующего октября.
+        spring = date(2027, 4, 20)
+        december = [(s['activity'], s['date']) for s in sheet.sessions('ЗАПИСЬ (декабрь)26', ROWS, spring)]
+        self.assertNotIn(('Красные', date(2027, 10, 14)), december)
+        self.assertIn(('Welcome тренинг', date(2026, 12, 7)), december)
+        self.assertIn(('СТОРИТЕЛЛИНГ', date(2026, 11, 18)), [(s['activity'], s['date'])
+                                                            for s in sheet.sessions('ЗАПИСЬ (ноябрь)26', ROWS, spring)])
+        # Январь на листе декабря — следующий месяц, это не хвост; год — следующий.
+        self.assertEqual(sheet._when('05.01 с 12:00 до 13:00', TODAY, (2026, 12))[0], date(2027, 1, 5))
+        self.assertEqual(sheet._when('14.10 с 14:00 до 16:00', TODAY, (2026, 12)), 'old')
+
+    def test_time_formats_and_unreadable_dates_are_reported(self):
+        self.assertEqual(sheet._when('18.11 с 11 до 14', TODAY)[1:], (660, 840))
+        self.assertEqual(sheet._when('Список сотрудников на 16.11 с 11:00-14:30', TODAY)[1:], (660, 870))
+        self.assertEqual(sheet._when('07.12 с 11.00–13.00', TODAY)[1:], (660, 780))
+        self.assertIsNone(sheet._when('Список сотрудников на ХХ.08 с 11:00 до 14:00', TODAY))
+        broken = [list(r) for r in ROWS]
+        broken[4][2] = 'Список сотрудников на 18.11 после обеда'
+        problems = []
+        found = sheet.sessions('ЗАПИСЬ (ноябрь)26', broken, TODAY, problems=problems)
+        self.assertNotIn('СТОРИТЕЛЛИНГ', [s['activity'] for s in found])
+        self.assertEqual(problems, [('ЗАПИСЬ (ноябрь)26', 'Список сотрудников на 18.11 после обеда')])
+        problems = []
+        sheet.sessions('ЗАПИСЬ (ноябрь)26', ROWS, TODAY, problems=problems)
+        self.assertEqual(problems, [])                                    # хвосты и заглушки — не ошибки
+
     def test_upcoming_drops_past_and_copied_sessions(self):
         copied = sheet.sessions('Ноябрь', ROWS, TODAY) + sheet.sessions('Декабрь', ROWS, TODAY)
         left = trainings.upcoming(copied, TODAY)
@@ -169,7 +201,7 @@ class Base(unittest.IsolatedAsyncioTestCase):
         stack.enter_context(patch.object(db, 'supabase', NS(table=lambda name: FakeTable(self.store, name))))
         stack.enter_context(patch.object(db, '_execute', new=AsyncMock(side_effect=lambda q, **k: q.run())))
         stack.enter_context(patch.object(trainings, 'published', new=roster_for))
-        stack.enter_context(patch.object(sheet, 'read', new=AsyncMock(side_effect=lambda d, t: sheet.sessions('Ноябрь', rows, t))))
+        stack.enter_context(patch.object(sheet, 'read', new=AsyncMock(side_effect=lambda d, t, problems=None: sheet.sessions('Ноябрь', rows, t, None, problems))))
         stack.enter_context(patch('trainings.op_today', return_value=TODAY))
         return stack
 
@@ -218,6 +250,18 @@ class Posting(Base):
         self.rows = ROWS
         done, _, _ = await self.run_sync(hour=19, day=date(2026, 11, 17))
         self.assertEqual(done['reported'], 0)
+
+    async def test_the_owner_hears_about_an_unreadable_date_once(self):
+        import admin
+        broken = [list(r) for r in ROWS]
+        broken[4][2] = 'Список сотрудников на 18.11 после обеда'
+        trainings._warned.clear()
+        with patch.object(admin, 'ADMIN_ID', 77):
+            _, sent, _ = await self.run_sync(rows=broken)
+            _, again, _ = await self.run_sync(rows=broken)
+        warnings = [text for to, text in sent + again if to == 77]
+        self.assertEqual(len(warnings), 1)
+        self.assertIn('«Список сотрудников на 18.11 после обеда»', warnings[0])
 
     async def test_a_cancelled_session_is_not_announced(self):
         cancelled = [list(r) for r in ROWS]
