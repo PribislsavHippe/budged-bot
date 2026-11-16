@@ -99,10 +99,13 @@ class Message(unittest.TestCase):
                          'пн, 7 декабря, 11:00–13:00 — Welcome тренинг\nТем, у кого в эти дни выходной, напишу лично.')
         self.assertEqual(trainings.invitation([story]),
                          'Тренинг в твой выходной:\nср, 18 ноября, 12:00–14:30 — Сторителлинг, ведёт Иванова')
+        story, welcome = ({**s, 'gid': '941871425'} for s in (story, welcome))
         buttons = trainings.invitation_markup([story, welcome], 'doc').inline_keyboard
-        self.assertEqual([b.text for row in buttons for b in row],
-                         ['Записаться: 18.11 Сторителлинг', 'Записаться: 07.12 Welcome тренинг', 'Таблица'])
-        self.assertLessEqual(max(len(b.callback_data.encode()) for row in buttons[:2] for b in row), 64)
+        self.assertEqual([(b.text, b.url) for row in buttons for b in row], [
+            ('Записаться: 18.11 Сторителлинг', 'https://docs.google.com/spreadsheets/d/doc/edit#gid=941871425&range=C9'),
+            ('Записаться: 07.12 Welcome тренинг', 'https://docs.google.com/spreadsheets/d/doc/edit#gid=941871425&range=C16')])
+        self.assertEqual(sheet.link('doc', {**story, 'gid': None}), 'https://docs.google.com/spreadsheets/d/doc/edit')
+        self.assertTrue(sheet.link('doc', {**story, 'slots': []}).endswith('range=C6'))     # строк нет — шапка
         self.assertEqual(trainings.report(story, ['Оля'], ['Аня']),
                          'Тренинг завтра: ср, 18 ноября, 12:00–14:30 — Сторителлинг.\nЗаписались: Оля.\n'
                          'Был выходной, но не записались: Аня.')
@@ -110,72 +113,6 @@ class Message(unittest.TestCase):
         saved = trainings.stored(story)
         self.assertNotIn('names', saved)
         self.assertEqual(trainings.restored(json.loads(json.dumps(saved)))['date'], story['date'])
-
-
-class FakeGoogle:
-    """httpx.AsyncClient на месте Google: токен, чтение листа, запись диапазона."""
-    def __init__(self, rows):
-        self.rows, self.writes, self.posts = rows, [], []
-
-    def __call__(self, *args, **kwargs):
-        return self
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *args):
-        return False
-
-    def _response(self, body):
-        return NS(json=lambda: body, raise_for_status=lambda: None)
-
-    async def post(self, url, data):
-        self.posts.append(data)
-        return self._response({'access_token': 'token', 'expires_in': 3600})
-
-    async def get(self, url, headers=None, params=None):
-        return self._response({'values': self.rows})
-
-    async def put(self, url, headers=None, params=None, json=None):
-        self.writes.append((url.rsplit('/', 1)[1], json['values']))
-        return self._response({})
-
-
-def account():
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
-    return json.dumps({'client_email': 'bot@example.iam.gserviceaccount.com', 'private_key': pem.decode(),
-                       'token_uri': 'https://oauth2.example/token'})
-
-
-class Writing(unittest.IsolatedAsyncioTestCase):
-    async def test_writes_into_the_first_free_numbered_row_after_rereading(self):
-        story = next(s for s in sheet.sessions('Ноябрь', ROWS, TODAY) if s['activity'] == 'СТОРИТЕЛЛИНГ')
-        google = FakeGoogle(ROWS)
-        sheet._token.update(value=None, until=0)
-        with patch.dict(os.environ, {'GOOGLE_SERVICE_ACCOUNT': account()}), patch('httpx.AsyncClient', google):
-            self.assertEqual(await sheet.write('doc', story, ['Аня Котова', 'Сад', 'официант'], TODAY), 'ok')
-            self.assertEqual(await sheet.write('doc', story, ['Анна Сергеева', 'Река', 'официант'], TODAY), 'already')
-            gone = {**story, 'key': 'other'}
-            self.assertEqual(await sheet.write('doc', gone, ['Аня Котова', 'Сад', 'официант'], TODAY), 'gone')
-        self.assertEqual(google.writes, [("'Ноябрь'!C9:E9", [['Аня Котова', 'Сад', 'официант']])])
-        self.assertEqual(len(google.posts), 1)                            # токен один на все запросы
-        self.assertEqual(google.posts[0]['assertion'].count('.'), 2)
-
-    async def test_a_full_session_is_not_overwritten(self):
-        full = [list(r) for r in ROWS]
-        full[8][2], full[9][2] = 'Кто-то Один', 'Кто-то Два'
-        story = next(s for s in sheet.sessions('Ноябрь', ROWS, TODAY) if s['activity'] == 'СТОРИТЕЛЛИНГ')
-        google = FakeGoogle(full)
-        sheet._token.update(value='token', until=10 ** 12)
-        self.assertEqual(await self._write(google, story), 'full')
-        self.assertEqual(google.writes, [])
-
-    async def _write(self, google, story):
-        with patch('httpx.AsyncClient', google):
-            return await sheet.write('doc', story, ['Аня Котова', 'Сад', 'официант'], TODAY)
 
 
 class FakeTable:
@@ -215,7 +152,7 @@ def people():
 
 
 class Base(unittest.IsolatedAsyncioTestCase):
-    BOUND = {'restaurant_id': 'r', 'chat_id': -5, 'sheet_id': 'doc', 'label': 'Сад', 'position': 'официант', 'active': True}
+    BOUND = {'restaurant_id': 'r', 'chat_id': -5, 'sheet_id': 'test-sheet-0000000000000', 'label': 'Сад', 'position': 'официант', 'active': True}
 
     def setUp(self):
         self.store = {'training_chats': [dict(self.BOUND)], 'employee_links': people(),
@@ -236,7 +173,10 @@ class Base(unittest.IsolatedAsyncioTestCase):
 
 
 class Posting(Base):
-    async def run_sync(self, hour=12, rows=ROWS, day=TODAY):
+    rows = ROWS
+
+    async def run_sync(self, hour=12, rows=None, day=TODAY):
+        rows = rows or self.rows
         bot = NS(send_message=AsyncMock(return_value=NS(message_id=100)))
         now = datetime(day.year, day.month, day.day, hour, tzinfo=MSK)
         with self.patches(rows), patch('trainings.op_today', return_value=day):
@@ -261,18 +201,19 @@ class Posting(Base):
         self.assertEqual([to for to, _ in sent], [-5])
 
     async def test_managers_get_a_report_the_evening_before(self):
-        self.store['training_signups'] = []
         await self.run_sync()
-        key = next(r['session_key'] for r in self.store['training_sessions'] if r['session']['date'] == '2026-11-18')
-        self.store['training_signups'].append({'restaurant_id': 'r', 'session_key': key, 'link_id': 'o'})
+        signed = [list(r) for r in ROWS]
+        signed[8][2] = 'Аня Котова'                                       # вписалась сама; в боте она «Котова Аня»
+        self.rows = signed
         done, sent, _ = await self.run_sync(hour=17, day=date(2026, 11, 17))
         self.assertEqual(done['reported'], 0)
         done, sent, _ = await self.run_sync(hour=18, day=date(2026, 11, 17))
         self.assertEqual(done['reported'], 1)
         reports = {to: text for to, text in sent}
         self.assertEqual(sorted(reports), [7, 8])                         # менеджер и владелец
-        self.assertIn('Записались: Оля.', reports[7])
-        self.assertIn('Был выходной, но не записались: Аня.', reports[7])
+        self.assertIn('Записались: Аня.', reports[7])
+        self.assertIn('Был выходной, но не записались: Оля.', reports[7])
+        self.rows = ROWS
         done, _, _ = await self.run_sync(hour=19, day=date(2026, 11, 17))
         self.assertEqual(done['reported'], 0)
 
@@ -282,37 +223,6 @@ class Posting(Base):
         _, sent, _ = await self.run_sync(rows=cancelled)
         self.assertNotIn('Сторителлинг', next(text for to, text in sent if to == -5))
         self.assertEqual([to for to, _ in sent], [-5])
-
-
-class Signing(Base):
-    async def press(self, uid, write='ok', google=True):
-        with self.patches():
-            bot = NS(send_message=AsyncMock(return_value=NS(message_id=1)))
-            await trainings.sync(bot, self.BOUND, datetime(2026, 11, 16, 12, tzinfo=MSK))
-            key = next(r for r in self.store['training_sessions'] if r['session']['date'] == '2026-11-18')['short_id']
-            written = AsyncMock(return_value=write)
-            with patch.object(sheet, 'write', new=written), patch.object(sheet, 'configured', return_value=google):
-                answer, session = await trainings.sign(uid, key)
-        return answer, session, written
-
-    async def test_a_person_off_that_day_is_written_once(self):
-        answer, session, written = await self.press(1)
-        self.assertEqual(answer, 'Записал тебя: Сторителлинг, 18 ноября в 12:00.')
-        self.assertEqual(session['date'], date(2026, 11, 18))
-        self.assertEqual(written.await_args.args[2], ['Котова Аня', 'Сад', 'официант'])
-        self.assertEqual(len(self.store['training_signups']), 1)
-        answer, _, written = await self.press(1)
-        self.assertEqual(answer, trainings.ANSWERS['already'])
-        written.assert_not_awaited()
-
-    async def test_refusals(self):
-        self.assertEqual((await self.press(2))[0], trainings.NOT_OFF)            # у Влада смена
-        self.assertEqual((await self.press(9))[0], trainings.ANSWERS['gone'])    # другой ресторан: такого занятия нет
-        self.assertEqual((await self.press(4))[0], trainings.NOT_STAFF)          # не подключён к боту
-        self.assertEqual((await self.press(1, google=False))[:2], (trainings.NO_GOOGLE, None))
-        answer, session, _ = await self.press(1, write='full')
-        self.assertEqual((answer, session), (trainings.ANSWERS['full'], None))
-        self.assertFalse(self.store.get('training_signups'))
 
 
 class Chat(unittest.IsolatedAsyncioTestCase):
@@ -333,9 +243,11 @@ class Chat(unittest.IsolatedAsyncioTestCase):
     async def test_a_manager_adding_the_bot_binds_the_chat(self):
         import training_chat as chat
         store, event = {}, self.event()
-        await self.call(chat.membership(event), store, [{'id': 'r', 'name': 'Сад', 'role': 'manager'}])
+        with patch.object(trainings, 'sync', new=AsyncMock()) as first:
+            await self.call(chat.membership(event), store, [{'id': 'r', 'name': 'Сад', 'role': 'manager'}])
         self.assertEqual(store['training_chats'][0]['chat_id'], -5)
         self.assertEqual(event.bot.send_message.await_args.args[1], chat.BOUND)
+        first.assert_awaited_once()                                       # не ждать получаса
         event = self.event()
         await self.call(chat.membership(event), {}, [])
         self.assertEqual(event.bot.send_message.await_args.args[1], chat.NOT_MANAGER)
@@ -343,37 +255,15 @@ class Chat(unittest.IsolatedAsyncioTestCase):
         await self.call(chat.membership(event), store, [])
         self.assertFalse(store['training_chats'][0]['active'])
 
-    async def test_the_sheet_link_is_taken_only_as_a_reply_to_the_bot_from_a_manager(self):
-        import training_chat as chat
-        store = {'training_chats': [{'restaurant_id': 'r', 'chat_id': -5, 'active': True, 'sheet_id': None}]}
-        link = 'https://docs.google.com/spreadsheets/d/10miCtSWFJadfLBS0qERYwKc-kt8IsMH3a7AjKZDq8Lo/edit'
-        def message(author=99):
-            return NS(text=link, chat=NS(id=-5), from_user=NS(id=1), bot=NS(id=99), reply=AsyncMock(),
-                      reply_to_message=NS(from_user=NS(id=author)))
-        other = message(author=42)
-        with patch.object(sheet, 'read', new=AsyncMock(return_value=sheet.sessions('Ноябрь', ROWS, TODAY))), \
-                patch.object(trainings, 'sync', new=AsyncMock()), patch.object(sheet, 'configured', return_value=False):
-            await self.call(chat.sheet_link(other), store, [{'id': 'r'}])
-            other.reply.assert_not_awaited()
-            await self.call(chat.sheet_link(message()), store, [])            # не менеджер
-            self.assertIsNone(store['training_chats'][0]['sheet_id'])
-            good = message()
-            await self.call(chat.sheet_link(good), store, [{'id': 'r'}])
-        self.assertEqual(store['training_chats'][0]['sheet_id'], '10miCtSWFJadfLBS0qERYwKc-kt8IsMH3a7AjKZDq8Lo')
-        self.assertTrue(good.reply.await_args.args[0].startswith('Таблица подключена.'))
-
-    async def test_pressing_in_a_private_chat_removes_the_button_and_adds_the_answer(self):
-        import training_chat as chat
-        story = next(s for s in sheet.sessions('Ноябрь', ROWS, TODAY) if s['activity'] == 'СТОРИТЕЛЛИНГ')
-        markup = trainings.invitation_markup([story], 'doc')
-        message = NS(text='Тренинг в твой выходной:', reply_markup=markup, edit_text=AsyncMock())
-        query = NS(from_user=NS(id=1), data=markup.inline_keyboard[0][0].callback_data, message=message, answer=AsyncMock())
-        with patch.object(trainings, 'sign', new=AsyncMock(return_value=('Записал тебя: Сторителлинг.', story))):
-            await chat.sign_up(query)
-        self.assertFalse(query.answer.await_args.kwargs['show_alert'])
-        text, kwargs = message.edit_text.await_args.args[0], message.edit_text.await_args.kwargs
-        self.assertEqual(text, 'Тренинг в твой выходной:\nЗаписал тебя: Сторителлинг.')
-        self.assertEqual([b.text for row in kwargs['reply_markup'].inline_keyboard for b in row], ['Таблица'])
+    def test_the_sheet_comes_from_settings(self):
+        link = 'https://docs.google.com/spreadsheets/d/10miCtSWFJadfLBS0qERYwKc-kt8IsMH3a7AjKZDq8Lo/edit?gid=1#gid=1'
+        for value, expected in ((link, '10miCtSWFJadfLBS0qERYwKc-kt8IsMH3a7AjKZDq8Lo'),
+                                ('10miCtSWFJadfLBS0qERYwKc-kt8IsMH3a7AjKZDq8Lo', '10miCtSWFJadfLBS0qERYwKc-kt8IsMH3a7AjKZDq8Lo'),
+                                ('', None), ('../etc', None)):
+            with self.subTest(value=value), patch.dict(os.environ, {'TRAINING_SHEET': value}):
+                self.assertEqual(trainings.document({'sheet_id': None}), expected)
+        with patch.dict(os.environ, {'TRAINING_SHEET': link}):
+            self.assertEqual(trainings.document({'sheet_id': 'own-sheet-of-this-restaurant-0'}), 'own-sheet-of-this-restaurant-0')
 
 if __name__ == '__main__':
     unittest.main()
