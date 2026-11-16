@@ -19,9 +19,9 @@ def main():
                SUPABASE_URL='https://example.invalid', SUPABASE_KEY='test',
                WEBHOOK_HOST='', INBOX_ENCRYPTION_KEY='local-test-only', ADMIN_ID='1')
 
-    def run(command):
+    def run(command, timeout=180):
         print('Checking:', ' '.join(str(x) for x in command), flush=True)
-        subprocess.run(command, cwd=ROOT, env=env, check=True, timeout=180)
+        subprocess.run(command, cwd=ROOT, env=env, check=True, timeout=timeout)
 
     for path in [*ROOT.glob('*.py'), *ROOT.joinpath('tests').glob('*.py')]:
         ast.parse(path.read_text(), filename=str(path))
@@ -35,7 +35,8 @@ def main():
             run(['node', '--check', script])
 
     run([sys.executable, '-m', 'pip', 'check'])
-    run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_*.py', '-v'])
+    # Весь набор Python-тестов идёт одной командой: на машине CI он медленнее локального в 2–3 раза.
+    run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_*.py', '-v'], timeout=480)
     scripts = ['calendar_time_checks.mjs', 'calendar_subscription_ui_checks.mjs', 'help_ui_checks.mjs', 'private_device_check.js',
                'private_concurrency_check.cjs', 'private_finance_check.cjs', 'roster_trash_ui_checks.mjs']
     scripts += [p.name for p in sorted(ROOT.joinpath('tests').glob('*sql_checks.mjs'))]
