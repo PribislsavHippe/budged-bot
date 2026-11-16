@@ -176,8 +176,26 @@ async def broadcast_no(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+async def _first_delivery(update_id, user_id):
+    """Рассылка этому человеку ещё не уходила (migration_v42). Перезапуск посреди рассылки повторяет
+    то же нажатие «Разослать», и без отметки уже получившие получили бы сообщение ещё раз (ревью 15.11.2026).
+    Отметка ставится до отправки: при сбое между ними один человек может не получить, но дубля не будет.
+    Без миграции или без номера входящего сообщения рассылка идёт как раньше."""
+    if update_id is None:
+        return True
+    try:
+        rows = (await db._execute(db.supabase.table("broadcast_deliveries").upsert(
+            {"update_id": update_id, "user_id": user_id}, on_conflict="update_id,user_id",
+            ignore_duplicates=True), retries=1)).data
+    except Exception as error:
+        from diagnostics import failure
+        failure(error, area='broadcast', stage='claim')
+        return True
+    return bool(rows)
+
+
 @router.callback_query(F.data == "bc:yes")
-async def broadcast_yes(callback: CallbackQuery, state: FSMContext):
+async def broadcast_yes(callback: CallbackQuery, state: FSMContext, inbox_update_id: int | None = None):
     """Без фильтра по состоянию: если бот перезапустился между /broadcast и
     нажатием кнопки, состояние потеряно — лучше сказать об этом, чем молчать."""
     if not is_admin(callback.from_user.id):
@@ -199,6 +217,8 @@ async def broadcast_yes(callback: CallbackQuery, state: FSMContext):
 
     sent = blocked = failed = 0
     for i, user_id in enumerate(ids, 1):
+        if not await _first_delivery(inbox_update_id, user_id):
+            continue
         try:
             await callback.bot.send_message(user_id, text)
             sent += 1

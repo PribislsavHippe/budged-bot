@@ -54,6 +54,9 @@ async def transfer(uid, link_id, source_id, target_id):
             raise ValueError('Переносить можно только между своими ресторанами.') from None
         if 'identity_stale' in detail:
             raise ValueError('Сотрудник уже перемещён или его статус изменился. Обнови список.') from None
+        # ЧЕРНОВИК: текст ждёт согласования с владельцем (ревью 15.11.2026, P2 №26).
+        if 'identity_director_taken' in detail:
+            raise ValueError('В новом ресторане уже есть управляющий. Сначала сними роль у одного из них.') from None
         if error.code == '23505':
             raise ValueError('В новом ресторане уже есть сотрудник с таким именем или кодом.') from None
         if error.code in ('PGRST202','42883'):

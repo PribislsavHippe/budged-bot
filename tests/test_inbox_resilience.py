@@ -110,6 +110,27 @@ class InboxTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stages, ['abandoned'])
         self.assertNotIn('handler keeps failing', str(failure.call_args_list))
 
+    async def test_one_failed_lease_renewal_does_not_stop_the_heartbeat(self):
+        # Ревью 15.11.2026: раньше первая ошибка останавливала продление, и через 3 минуты то же
+        # сообщение брал второй обработчик.
+        inbox = self.inbox()
+        calls = []
+
+        async def execute(query, retries=None):
+            calls.append(query)
+            if len(calls) == 1:
+                raise STALE
+            if len(calls) == 3:
+                raise asyncio.CancelledError()
+            return NS(data=None)
+
+        with patch.object(db, 'supabase', NS(rpc=lambda name, params: name)), patch.object(db, '_execute', new=execute), \
+                patch('telegram_inbox.asyncio.sleep', new=AsyncMock()), patch('telegram_inbox.failure') as failure:
+            with self.assertRaises(asyncio.CancelledError):
+                await inbox.heartbeat('batch', 'token')
+        self.assertEqual(calls, ['renew_telegram_batch'] * 3)
+        self.assertEqual([c.kwargs['stage'] for c in failure.call_args_list], ['renew'])
+
     async def test_a_new_message_wakes_one_idle_worker_not_all(self):
         inbox = self.inbox()
         loop = asyncio.get_running_loop()

@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="/app/restaurant.css">
 <link rel="stylesheet" href="/app/schedule.css">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="/app/compat.js"></script>
 <script src="/app/ux.js"></script>
 <link rel="stylesheet" href="/app/research.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -859,7 +860,8 @@ function openDay(view, d) {
     const remove = document.createElement("button");
     remove.type = "button"; remove.textContent = "Удалить";
     remove.setAttribute('aria-label','Удалить чаевые '+label.textContent+' '+amount.textContent);
-    remove.onclick = function () { calendarEdit({action:"tip_delete",entry_id:e.id}); };
+    // Повторное нажатие до ответа не отправляет второе удаление; список дня перерисуется после ответа.
+    remove.onclick = function () { if (remove.disabled) return; remove.disabled = true; calendarEdit({action:"tip_delete",entry_id:e.id}); };
     row.append(label,amount,remove);list.appendChild(row);
   });
   renderDayWishes(view);
@@ -981,7 +983,7 @@ function calendarEdit(payload) {
     return;
   }
   status.textContent = "Сохраняю…";
-  fetch("/api/calendar_edit", {method:"POST",headers:{"Content-Type":"application/json"},cache:"no-store",
+  fetch("/api/calendar_edit", {method:"POST",headers:{"Content-Type":"application/json"},cache:"no-store",signal:AbortSignal.timeout(20000),
     body:JSON.stringify(Object.assign({initData:tg ? tg.initData : "",date:editDay},payload))})
     .then(function (r) { return r.json().then(function (v) { if (!r.ok) throw Object.assign(new Error(v.error || "Не получилось сохранить"), {status: r.status}); return v; }); })
     .then(function (result) {
@@ -1379,7 +1381,12 @@ function renderHistory() {
       if (!tasks.length) { item.classList.remove("open"); return; }
       chainEdits(e.id, tasks);
     };
-    item.querySelector(".hist-del").onclick = function () { editEntry(e.id, { action: "delete" }); };
+    // Второе нажатие, пока первое ещё в пути, не уходит: иначе сервер отвечал «не найдено» на уже удалённую запись.
+    item.querySelector(".hist-del").onclick = function () {
+      if (this.disabled) return;
+      const button = this; button.disabled = true;
+      editEntry(e.id, { action: "delete" }).finally(function () { button.disabled = false; });
+    };
 
     list.appendChild(item);
   });
@@ -1399,7 +1406,7 @@ function editEntry(id, payload, silent) {
     }).catch(function (e) {document.getElementById('hist-status').textContent=e.message;return null;});
   }
   return fetch("/api/entry_edit", {
-    method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+    method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", signal: AbortSignal.timeout(20000),
     body: JSON.stringify(Object.assign({ initData: tg ? tg.initData : "", entry_id: id }, payload)),
   })
     .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
@@ -1457,7 +1464,7 @@ function openHistory(preserveStatus) {
     histEntries=privateMoney.entries.slice(-30).reverse();renderHistory();return;
   }
   fetch("/api/entries", {
-    method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+    method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", signal: AbortSignal.timeout(20000),
     body: JSON.stringify({ initData: tg ? tg.initData : "" }),
   })
     .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })

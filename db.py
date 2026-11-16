@@ -19,7 +19,9 @@ load_dotenv()
 supabase: Client = create_client(
     os.environ["SUPABASE_URL"],
     os.environ["SUPABASE_KEY"],
-    options=ClientOptions(auto_refresh_token=False,persist_session=False),
+    # По умолчанию клиент ждёт ответа 120 с: зависшая база держала все 8 слотов и останавливала бота.
+    # 20 с хватает обычным запросам; записи с неизвестным исходом защищены ключами источника (ревью 15.11.2026).
+    options=ClientOptions(auto_refresh_token=False,persist_session=False,postgrest_client_timeout=20),
 )
 
 CASH = "cash"

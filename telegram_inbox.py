@@ -142,9 +142,16 @@ class TelegramInbox:
         return []
 
     async def heartbeat(self,batch,token):
+        """Продлевает аренду, пока сообщение обрабатывается. Одна неудачная попытка не останавливает
+        продление: иначе через 3 минуты то же сообщение взял бы второй обработчик (ревью 15.11.2026)."""
         while True:
             await asyncio.sleep(30)
-            await db._execute(db.supabase.rpc('renew_telegram_batch',{'batch':batch,'token':token}),retries=2)
+            try:
+                await db._execute(db.supabase.rpc('renew_telegram_batch',{'batch':batch,'token':token}),retries=2)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                failure(error,area='telegram_inbox',stage='renew')
 
     def dialog_context(self,update):
         # A replay after restarting must keep the original meaning of a number

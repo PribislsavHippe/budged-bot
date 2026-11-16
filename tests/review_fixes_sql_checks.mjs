@@ -74,6 +74,56 @@ try {
     await db.exec('RESET ROLE');
   }
   console.log('v41 SQL passed: published rosters marked synced, rejoin keeps wishes and roster links, stale buttons, inbox gives up after 10 attempts and 30 minutes.');
+
+  // ─── v42 ───
+  await db.exec(await source('migration_v42.sql'));
+  // 1. Напоминание о пожеланиях, которое не отправилось, повторяется через час, не больше трёх попыток.
+  await exec("UPDATE rosters SET collect_wishes_at='2026-11-20T08:00:00Z' WHERE id=$1",D);
+  const claim=async at=>(await exec('SELECT claim_roster_wish_notice($1,NULL) AS c',at)).rows[0].c;
+  const first=await claim('2026-11-25T09:00:00Z');
+  assert.equal(first.link_id,NEW);assert.equal(first.stage,1);
+  assert.equal(await claim('2026-11-25T09:30:00Z'),null);            // раньше часа — не повторяем
+  assert.equal((await claim('2026-11-25T10:01:00Z')).stage,1);        // вторая попытка
+  assert.equal((await claim('2026-11-25T11:02:00Z')).stage,1);        // третья
+  assert.equal(await claim('2026-11-25T12:03:00Z'),null);             // больше трёх — нет
+  q=await exec('SELECT attempts,sent_at FROM roster_wish_notices WHERE roster_id=$1 AND stage=1',D);
+  assert.deepEqual(q.rows,[{attempts:3,sent_at:null}]);
+  // Отправленное вовремя не повторяется, второй этап — через 48 часов.
+  await exec("UPDATE roster_wish_notices SET sent_at='2026-11-25T11:03:00Z' WHERE roster_id=$1",D);
+  assert.equal(await claim('2026-11-26T11:00:00Z'),null);
+  assert.equal((await claim('2026-11-27T12:00:00Z')).stage,2);
+
+  // 2. Рассылка: одна отметка на человека и подтверждение.
+  await exec('INSERT INTO broadcast_deliveries(update_id,user_id) VALUES(77,2)');
+  await assert.rejects(exec('INSERT INTO broadcast_deliveries(update_id,user_id) VALUES(77,2)'),/duplicate key/);
+  for(const role of ['anon','authenticated']){
+    await db.exec('SET ROLE '+role);
+    await assert.rejects(exec('SELECT * FROM broadcast_deliveries'),/permission denied/);
+    await db.exec('RESET ROLE');
+  }
+
+  // 3. Перенос: управляющий не уходит туда, где управляющий есть; пожелания едут с человеком.
+  const R2='aaaaaaaa-0000-0000-0000-000000000002';
+  await exec("INSERT INTO restaurants(id,name,owner_id) VALUES($1,'Второй',1)",R2);
+  await exec("INSERT INTO employee_links(id,restaurant_id,user_id,report_name,name_key,status,role) VALUES('cccccccc-0000-0000-0000-000000000009',$1,3,'Боря','боря','approved','director')",R2);
+  await exec("UPDATE employee_links SET role='director' WHERE id=$1",NEW);
+  const transfer=()=>exec('SELECT identity_transfer(1,$1,$2,$3) AS r',NEW,R,R2);
+  await assert.rejects(transfer(),/identity_director_taken/);
+  await exec("UPDATE employee_links SET role='staff' WHERE id=$1",NEW);
+  assert.equal((await transfer()).rows[0].r.restaurant_id,R2);
+  q=await exec('SELECT restaurant_id FROM weekday_wishes WHERE link_id=$1',NEW);
+  assert.deepEqual(q.rows,[{restaurant_id:R2}]);
+  q=await exec('SELECT restaurant_id FROM day_off_requests WHERE link_id=$1',NEW);
+  assert.deepEqual(q.rows,[{restaurant_id:R}]);   // ответ на график прежнего ресторана остаётся при нём
+
+  // 4. Графики одного ресторана не пересекаются; соседние и чужие — можно.
+  const roster=(id,place,start,end)=>exec("INSERT INTO rosters(id,restaurant_id,start_date,end_date,draft) VALUES($1,$2,$3,$4,'{}')",id,place,start,end);
+  await assert.rejects(roster('dddddddd-0000-0000-0000-000000000003',R,'2026-11-20','2026-11-25'),/roster_overlap/);
+  await roster('dddddddd-0000-0000-0000-000000000004',R,'2026-12-16','2026-12-20');
+  await roster('dddddddd-0000-0000-0000-000000000005',R2,'2026-11-20','2026-11-25');
+  await assert.rejects(exec("UPDATE rosters SET end_date='2026-12-18' WHERE id=$1",D),/roster_overlap/);
+  await exec("UPDATE rosters SET draft='{\"people\":[]}' WHERE id=$1",D);   // правка без смены дат не проверяется заново
+  console.log('v42 SQL passed: wish reminder retries, broadcast deliveries, transfer carries wishes and guards director, roster periods never overlap.');
 } finally {
   await db.close();
 }

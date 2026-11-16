@@ -340,9 +340,11 @@ class ReviewFixTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await again.dialog_context(message).get_state(),handlers.ShiftSpend.waiting_amount.state)
 
     async def test_bad_expense_amount_does_not_poison_the_queue(self):
+        import time
         message=NS(text='-100',answer=AsyncMock())
+        state=NS(get_data=AsyncMock(return_value={'shift_category':'Мойка','shift_asked_at':time.time()}))
         with patch.object(db,'add_entry',new=AsyncMock()) as write:
-            await handlers.shift_spend_amount(message,NS())
+            await handlers.shift_spend_amount(message,state)
         write.assert_not_awaited()
         message.answer.assert_awaited_once()
 
@@ -350,6 +352,69 @@ class ReviewFixTests(unittest.IsolatedAsyncioTestCase):
         stamp = datetime(2026, 10, 9, 0, 30, tzinfo=timezone.utc)
         with patch.object(handlers, 'op_today', return_value=date(2026, 10, 10)):
             self.assertEqual(handlers.message_work_date(NS(date=stamp)), '2026-10-08')
+
+
+
+class ReviewP2Tests(unittest.IsolatedAsyncioTestCase):
+    async def test_broadcast_skips_people_who_already_got_it_after_a_restart(self):
+        # Ревью 15.11.2026, P2 №24: перезапуск посреди рассылки повторяет нажатие «Разослать».
+        import admin
+        delivered = {(77, 2)}
+
+        async def execute(query, retries=None):
+            row = query
+            key = (row['update_id'], row['user_id'])
+            if key in delivered:
+                return NS(data=[])
+            delivered.add(key)
+            return NS(data=[row])
+
+        table = NS(upsert=lambda row, **kw: row)
+        sent = []
+        bot = NS(send_message=AsyncMock(side_effect=lambda uid, text: sent.append(uid)))
+        message = NS(edit_text=AsyncMock())
+        callback = NS(from_user=NS(id=1), bot=bot, message=message, answer=AsyncMock())
+        state = NS(get_data=AsyncMock(return_value={'text': 'Привет'}), clear=AsyncMock())
+        with patch.object(admin, 'is_admin', return_value=True), \
+                patch.object(admin.db, 'get_onboarded_user_ids', new=AsyncMock(return_value=[2, 3])), \
+                patch.object(admin.db, 'supabase', NS(table=lambda name: table)), \
+                patch.object(admin.db, '_execute', new=execute), patch.object(admin, '_SEND_DELAY', 0):
+            await admin.broadcast_yes(callback, state, inbox_update_id=77)
+        self.assertEqual(sent, [3])
+
+    async def test_broadcast_without_the_table_still_goes_out(self):
+        import admin
+
+        async def broken(query, retries=None):
+            raise RuntimeError('relation broadcast_deliveries does not exist')
+        with patch.object(admin.db, 'supabase', NS(table=lambda name: NS(upsert=lambda row, **kw: row))), \
+                patch.object(admin.db, '_execute', new=broken), patch('diagnostics.failure'):
+            self.assertTrue(await admin._first_delivery(77, 2))
+        self.assertTrue(await admin._first_delivery(None, 2))
+
+    async def test_team_notifications_are_retried_when_preparing_them_failed(self):
+        # P2 №25: график уже опубликован, сбой чтения команды не должен оставить людей без уведомления.
+        with patch.dict(os.environ, {'SUPABASE_URL': 'https://example.invalid', 'SUPABASE_KEY': 'test'}):
+            import roster_api
+        notify = AsyncMock(side_effect=[RuntimeError('db'), 3])
+        with patch.object(roster_api, 'notify', new=notify), patch('diagnostics.failure'), \
+                patch.object(roster_api.asyncio, 'sleep', new=AsyncMock()):
+            self.assertTrue(await roster_api._notify_later('bot', 1, None, {}, None, None, 'r'))
+        self.assertEqual(notify.await_count, 2)
+
+    async def test_overlap_found_by_the_database_gets_the_usual_answer(self):
+        # P2 №28: проверка заранее не видит график, который другой менеджер создал одновременно.
+        with patch.dict(os.environ, {'SUPABASE_URL': 'https://example.invalid', 'SUPABASE_KEY': 'test'}):
+            import roster_api
+        query = NS()
+        for name in ('select', 'eq', 'lte', 'gte', 'limit'):
+            setattr(query, name, lambda *a, **k: query)
+        rows = [{'id': 'own', 'start_date': '2026-11-16', 'end_date': '2026-11-30'},
+                {'id': 'other', 'start_date': '2026-11-20', 'end_date': '2026-11-30'}]
+        with patch.object(roster_api.db, 'supabase', NS(table=lambda name: query)), \
+                patch.object(roster_api.db, '_execute', new=AsyncMock(return_value=NS(data=rows))):
+            error = await roster_api._clash_error('r', date(2026, 11, 16), date(2026, 11, 30), 'own')
+        self.assertEqual(str(error), 'Даты пересекаются с графиком 20.11–30.11.')
 
 
 if __name__ == '__main__':

@@ -44,6 +44,11 @@ class ShiftSpend(StatesGroup):
     waiting_amount = State()
 
 
+# Вопрос «Сколько ушло на…?» живёт недолго: забытый, он перехватывал число на следующий день
+# («500» становилось расходом на мойку). Старше — обычное сообщение (ревью 15.11.2026).
+SHIFT_SPEND_TTL = 6 * 3600
+
+
 # ─── форматирование ──────────────────────────────────────────────────────────
 
 def fmt(v: float) -> str:
@@ -654,7 +659,8 @@ async def shift_spend_chip(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
     await state.set_state(ShiftSpend.waiting_amount)
-    await state.update_data(shift_category=choice)
+    import time
+    await state.update_data(shift_category=choice, shift_asked_at=time.time())
     await callback.message.answer(f"Сколько ушло на «{choice}»? Например, 350 рублей.",reply_markup=shift_spend_cancel_kb())
     await callback.answer()
 
@@ -664,6 +670,12 @@ async def shift_spend_amount(message: Message, state: FSMContext):
     # A clock value always belongs to work time, even inside an old spend form.
     import schedule_chat
     if re.fullmatch(schedule_chat.TIME_MESSAGE,(message.text or '').strip()):
+        await state.clear()
+        await handle_text(message,state)
+        return
+    import time
+    asked = (await state.get_data()).get('shift_asked_at')
+    if not isinstance(asked, (int, float)) or time.time() - asked > SHIFT_SPEND_TTL:
         await state.clear()
         await handle_text(message,state)
         return

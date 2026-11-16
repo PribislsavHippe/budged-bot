@@ -451,6 +451,18 @@ def _opened(row):
             'holidays': {d.isoformat(): name for d, name in holidays_ru.between(start, end).items()}}
 
 
+async def _clash_error(restaurant_id, start, end, own_id=None):
+    """Тот же ответ, что при проверке заранее: даты пересекаются с другим графиком ресторана."""
+    others = (await db._execute(db.supabase.table('rosters').select('id,start_date,end_date')
+                                .eq('restaurant_id', restaurant_id).lte('start_date', end.isoformat())
+                                .gte('end_date', start.isoformat()).limit(5))).data
+    clash = [c for c in others if c['id'] != own_id]
+    if not clash:
+        return ValueError('Даты пересекаются с другим графиком. Обнови страницу.')
+    a, b = date.fromisoformat(clash[0]['start_date']), date.fromisoformat(clash[0]['end_date'])
+    return ValueError(f'Даты пересекаются с графиком {a.day}.{a.month:02d}–{b.day}.{b.month:02d}.')
+
+
 async def _save(row, uid, revision, values):
     """Запись только поверх той версии, что видел менеджер: иначе Stale."""
     values = {**values, 'revision': revision + 1, 'updated_by': uid,
@@ -530,6 +542,9 @@ async def handle(request):
             except APIError as error:
                 if error.code == '23505':
                     raise ValueError('График с этой даты начала уже есть — открой его в списке.') from None
+                # migration_v42: другой менеджер успел создать пересекающийся график, пока собирался этот.
+                if 'roster_overlap' in str(error):
+                    raise await _clash_error(restaurant_id, start, end) from None
                 raise
             _track(uid, 'roster_created')
             return response(_opened(created))
@@ -610,8 +625,13 @@ async def handle(request):
                 raise ValueError(f'Даты пересекаются с графиком {a.day}.{a.month:02d}–{b.day}.{b.month:02d}.')
             draft = normalize(trim(row['draft'], new_start, new_end), new_start, new_end)
             draft['time_rules'], _ = await time_rules_for(row['restaurant_id'], new_start, new_end, draft)
-            saved = await _save(row, uid, revision, {
-                'start_date': new_start.isoformat(), 'end_date': new_end.isoformat(), 'draft': draft})
+            try:
+                saved = await _save(row, uid, revision, {
+                    'start_date': new_start.isoformat(), 'end_date': new_end.isoformat(), 'draft': draft})
+            except APIError as error:
+                if 'roster_overlap' in str(error):
+                    raise await _clash_error(row['restaurant_id'], new_start, new_end, row['id']) from None
+                raise
             if not roster_wishes.migrated(row):
                 await days_off.move_period(row['restaurant_id'], start, new_start, new_end)
             _track(uid, 'roster_dates_changed')
@@ -637,7 +657,18 @@ async def handle(request):
             _sending.add(task)
             task.add_done_callback(_sending.discard)
             stage = 'notify'
-            told = await notify(request.app.get('bot'), uid, row['published'], draft, start, end, row['restaurant_id'])
+            # График уже опубликован: сбой при подготовке уведомлений не превращается в ошибку для менеджера,
+            # а уведомления повторяются в фоне (ревью 15.11.2026). Повторная публикация их бы уже не послала.
+            args = (request.app.get('bot'), uid, row['published'], draft, start, end, row['restaurant_id'])
+            try:
+                told = await notify(*args)
+            except Exception as error:
+                from diagnostics import failure
+                failure(error, area='roster', stage='notify_plan')
+                retry = asyncio.create_task(_notify_later(*args))
+                _sending.add(retry)
+                retry.add_done_callback(_sending.discard)
+                told = 0
             return response({**_opened(saved), 'notified': told})
         return response({'error': 'Такого действия нет.'}, 404)
     except Stale:
@@ -830,6 +861,19 @@ async def notify(bot, publisher, old, new, start, end, restaurant_id):
     _sending.add(task)
     task.add_done_callback(_sending.discard)
     return len(messages)
+
+
+async def _notify_later(*args, attempts=3, pause=10):
+    """Повтор подготовки уведомлений после публикации: чтение команды могло сорваться на сбое базы."""
+    for attempt in range(1, attempts + 1):
+        await asyncio.sleep(pause * attempt)
+        try:
+            await notify(*args)
+            return True
+        except Exception as error:
+            from diagnostics import failure
+            failure(error, area='roster', stage='notify_retry')
+    return False
 
 
 def _failure(response, uid, error, stage):

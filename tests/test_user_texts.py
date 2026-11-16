@@ -138,7 +138,8 @@ class LoneShortNumbers(unittest.IsolatedAsyncioTestCase):
         # Открытый вопрос «Сколько ушло на…?» сам задаёт контекст суммы: «20» здесь — расход.
         handlers = self.handlers
         message = NS(text='20', from_user=NS(id=5), chat=NS(id=5), message_id=100, answer=AsyncMock())
-        state = NS(clear=AsyncMock(), get_data=AsyncMock(return_value={'shift_category': 'Кофе'}))
+        import time
+        state = NS(clear=AsyncMock(), get_data=AsyncMock(return_value={'shift_category': 'Кофе', 'shift_asked_at': time.time()}))
         entry = {'id': 10, 'kind': 'expense', 'account': 'cash', 'signed_amount': -20, 'category': 'Кофе', 'note': None}
         with patch.object(handlers.db, 'get_or_create_user', new=AsyncMock(return_value={'id': 5, 'onboarded': True})), \
              patch.object(handlers.db, 'add_entry', new=AsyncMock(return_value=entry)) as single, \
@@ -147,6 +148,21 @@ class LoneShortNumbers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(single.await_args.args[:3], (5, 'expense', handlers.db.CASH))
         self.assertEqual(single.await_args.args[3], -20)
         state.clear.assert_awaited()
+
+    async def test_a_forgotten_expense_question_does_not_capture_a_later_number(self):
+        # Ревью 15.11.2026: вопрос «Сколько ушло на мойку?» без ответа перехватывал «500» на следующий день.
+        import time
+        handlers = self.handlers
+        for asked in (time.time() - handlers.SHIFT_SPEND_TTL - 60, None):
+            with self.subTest(asked=asked):
+                message = NS(text='500', from_user=NS(id=5), chat=NS(id=5), message_id=100, answer=AsyncMock())
+                state = NS(clear=AsyncMock(), get_data=AsyncMock(return_value={'shift_category': 'Мойка', 'shift_asked_at': asked}))
+                with patch.object(handlers, 'handle_text', new=AsyncMock()) as ordinary, \
+                        patch.object(handlers.db, 'add_entry', new=AsyncMock()) as single:
+                    await handlers.shift_spend_amount(message, state)
+                single.assert_not_awaited()
+                ordinary.assert_awaited_once_with(message, state)
+                state.clear.assert_awaited()
 
     async def test_bigger_and_marked_amounts_still_reach_the_private_journal(self):
         user = {'id': 5, 'onboarded': True, 'private_money_mode': True}
