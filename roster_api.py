@@ -345,7 +345,7 @@ def check(draft, start, end):
     where = ([(day, None) for day, *_ in found.shortages] + [(day, name) for name, day in found.forced]
              + [(day, name) for name, day, *_ in found.rises] + [(day, None) for day, *_ in found.closers]
              + [(day, None) for day, *_ in found.openers] + [(max(day, start), name) for name, day, _ in found.streaks]
-             + [(day, name) for name, day, _ in found.unavailable])
+             + [(day, name) for name, day, _ in found.unavailable] + [(day, name) for name, day in found.lone_rests])
     lines = text.split('\n')
     bullets = []
     if 'Что не получилось:' in lines:

@@ -67,7 +67,11 @@ class BuildTests(unittest.TestCase):
         self.assertLessEqual(max(hours) - min(hours), 12)
         shifts = [stats['shifts'] for stats in found.people.values()]
         self.assertLessEqual(max(shifts) - min(shifts), 1)
-        self.assertEqual(found.streaks, [])
+        # Одиночный выходной и три смены подряд — две стороны одного компромисса (решение владельца 16.11.2026:
+        # избегать 1/1): допускаем не больше одной серии из трёх смен и не больше трёх одиночных выходных.
+        self.assertLessEqual(len(found.streaks), 1)
+        self.assertTrue(all(length == 3 for _, _, length in found.streaks), found.streaks)
+        self.assertLessEqual(len(found.lone_rests), 3)
 
     def test_everyone_both_opens_and_closes(self):
         # Решение владельца 16.11.2026: никто не открывает всегда и никто всегда не закрывает.
@@ -95,6 +99,26 @@ class BuildTests(unittest.TestCase):
             for day in request.days:
                 run = 0 if day in own else run + 1
                 self.assertLessEqual(run, roster.MAX_REST, (name, day))
+
+    def test_a_single_day_off_between_shifts_is_reported_unless_asked(self):
+        # Решение владельца 16.11.2026: один выходной между сменами (1/1) — нарушение, о котором видно в разборе.
+        day = lambda n: START + timedelta(days=n)
+        request = roster.Request(START, day(6), ['А', 'Б', 'В'])
+        request.days_off = {'Б': {day(1)}}                        # Б сам просил этот выходной
+        request.pattern_history = {'В': '0011'}                   # В работала в последний день прошлого графика
+        schedule = {'А': {day(0): 9, day(2): 9, day(3): 9},       # смена, выходной, смена
+                    'Б': {day(0): 9, day(2): 9},                  # этот выходной просил сам — не в счёт
+                    'В': {day(1): 9, day(4): 9, day(5): 9}}       # первый день — один выходной после прошлого графика
+        found = roster.audit(request, schedule)
+        self.assertEqual(found.lone_rests, [('А', day(1)), ('В', day(0))])
+        self.assertIn('А: один выходной между сменами, 3 ноября.', roster.report(request, schedule, found))
+        self.assertEqual(roster.metrics(request, found)['problems'] >= 2, True)
+
+    def test_the_builder_prefers_two_days_off_to_one(self):
+        # 11 человек, две недели: почти без одиночных выходных и без длинных серий.
+        found = roster.audit(fortnight(), solved(fortnight(), quality=True))
+        self.assertLessEqual(len(found.lone_rests), 4, found.lone_rests)
+        self.assertLessEqual(len(found.streaks), 2, found.streaks)
 
     def test_two_on_two_off_when_it_fits(self):
         days = [START + timedelta(days=i) for i in range(8)]
