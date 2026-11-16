@@ -98,7 +98,9 @@ class Message(unittest.TestCase):
                          'Открыта запись на тренинги:\nср, 18 ноября, 12:00–14:30 — Сторителлинг\n'
                          'пн, 7 декабря, 11:00–13:00 — Welcome тренинг\nТем, у кого в эти дни выходной, напишу лично.')
         self.assertEqual(trainings.invitation([story]),
-                         'Тренинг в твой выходной:\nср, 18 ноября, 12:00–14:30 — Сторителлинг, ведёт Иванова')
+                         'Новости: в твой выходной тренинг. Ты должен идти ☠️\n'
+                         'ср, 18 ноября, 12:00–14:30 — Сторителлинг, ведёт Иванова')
+        self.assertTrue(trainings.invitation([story, welcome]).startswith('Новости: в твои выходные тренинги. Ты должен идти на все ☠️'))
         story, welcome = ({**s, 'gid': '941871425'} for s in (story, welcome))
         buttons = trainings.invitation_markup([story, welcome], 'doc').inline_keyboard
         self.assertEqual([(b.text, b.url) for row in buttons for b in row], [
@@ -190,7 +192,7 @@ class Posting(Base):
         self.assertEqual(len(chat), 1)
         self.assertNotIn('Аня', chat[0])                                  # в общем чате без имён
         self.assertEqual(sorted(to for to, _ in sent if to != -5), [1, 3])  # Аня и Оля, у Влада смена
-        self.assertTrue(all(text.startswith('Тренинг в твой выходной') for to, text in sent if to != -5))
+        self.assertTrue(all(text.startswith('Новости: в твой выходной') for to, text in sent if to != -5))
         self.assertNotIn('names', self.store['training_sessions'][0]['session'])
         done, sent, _ = await self.run_sync()
         self.assertEqual((done, sent), ({'announced': 0, 'invited': 0, 'reported': 0}, []))   # повтор ничего не шлёт

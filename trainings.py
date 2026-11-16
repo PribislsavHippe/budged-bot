@@ -106,9 +106,10 @@ def announcement(sessions):
 
 
 def invitation(sessions):
-    head = 'Тренинг в твой выходной:' if len(sessions) == 1 else 'Тренинги в твои выходные:'
-    return (head + '\n' + '\n'.join(line(s) + (f", ведёт {_plain(s['host'])}" if s.get('host') else '') for s in sessions)
-)
+    """По просьбе менеджера: «ты обязан пойти», но с иронией. ЧЕРНОВИК."""
+    head = ('Новости: в твой выходной тренинг. Ты должен идти ☠️' if len(sessions) == 1 else
+            'Новости: в твои выходные тренинги. Ты должен идти на все ☠️')
+    return (head + '\n' + '\n'.join(line(s) + (f", ведёт {_plain(s['host'])}" if s.get('host') else '') for s in sessions))
 
 
 def invitation_markup(sessions, document):
