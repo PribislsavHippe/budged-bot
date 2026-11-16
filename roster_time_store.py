@@ -33,6 +33,22 @@ async def write(uid, rule, remove=None):
     }), retries=1)).data
 
 
+async def write_period_hours(uid, operation, roster_id, hours):
+    """Часы из виджета выходных: {дата: [начало, конец] в минутах} заменяют часы на оставшиеся дни периода."""
+    return (await db._execute(db.supabase.rpc('write_period_hours', {
+        'p_actor': uid, 'p_operation': str(operation), 'p_roster': str(roster_id),
+        'p_hours': hours, 'p_today': op_today().isoformat(),
+    }), retries=1)).data
+
+
+async def period_hours(link_id, start, end):
+    """Часы на конкретные даты периода — то, что показывает виджет выходных."""
+    span = [(start + timedelta(days=i)).isoformat() for i in range((end - start).days + 1)]
+    rows = (await db._execute(db.supabase.table('shift_time_rules').select('target,start_min,end_min')
+                              .eq('link_id', link_id).eq('kind', 'limit').in_('target', span))).data
+    return {row['target']: [row['start_min'], row['end_min'] or 1380] for row in rows}
+
+
 def rule_lines(rule, manager=False):
     keys, start, end = rule['keys'], clock(rule['start'] / 60), rule['end']
     days = [date.fromisoformat(k) for k in keys if len(k) > 1]

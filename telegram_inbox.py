@@ -54,7 +54,12 @@ class TelegramInbox:
         nonce=os.urandom(12)
         sealed=base64.urlsafe_b64encode(nonce+AESGCM(self.key).encrypt(nonce,plain,str(update.update_id).encode())).decode()
         user=getattr(getattr(update,'message',None),'from_user',None) or getattr(getattr(update,'callback_query',None),'from_user',None)
-        actor=str(user.id) if user else 'update:'+str(update.update_id)
+        widget=getattr(update,'widget_query',None)
+        # Нажатия в виджете — в общей очереди человека, по порядку с его сообщениями.
+        if user is None and isinstance(widget,dict) and isinstance(widget.get('from'),dict) and widget['from'].get('id'):
+            actor=str(widget['from']['id'])
+        else:
+            actor=str(user.id) if user else 'update:'+str(update.update_id)
         actor=hmac.new(self.key,actor.encode(),hashlib.sha256).hexdigest()
         digest=hmac.new(self.key,plain,hashlib.sha256).hexdigest()
         return update.update_id,actor,sealed,digest
@@ -223,6 +228,12 @@ class TelegramInbox:
                 await save_forwarded_tips([(u.message,parser.parse_bank_notification(u.message.text)) for u in updates])
             else:
                 for update,row in zip(updates,claimed):
+                    widget=getattr(update,'widget_query',None)
+                    if isinstance(widget,dict):
+                        # aiogram 3.31 не знает событие виджета: календарь выходных обрабатывается напрямую.
+                        import days_off_widget
+                        await days_off_widget.handle(self.bot,widget)
+                        continue
                     await self.restore_execution_context(update,row,token)
                     await self.dispatcher.feed_raw_update(self.bot,update.model_dump(mode='json',exclude_none=True),
                                                           inbox_update_id=row['update_id'])

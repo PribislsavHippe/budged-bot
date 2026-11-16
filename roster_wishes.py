@@ -232,6 +232,27 @@ async def notice_current(claim):
     return {**claim, 'start_date': row['start_date'], 'end_date': row['end_date']} if member and not answered else None
 
 
+async def _widget(bot, claim, current):
+    import days_off_widget
+    import roster_time_store
+    if not days_off_widget.enabled(claim['user_id']):
+        return None
+    try:
+        saved = (await db._execute(db.supabase.table('day_off_requests').select('days,desired_days')
+                                   .eq('roster_id', claim['roster_id']).eq('link_id', claim['link_id']).limit(1))).data
+    except Exception:
+        saved = []
+    try:
+        hours = await roster_time_store.period_hours(claim['link_id'], date.fromisoformat(current['start_date']),
+                                                     date.fromisoformat(current['end_date']))
+    except Exception:
+        hours = {}
+    answer = saved[0] if saved else {}
+    return await days_off_widget.send(bot, claim['user_id'], {**current, 'id': claim['roster_id']},
+                                      days_off_widget.short_caption(current), answer.get('days') or [],
+                                      answer.get('desired_days') or [], hours)
+
+
 async def remind(bot, roster_id=None):
     from identity_chat import enabled
     from aiogram.types import InlineKeyboardButton as Button, InlineKeyboardMarkup as Markup
@@ -261,8 +282,11 @@ async def remind(bot, roster_id=None):
                 continue
             markup = Markup(inline_keyboard=[[Button(text='Без изменений',
                                                       callback_data=f'off:keep:{claim["roster_id"]}')]])
-            await asyncio.wait_for(bot.send_message(claim['user_id'], reminder_text(current),
-                                                   reply_markup=markup, disable_notification=True), timeout=5)
+            # Календарь выходных прямо в чате (если включён); иначе и при любой неудаче — прежний текст.
+            sent = await asyncio.wait_for(_widget(bot, claim, current), timeout=5)
+            if sent is None:
+                await asyncio.wait_for(bot.send_message(claim['user_id'], reminder_text(current),
+                                                       reply_markup=markup, disable_notification=True), timeout=5)
             count += 1
             import research
             research.track(claim['user_id'], 'reminder_sent', source='server', screen='schedule', step='days_off')

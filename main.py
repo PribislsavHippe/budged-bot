@@ -47,6 +47,8 @@ def build_dispatcher() -> Dispatcher:
     import roster_chat
     # Прототип только для владельца: команда не должна попасть в чужие сценарии.
     dp.include_router(roster_chat.router)
+    import training_chat
+    dp.include_router(training_chat.router)
     import site_login_chat
     import days_off_chat
     # Ссылка входа на сайт ресторана: /start site_… не должен уйти в общий /start.
@@ -99,6 +101,11 @@ async def db_ready():
         raise RuntimeError(message) from None
 
 
+def update_types(dp: Dispatcher) -> list[str]:
+    """Что бот получает от Telegram: всё, что ждут обработчики, и нажатия в виджетах (их aiogram пока не знает)."""
+    return sorted(set(dp.resolve_used_update_types()) | {'widget_query'})
+
+
 async def run_polling(bot: Bot, dp: Dispatcher):
     await bot.delete_webhook(drop_pending_updates=False)
     inbox=TelegramInbox(bot,dp)
@@ -107,7 +114,7 @@ async def run_polling(bot: Bot, dp: Dispatcher):
     try:
         while True:
             try:
-                updates=await bot.get_updates(offset=offset,timeout=20,allowed_updates=dp.resolve_used_update_types())
+                updates=await bot.get_updates(offset=offset,timeout=20,allowed_updates=update_types(dp))
                 for update in updates:
                     await inbox.enqueue(update.model_dump(mode='json',exclude_none=True))
                     offset=update.update_id+1
@@ -147,7 +154,7 @@ async def run_webhook(bot: Bot, dp: Dispatcher):
     loop=asyncio.get_running_loop()
     with suppress(NotImplementedError,RuntimeError):loop.add_signal_handler(signal.SIGTERM,stopped.set)
     try:
-        await bot.set_webhook(f"{WEBHOOK_HOST}{WEBHOOK_PATH}", secret_token=secret)
+        await bot.set_webhook(f"{WEBHOOK_HOST}{WEBHOOK_PATH}", secret_token=secret, allowed_updates=update_types(dp))
         try:
             await bot.set_chat_menu_button(
                 menu_button=MenuButtonWebApp(

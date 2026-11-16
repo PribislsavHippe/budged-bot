@@ -38,7 +38,8 @@ def main():
     # Весь набор Python-тестов идёт одной командой: на машине CI он медленнее локального в 2–3 раза.
     run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_*.py', '-v'], timeout=480)
     scripts = ['calendar_time_checks.mjs', 'calendar_subscription_ui_checks.mjs', 'help_ui_checks.mjs', 'private_device_check.js',
-               'private_concurrency_check.cjs', 'private_finance_check.cjs', 'roster_trash_ui_checks.mjs']
+               'private_concurrency_check.cjs', 'private_finance_check.cjs', 'roster_trash_ui_checks.mjs',
+               'days_off_widget_checks.mjs', 'period_hours_sql_checks.mjs', 'trainings_sql_checks.mjs', 'trainings_v47_sql_checks.mjs']
     scripts += [p.name for p in sorted(ROOT.joinpath('tests').glob('*sql_checks.mjs'))]
     for script in scripts:
         run(['node', ROOT / 'tests' / script])
