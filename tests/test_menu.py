@@ -205,6 +205,15 @@ class Chat(unittest.TestCase):
         self.assertEqual(message.answer.call_args.kwargs['reply_markup'].inline_keyboard[0][0].callback_data, 'menu:d:x')
         remember.assert_awaited_once_with('p', 'F')
 
+    def test_pdf_in_chat_is_not_parsed_on_the_server_unless_turned_on(self):
+        message = MagicMock()
+        message.document.file_name = 'Меню.pdf'
+        message.answer = AsyncMock()
+        with patch.dict(os.environ, {'MENU_PDF_UPLOAD': ''}), patch.object(menu_store, 'import_pdf', AsyncMock()) as run:
+            asyncio.run(menu_chat.upload(message))
+        run.assert_not_awaited()
+        self.assertEqual(message.answer.call_args.args[0], menu_chat.UPLOAD_OFF)
+
     def test_source_name(self):
         self.assertEqual(menu_store.source_name('Основное меню.PDF'), 'Основное меню')
         self.assertEqual(menu_store.source_name(None), 'Меню')

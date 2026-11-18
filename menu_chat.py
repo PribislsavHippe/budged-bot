@@ -6,6 +6,7 @@
 """
 import html
 import logging
+import os
 
 from aiogram import F, Router
 from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton as Button, \
@@ -23,6 +24,7 @@ TOO_BIG = 'Файл больше 20 МБ — Telegram не отдаёт боту
 READING = 'Читаю «{source}»…'
 EMPTY = 'В «{source}» не нашёл ни одной карточки с аллергенами — ничего не поменял.'
 SAME = 'Этот файл уже загружен.'
+UPLOAD_OFF = 'Меню сейчас загружается с компьютера, а не через чат. Файл не трогаю.'
 FAILED = 'Не получилось загрузить файл. Попробуй ещё раз.'
 
 
@@ -140,6 +142,11 @@ async def open_item(query: CallbackQuery):
 async def upload(message: Message):
     document = message.document
     source = store.source_name(document.file_name)
+    if os.getenv('MENU_PDF_UPLOAD', '0').strip() != '1':
+        # На бесплатном Render разбор PDF не помещается в память и роняет бота (18.11.2026): меню загружается
+        # с компьютера (`menu_import.py`), а повторы этого сообщения из очереди проходят без разбора.
+        await message.answer(UPLOAD_OFF)
+        return
     if (document.file_size or 0) > store.MAX_BYTES:
         await message.answer(TOO_BIG)
         return
