@@ -11,3 +11,6 @@ portfolio/
 screenshots/
 outputs/
 *.docx
+
+# Внутренние документы компании (меню, техкарты) — не публиковать
+private/

@@ -65,6 +65,9 @@ def build_dispatcher() -> Dispatcher:
     # Админский роутер первым: иначе /admin и /broadcast перехватит
     # общий обработчик текста в handlers и попробует найти в них сумму.
     dp.include_router(admin.router)
+    import menu_chat
+    # PDF меню от владельца — до анкеты и фото отчёта, которые тоже принимают файлы.
+    dp.include_router(menu_chat.router)
     dp.include_router(identity_chat.router)
     dp.include_router(report_photo.router)
     dp.include_router(handlers.router)
