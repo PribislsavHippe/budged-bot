@@ -12,4 +12,4 @@ pydantic==2.6.4
 APScheduler==3.10.4
 cryptography==50.0.2
 
-Pillow==12.3.0
+Pillow==13.0.0
