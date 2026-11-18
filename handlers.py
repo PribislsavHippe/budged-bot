@@ -1170,15 +1170,16 @@ async def handle_text(message: Message, state: FSMContext):
                              'Напиши положительную сумму с копейками, например «чай 500,50».')
         return
     if not items:
+        # Без суммы это может быть вопрос про блюдо: «говяжьи щечки», «лук». Раньше understand(): он отвечает
+        # «Не понял» на любой текст без цифр, и до меню дело не доходило (18.11.2026).
+        from menu_chat import answer as menu_answer
+        if await menu_answer(message,text):
+            return
         from ux_chat import looks_like_wish, offer_wish, understand
         if await understand(message,state,text):
             return
         if looks_like_wish(text):
             await offer_wish(message,state);return
-        # Без суммы это может быть вопрос про блюдо: «говяжьи щечки», «лук».
-        from menu_chat import answer as menu_answer
-        if await menu_answer(message,text):
-            return
         _not_understood(message,'no_amount')
         await message.answer(
             "Не нашёл сумму. Примеры:\n"

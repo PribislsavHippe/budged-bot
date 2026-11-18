@@ -214,6 +214,21 @@ class Chat(unittest.TestCase):
         run.assert_not_awaited()
         self.assertEqual(message.answer.call_args.args[0], menu_chat.UPLOAD_OFF)
 
+    def test_text_without_amount_reaches_the_menu_before_the_generic_reply(self):
+        import handlers
+        import ux_chat
+        message = MagicMock()
+        message.text, message.forward_origin = 'говяжьи щечки', None
+        message.from_user.id = 1
+        message.answer = AsyncMock()
+        with patch.object(handlers.db, 'get_or_create_user', AsyncMock(return_value={'onboarded': True})), \
+                patch.object(menu_chat, 'answer', AsyncMock(return_value=True)) as menu, \
+                patch.object(ux_chat, 'understand', AsyncMock(return_value=True)) as generic:
+            asyncio.run(handlers.handle_text(message, MagicMock()))
+        menu.assert_awaited_once()
+        generic.assert_not_awaited()
+        message.answer.assert_not_awaited()
+
     def test_source_name(self):
         self.assertEqual(menu_store.source_name('Основное меню.PDF'), 'Основное меню')
         self.assertEqual(menu_store.source_name(None), 'Меню')
