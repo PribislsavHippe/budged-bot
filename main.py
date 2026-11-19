@@ -53,6 +53,10 @@ def build_dispatcher() -> Dispatcher:
     import days_off_chat
     # Ссылка входа на сайт ресторана: /start site_… не должен уйти в общий /start.
     dp.include_router(site_login_chat.router)
+    # Время конца смены в свободной форме («в 23», «23.30») — раньше выходных и денег: «23» не день выходного,
+    # «в 23» не расход 23 ₽, если бот ждёт время смены.
+    import schedule_chat
+    dp.include_router(schedule_chat.answer_router)
     dp.include_router(days_off_chat.router)
     dp.include_router(category_chat.router)
     dp.include_router(ux_chat.router)

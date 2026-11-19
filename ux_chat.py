@@ -395,7 +395,9 @@ class ActivityMiddleware(BaseMiddleware):
     async def __call__(self,handler,event,data):
         user=getattr(event,'from_user',None)
         chat=getattr(event,'chat',None) or getattr(getattr(event,'message',None),'chat',None)
-        if user and chat and chat.type=='private':research.track(user.id,'activity')
+        # Сообщение и нажатие кнопки различаются: по сериям сообщений видно, где человек застрял.
+        if user and chat and chat.type=='private':
+            research.track(user.id,'activity',step='button' if getattr(event,'data',None) is not None else 'message')
         return await handler(event,data)
 
 

@@ -1,6 +1,6 @@
 """Personal schedule import and confirmation of actual worked time."""
 import asyncio,html,re,time
-from datetime import datetime
+from datetime import datetime,timedelta
 from decimal import Decimal,InvalidOperation
 from uuid import uuid4
 from aiogram import Router,F
@@ -236,6 +236,7 @@ async def ask_end(message,uid,day,state,value=None):
     start=row.get('starts_at') if row else None
     if not start:
         await state.clear()
+        _end_problem(uid,'no_shift')
         await message.answer('На этот день нет времени начала в графике. Добавь смену в календаре миниаппа, а затем пришли время окончания.')
         return
     recorded=await db.get_worked_shift_details(uid,day,day)
@@ -268,23 +269,101 @@ async def hours_command(message,state):
 
 TIME_MESSAGE=r'(?i)^(?:в\s+)?\d{1,2}:\d{2}(?::00)?$|^\d{1,2}(?::\d{2})?\s*[-–—]\s*\d{1,2}(?::\d{2})?$'
 
+# Ответ о конце смены люди пишут по-разному: «23», «в 23», «23.30», «23 30», «закончила в 23:30», «ушла в 23».
+# Всё это — время, а не деньги (решение владельца 20.11.2026: двузначные числа — время, деньги — от 100 ₽).
+# Слова вокруг числа допускаются только «временные»: «чай 50» или «такси 90» временем не станут.
+_TIME_WORDS=re.compile(r'в|во|до|около|примерно|где|то|ровно|уже|сегодня|вчера|итоге|смен[ауы]?|закончил\w*|'
+                       r'кончил\w*|ушл\w*|ушел|вышл\w*|вышел|освободил\w*|был\w*|час\w*|ч|мин\w*')
 
-@router.message(F.text.regexp(TIME_MESSAGE))
-async def time_message(message,state):
-    day=None
+
+def time_of(text):
+    """Время окончания из свободной фразы: «в 23» → «23:00», «23.30» → «23:30». Иначе None.
+    Два отдельных числа («17, 19») и диапазоны через тире («10-22») временем не считаются."""
+    t=(text or '').lower().replace('ё','е').strip()
+    if not t or len(t)>40:return None
+    numbers=re.findall(r'\d+',t)
+    if not 1<=len(numbers)<=2:return None
+    m=re.search(r'(?<!\d)(\d{1,2})(?:\s*[:. ]\s*(\d{2}))?(?!\d)',t)
+    if not m or (len(numbers)==2 and m.group(2) is None):return None
+    rest=t[:m.start()]+' '+t[m.end():]
+    if re.search(r'\d',rest) or any(not _TIME_WORDS.fullmatch(w) for w in re.findall(r'[a-zа-я]+',rest)):return None
+    hour,minute=int(m.group(1)),int(m.group(2) or 0)
+    if hour==24 and minute==0:hour=0
+    if hour>23 or minute>59:return None
+    return f'{hour:02d}:{minute:02d}'
+
+
+def asked_day(message):
+    """День смены, если сообщение — ответ на вопрос бота «Во сколько заканчиваешь смену…» (кнопка work:close)."""
     reply=getattr(message,'reply_to_message',None)
     if reply and reply.from_user and reply.from_user.id==message.bot.id:
         for row in getattr(getattr(reply,'reply_markup',None),'inline_keyboard',[]) or []:
             for button in row:
                 if (button.callback_data or '').startswith('work:close:'):
                     from datetime import date
-                    try:day=date.fromisoformat(button.callback_data.rsplit(':',1)[-1])
+                    try:return date.fromisoformat(button.callback_data.rsplit(':',1)[-1]).isoformat()
                     except ValueError:pass
+    return None
+
+
+async def pending_end_day(uid):
+    """Смена, о конце которой бот уже спросил, а время ещё не записано: сегодняшняя или вчерашняя.
+    Так ответ на следующий день («23:30» днём) относится ко вчерашней смене, а не к сегодняшней."""
+    today=op_today()
+    for day in (today,today-timedelta(days=1)):
+        iso=day.isoformat()
+        rows=(await db._execute(db.supabase.table('shifts').select('starts_at,time_prompt_sent')
+                                .eq('user_id',uid).eq('shift_date',iso))).data
+        if rows and rows[0].get('time_prompt_sent') and rows[0].get('starts_at') \
+                and not await db.get_worked_shift_details(uid,iso,iso):
+            return iso
+    return None
+
+
+def _end_problem(uid,step):
+    research.track(uid,'shift_end_answer',screen='calendar',step=step)
+
+
+# Отдельный роутер подключается раньше выходных и общего разбора денег: время в ответе о смене
+# не должно стать ни днём выходного («23»), ни расходом («в 23» → 23 ₽).
+answer_router=Router()
+answer_router.message.filter(F.chat.type=='private',lambda _:schedule.enabled())
+
+
+async def end_answer(message):
+    """Фильтр: свободная фраза со временем, и бот ждёт время конца смены (ответом на вопрос или без него)."""
+    if message.forward_origin is not None or not message.text:return False
+    value=time_of(message.text)
+    if value is None:return False
+    day=asked_day(message)
+    if day is None:
+        try:day=await pending_end_day(message.from_user.id)
+        except Exception as error:
+            from diagnostics import failure
+            failure(error,area='work_time',stage='pending')
+            return False
+    return {'day':day,'value':value} if day else False
+
+
+@answer_router.message(end_answer)
+async def end_answer_message(message,state,day,value):
+    _end_problem(message.from_user.id,'understood')
+    await ask_end(message,message.from_user.id,day,state,value=value)
+
+
+@router.message(F.text.regexp(TIME_MESSAGE))
+async def time_message(message,state):
+    from datetime import date
+    day=asked_day(message)
     if day is None and await state.get_state() in {Work.end.state,Work.confirm.state}:
         await end_text(message,state)
         return
-    day=day or op_today()
+    if day is None:
+        try:day=await pending_end_day(message.from_user.id)
+        except Exception:day=None
+    day=date.fromisoformat(day) if day else op_today()
     if day>op_today():
+        _end_problem(message.from_user.id,'not_started')
         await message.answer('Эта смена ещё не началась. Время её окончания можно записать в день смены.')
         return
     await ask_end(message,message.from_user.id,day.isoformat(),state,value=message.text)
@@ -327,12 +406,16 @@ async def close(callback,state):
 @router.message(Work.end,F.text,~F.text.startswith('/'))
 async def end_text(message,state):
     data=await state.get_data()
+    uid=message.from_user.id
     if time.time()-data.get('work_created',0)>4*3600:
+        _end_problem(uid,'timeout')
         await state.clear();await message.answer('Время ожидания вышло. Открой смену ещё раз.');return
+    text=time_of(message.text) or message.text   # «в 23», «23.30» → «23:00», «23:30»
     try:
-        if re.search('[-–—]',message.text):raise ValueError('Напиши только время окончания, например 23:30. Начало берём из графика; изменить его можно в миниаппе.')
-        start,end=schedule.actual(data['work_day'],message.text,data.get('work_start'))
+        if re.search('[-–—]',text):raise ValueError('Напиши только время окончания, например 23:30. Начало берём из графика; изменить его можно в миниаппе.')
+        start,end=schedule.actual(data['work_day'],text,data.get('work_start'))
     except (ValueError,TypeError) as error:
+        _end_problem(uid,'time_format')
         await message.answer(str(error));return
     await state.update_data(actual_start=start.isoformat(),actual_end=end.isoformat())
     await state.set_state(Work.confirm)
@@ -347,6 +430,7 @@ async def edit_end(callback,state):
     if await state.get_state()!=Work.confirm.state or callback.data.rsplit(':',1)[-1]!=data.get('work_nonce'):
         await callback.answer('Этот вопрос уже закрыт.');return
     await callback.answer();await state.set_state(Work.end)
+    _end_problem(callback.from_user.id,'edit')
     await callback.message.answer('Во сколько заканчиваешь? Пришли новое время, например 23:30.',reply_markup=buttons([('Отмена','work:cancel')]))
 
 
@@ -382,6 +466,7 @@ async def cancel_work(callback,state):
     current=await state.get_state()
     if current not in {Work.end.state,Work.confirm.state,Work.rate.state}:
         await callback.answer('Этот вопрос уже закрыт.');return
+    if current in {Work.end.state,Work.confirm.state}:_end_problem(callback.from_user.id,'cancel')
     await state.clear();await callback.answer()
     await callback.message.edit_text('Ставку не записываю.' if current==Work.rate.state else 'Время не записываю.')
 

@@ -64,6 +64,17 @@ for(const [kind,detail] of [['reminder_sent','shift_tomorrow'],['reminder_sent',
 await assert.rejects(step('reminder_sent','23:30'),/check constraint/);
 await assert.rejects(step('message_not_understood','чай 500'),/check constraint/);
 await db.exec('RESET ROLE');
+// v49: ответ о конце смены и серии сообщений без результата; уточнения — только из списка.
+await db.exec(await fs.readFile(new URL('../migration_v49.sql',import.meta.url),'utf8'));
+await db.exec('SET ROLE service_role');
+for(const [kind,detail] of [['shift_end_answer','understood'],['shift_end_answer','time_format'],['shift_end_answer','no_shift'],
+  ['shift_end_answer','not_started'],['shift_end_answer','timeout'],['shift_end_answer','edit'],['shift_end_answer','cancel'],
+  ['message_burst','time_format'],['message_burst','small_amount'],['message_burst','unknown'],['activity','button'],
+  ['activity','message'],['message_not_understood','small_amount'],['message_not_understood','time_format'],
+  ['reminder_sent','shift_end']])await step(kind,detail);
+await assert.rejects(step('message_burst','в 23'),/check constraint/);
+await assert.rejects(step('shift_end_answer','23:30'),/check constraint/);
+await db.exec('RESET ROLE');
 await db.exec(`INSERT INTO users VALUES(5),(6),(7);
 INSERT INTO restaurants(id,name,owner_id) VALUES('00000000-0000-0000-0000-0000000000a1','Ресторан',5);
 INSERT INTO employee_links(id,restaurant_id,user_id,report_name,name_key,status,role) VALUES

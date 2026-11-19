@@ -8,7 +8,7 @@ TZ=ZoneInfo('Europe/Moscow')
 ACTIVE={'activity','user_started','cabinet_opened','tab_opened','help_opened','tip_added','expense_added',
         'shift_planned','shift_closed','hours_recorded','sales_report_started','vision_started','problem_reported',
         'schedule_import_started','schedule_previewed','schedule_imported','days_off_answered','roster_viewed'}
-ERROR_EVENTS={'cabinet_load_error','sales_report_error','vision_failed'}
+ERROR_EVENTS={'cabinet_load_error','sales_report_error','vision_failed','message_burst'}
 STAGES=[('user_started','Пришли'),('onboarding_completed','Завершили знакомство'),
         ('first_value_action','Первое полезное действие'),('cabinet_opened','Открыли кабинет'),
         ('d1','Вернулись на следующий день'),('shift_planned','Добавили график'),('d7','Вернулись на 7-й день')]
@@ -111,7 +111,8 @@ def summarize(subjects,events,days=30,now=None,ux_version=None):
         funnel.append({'key':key,'label':label,'users':len(achieved),
                        'eligible':len(eligible),'pending':base-len(eligible),'conversion':pct(len(achieved),len(eligible)),
                        'overall':pct(len(achieved),base),'drop_off':len(missing),'with_errors':len(errored)})
-    errors=Counter((e['event'],e.get('screen'),e.get('error_code')) for e in window if e['event'] in ERROR_EVENTS)
+    # У серии сообщений причина в step (почему бот не справился), у сбоев — в error_code.
+    errors=Counter((e['event'],e.get('screen'),e.get('error_code') or e.get('step')) for e in window if e['event'] in ERROR_EVENTS)
     active_window=[e for e in window if e['event'] in ACTIVE]
     day_events=Counter()
     day_active=defaultdict(set)

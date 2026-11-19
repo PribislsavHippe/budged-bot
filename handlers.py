@@ -1018,6 +1018,11 @@ def bad_shift_days_text(days):
             'Напиши дни смен ещё раз, например <i>работаю 22 24 26</i>.')
 
 
+# ЧЕРНОВИКИ текстов (20.11.2026) — до согласования с владельцем.
+SMALL_TIME_TEXT = ('Похоже на время, поэтому деньгами не записываю. Время окончания смены пиши в ответ '
+                   'на вопрос бота о смене, например 23:30.')
+SMALL_AMOUNT_TEXT = ('Суммы меньше 100 ₽ не записываю: обычно это время или опечатка. '
+                     'Если это деньги, напиши сумму от 100 ₽, например «чай 500».')
 SHORT_NUMBER_TEXT = ('Не записал: одного короткого числа мало, чтобы понять, что это. '
                      'Если это чаевые, напиши, например, <i>чай 500</i>.')
 
@@ -1168,6 +1173,16 @@ async def handle_text(message: Message, state: FSMContext):
         _not_understood(message,'ambiguous_amount')
         await message.answer('Не стал записывать: сумма неоднозначна. '
                              'Напиши положительную сумму с копейками, например «чай 500,50».')
+        return
+    # Деньги — от 100 ₽ (решение владельца 20.11.2026): «в 23», «23.30», «ушла в 23» — это время конца смены,
+    # а не расход 23 ₽ или чаевые 23,30 ₽. Пересланных уведомлений банка правило не касается: их разбор выше.
+    if items and any(item['amount'] < 100 for item in items):
+        if schedule_chat.time_of(text):
+            _not_understood(message,'time_format')
+            await message.answer(SMALL_TIME_TEXT)
+        else:
+            _not_understood(message,'small_amount')
+            await message.answer(SMALL_AMOUNT_TEXT)
         return
     if not items:
         # Без суммы это может быть вопрос про блюдо: «говяжьи щечки», «лук». Раньше understand(): он отвечает
