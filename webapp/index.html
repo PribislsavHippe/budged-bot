@@ -38,7 +38,10 @@
   .hero, .r .val, .r .tag, .hist-amt, .num { word-spacing: -0.3em; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html { background: var(--page, #efc1da); }
-  #bg { position:fixed;inset:0;z-index:-1;pointer-events:none;
+  /* До первого кадра шейдера — почти белый, как начало анимации открытия (иначе на миг виден старый градиент).
+     Полосатый градиент — только запасной, если WebGL нет (background.js ставит .fallback). */
+  #bg { position:fixed;inset:0;z-index:-1;pointer-events:none;background-color:#f6f6f6; }
+  #bg.fallback {
     background-color:#EFC1DA;
     background-image:linear-gradient(90deg,#EFC1DA 0%,#EFC1DA 20%,#CEC99F 23.9%,#CEC99F 51.1%,#DCD6F6 58.9%,#DCD6F6 81.1%,#B5D0D9 85%,#B5D0D9 100%);
   }
@@ -254,12 +257,25 @@
   #cal-sum.error { display:block; color:#8d2b39; }
   .cal-head { margin:3px 0 12px; }
   .cal-grid { gap:5px; }
-  /* Выбранный период: светлая волнистая лента под днями — широкая на днях, узкая между ними. Цвет заработок не показывает. */
+  /* Выбранный период: тёмная полоса со скруглёнными углами на каждую неделю, как плашка во вкладках; дни внутри
+     квадратные, текст белый. При смене периода полоса переезжает. Цвет заработок не показывает. */
   .cal-wrap { position:relative; }
   .cal-wrap .cal-grid { position:relative; z-index:1; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
-  .cal-period { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }
-  .cal-period .rb { fill:rgba(255,255,252,.92); }
-  .cal-cell.in:not([data-wish]) { background-color:transparent; box-shadow:none; color:var(--ink); }
+  .cal-period { position:absolute; inset:0; pointer-events:none; }
+  .cal-period .band { position:absolute; border-radius:11px; background:var(--sel-fill,rgba(255,255,255,.62));
+    -webkit-backdrop-filter:var(--sel-blur); backdrop-filter:var(--sel-blur); box-shadow:inset 0 1px 1px rgba(255,255,255,.7);
+    transition:left .3s cubic-bezier(.3,.9,.3,1),width .3s cubic-bezier(.3,.9,.3,1),top .3s cubic-bezier(.3,.9,.3,1),opacity .2s; }
+  .cal-period .band.fresh { opacity:0; transition:none; }
+  .cal-cell { transition:color .25s; }
+  .cal-cell.in:not([data-wish]) { background-color:transparent; box-shadow:none; color:var(--sel-ink,#111); }
+  .cal-cell.in:not([data-wish]) * { color:inherit; }
+  /* Рамки смен, сегодняшнего дня и пожеланий внутри периода: обычные на светлом выделении, светлее на тёмном. */
+  .cal-cell.in.shift:not([data-wish]) { box-shadow:inset 0 0 0 1.5px var(--sel-shift,var(--card)); }
+  .cal-cell.in.today:not([data-wish]) { box-shadow:inset 0 0 0 2px var(--sel-ink,#111); }
+  .cal-cell.in[data-wish] { background-color:transparent; color:var(--sel-ink,#111); }
+  .cal-cell.in[data-wish="required"] { box-shadow:inset 0 0 0 1.5px var(--sel-req,#a93232); }
+  .cal-cell.in[data-wish="preferred"] { box-shadow:inset 0 0 0 1.5px var(--sel-pref,#b18400); }
+  @media (prefers-reduced-motion: reduce) { .cal-period .band, .cal-cell { transition:none; } }
   .app-footer { border:0; }
 </style>
 <link rel="stylesheet" href="/app/glass.css">
@@ -565,72 +581,35 @@ function hoursLabel(hours) {
   return hours.toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' ч';
 }
 
-let calWater = null;
-function waterOf(wrap) {
-  if (calWater === null) { try { calWater = window.LiquidWater ? LiquidWater.cal(wrap) : false; } catch (e) { calWater = false; } }
-  return calWater && calWater.ok ? calWater : null;
-}
-
 function drawPeriod() {
   const grid = document.getElementById('cal-grid'), wrap = document.getElementById('cal-wrap');
   if (!grid || !wrap) return;
-  const water = waterOf(wrap);
-  wrap.classList.toggle('water', !!water);
-  let svg = document.getElementById('cal-period');
-  if (!svg) {
-    svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.id = 'cal-period'; svg.setAttribute('class', 'cal-period'); svg.setAttribute('aria-hidden', 'true');
-    wrap.insertBefore(svg, grid);
+  let box = document.getElementById('cal-period');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'cal-period'; box.className = 'cal-period'; box.setAttribute('aria-hidden', 'true');
+    wrap.insertBefore(box, grid);
   }
   const range = calPreview || (tipsPeriod && tipsPeriod.mode !== 'all' ? tipsPeriod : null);
   const cells = Array.from(grid.querySelectorAll('.cal-cell[data-iso]'));
   const inside = range ? cells.filter(function (c) { return c.dataset.iso >= range.start && c.dataset.iso <= range.end; }) : [];
   cells.forEach(function (c) { c.classList.toggle('in', inside.includes(c)); });
-  if (water) {
-    // Период — капля воды: по одной на каждую строку календаря, в координатах панели.
-    svg.innerHTML = '';
-    const all2 = Array.from(grid.children), wr = wrap.getBoundingClientRect(), segs = [], rows2 = new Map();
-    inside.forEach(function (c) { const r = Math.floor(all2.indexOf(c) / 7); (rows2.get(r) || rows2.set(r, []).get(r)).push(c); });
-    rows2.forEach(function (list, row) {
-      const r1 = list[0].getBoundingClientRect(), r2 = list[list.length - 1].getBoundingClientRect();
-      segs.push({ row: row, x0: r1.left - wr.left, x1: r2.right - wr.left, y: r1.top - wr.top + r1.height / 2, rad: r1.height / 2 + 1.5 });
-    });
-    water.set(segs);
-    return;
-  }
-  if (!inside.length) { svg.innerHTML = ''; return; }
-
-  const all = Array.from(grid.children), gr = wrap.getBoundingClientRect();
-  const probe = inside[0].getBoundingClientRect();
-  const gap = parseFloat(getComputedStyle(grid).columnGap) || 5;
-  const cw = probe.width, ch = probe.height, pitch = cw + gap, hMin = ch * .42;
-  // Высота ленты меняется косинусом: максимум в центре дня, минимум в середине промежутка между днями.
-  const prof = function (t) { return hMin + (ch - hMin) * (.5 + .5 * Math.cos(2 * Math.PI * t / pitch)); };
-  function outline(xa, xb, cy, cx0, cap) {
-    const top = [], bot = [];
-    for (let x = xa; x <= xb + .01; x += 1.5) {
-      const k = cap ? Math.min(x - xa, xb - x) / 10 : 1, h = prof(x - cx0) * (k >= 1 ? 1 : Math.sqrt(Math.max(k, 0))) / 2;
-      top.push(x.toFixed(1) + ',' + (cy - h).toFixed(1)); bot.unshift(x.toFixed(1) + ',' + (cy + h).toFixed(1));
-    }
-    return 'M' + top.join('L') + 'L' + bot.join('L') + 'Z';
-  }
-  // Лента — по одной на каждую неделю-строку внутри периода.
-  const rows = new Map();
+  // По одной полосе на каждую неделю-строку периода; прежние полосы переиспользуются, поэтому они переезжают.
+  const all = Array.from(grid.children), wr = wrap.getBoundingClientRect(), rows = new Map();
   inside.forEach(function (c) { const r = Math.floor(all.indexOf(c) / 7); (rows.get(r) || rows.set(r, []).get(r)).push(c); });
-  let ribbon = '', rings = '';
+  const bands = Array.from(box.children);
+  let i = 0;
   rows.forEach(function (list) {
     const r1 = list[0].getBoundingClientRect(), r2 = list[list.length - 1].getBoundingClientRect();
-    ribbon += '<path class="rb" d="' + outline(r1.left - gr.left, r2.right - gr.left, r1.top - gr.top + r1.height / 2, r1.left - gr.left + cw / 2, true) + '"/>';
+    let band = bands[i];
+    const fresh = !band;
+    if (fresh) { band = document.createElement('span'); band.className = 'band fresh'; box.appendChild(band); }
+    band.style.left = (r1.left - wr.left) + 'px'; band.style.top = (r1.top - wr.top) + 'px';
+    band.style.width = (r2.right - r1.left) + 'px'; band.style.height = r1.height + 'px';
+    if (fresh) { band.offsetWidth; band.classList.remove('fresh'); }
+    i++;
   });
-  // Смена или сегодняшний день внутри периода — обводка по контуру «бусины».
-  inside.forEach(function (c) {
-    const today = c.classList.contains('today');
-    if (!today && !c.classList.contains('shift')) return;
-    const r = c.getBoundingClientRect(), cx = r.left - gr.left + r.width / 2, cy = r.top - gr.top + r.height / 2;
-    rings += '<path d="' + outline(cx - r.width / 2, cx + r.width / 2, cy, cx, false) + '" fill="none" stroke-linejoin="round" ' +
-      (today ? 'stroke="#181617" stroke-width="2"' : 'stroke="#4f89ab" stroke-width="1.5"') + '/>';
-  });
-  svg.innerHTML = ribbon + rings;
+  bands.slice(i).forEach(function (b) { b.remove(); });
 }
 
 window.addEventListener('tips-period', function (event) {
@@ -1659,8 +1638,32 @@ document.addEventListener("visibilitychange", async function () {
     document.querySelectorAll('.app-tabs [role=tab]').forEach(t=>t.setAttribute('aria-selected',String(t.id==='tab-'+key)));
     document.querySelectorAll('body>[role=tabpanel]').forEach(p=>{p.hidden=p.id!==key+'-panel';});
   };
-  // Вода во вкладках: сама следит за aria-selected и hidden; без WebGL остаётся стеклянная капля на CSS.
-  try{window.LiquidWater&&LiquidWater.tabs(document.querySelector('.app-tabs'));}catch(e){}
+  // Вкладки: тёмная плашка переезжает под выбранную вкладку (приём «animated tabs» с 21st.dev, перенесён без React).
+  // Поверх лежит тёмная копия надписей с белым текстом, обрезанная по выбранной вкладке; при переключении
+  // обрезка плавно едет, и текст меняет цвет прямо по ходу. Следит за aria-selected и hidden, сам ничего не переключает.
+  (function(nav){
+    if(!nav)return;
+    const glass=document.createElement('span');glass.className='nimbus-glass';glass.setAttribute('aria-hidden','true');
+    const over=document.createElement('div');over.className='clip-tabs';over.setAttribute('aria-hidden','true');
+    nav.prepend(glass);nav.append(over);
+    const tabs=[...nav.querySelectorAll('[role=tab]')];
+    const copies=tabs.map(t=>{const c=document.createElement('span');c.className='nimbus-item';c.textContent=t.textContent;over.append(c);return c;});
+    let ready=false;
+    function update(){
+      tabs.forEach((t,i)=>{if(copies[i].hidden!==t.hidden)copies[i].hidden=t.hidden;});
+      const a=tabs.find(t=>!t.hidden&&t.getAttribute('aria-selected')==='true');
+      if(!a||!nav.clientWidth){over.style.clipPath='inset(50%)';return;}
+      const top=a.offsetTop,left=a.offsetLeft,right=nav.clientWidth-left-a.offsetWidth,bottom=nav.clientHeight-top-a.offsetHeight;
+      if(!ready)over.style.transition='none';
+      over.style.clipPath=`inset(${top}px ${right}px ${bottom}px ${left}px round 999px)`;
+      if(!ready){over.offsetWidth;over.style.transition='';ready=true;}
+    }
+    // Следим только за самими вкладками: копии надписей тоже внутри nav, и слежка за всем nav зациклилась бы.
+    const mo=new MutationObserver(update);tabs.forEach(t=>mo.observe(t,{attributes:true,attributeFilter:['aria-selected','hidden']}));
+    if(window.ResizeObserver)new ResizeObserver(update).observe(nav);
+    document.fonts&&document.fonts.ready.then(update);
+    update();
+  })(document.querySelector('.app-tabs'));
 </script>
 <script src="/app/sales.js"></script>
 <script src="/app/tips.js"></script>

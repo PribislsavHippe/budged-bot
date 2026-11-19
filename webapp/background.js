@@ -3,7 +3,7 @@
   const canvas=document.getElementById('gradient-canvas');
   if(!canvas)return;
   const gl=canvas.getContext('webgl',{alpha:false,antialias:false,depth:false,stencil:false});
-  if(!gl){canvas.hidden=true;return;} // The supplied CSS approximation remains available.
+  if(!gl){(canvas.hidden=true,canvas.parentNode&&canvas.parentNode.classList.add('fallback'));return;} // The supplied CSS approximation remains available.
   try {
   const vertex='attribute vec2 position;varying vec2 uv;void main(){uv=position*.5+.5;gl_Position=vec4(position,0.,1.);}';
   // Пятна вместо полос (mesh), цвета смешиваются в OKLCH — без серой середины между розовым и матчей.
@@ -57,7 +57,7 @@
   function tick(now){frame=null;if(previous!==null)elapsed+=(now-previous)/1000;previous=now;draw(elapsed);frame=requestAnimationFrame(tick);}
   function restart(){if(frame!==null)cancelAnimationFrame(frame);frame=null;previous=null;if(document.hidden||gl.isContextLost())return;if(reduced.matches)draw(0);else frame=requestAnimationFrame(tick);}
   window.addEventListener('resize',resize);document.addEventListener('visibilitychange',restart);reduced.addEventListener('change',restart);
-  canvas.addEventListener('webglcontextlost',()=>{if(frame!==null)cancelAnimationFrame(frame);frame=null;canvas.hidden=true;});
+  canvas.addEventListener('webglcontextlost',()=>{if(frame!==null)cancelAnimationFrame(frame);frame=null;(canvas.hidden=true,canvas.parentNode&&canvas.parentNode.classList.add('fallback'));});
   resize();restart();
-  } catch (_) {canvas.hidden=true;} // Rendering never blocks the journal.
+  } catch (_) {(canvas.hidden=true,canvas.parentNode&&canvas.parentNode.classList.add('fallback'));} // Rendering never blocks the journal.
 })();
