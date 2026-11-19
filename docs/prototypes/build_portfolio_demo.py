@@ -135,6 +135,15 @@ STUB = r'''/* Демо для портфолио: вместо Telegram и се�
 '''
 
 
+# Календарь выходных живёт во вложенном кадре: Safari уменьшает рамку кадра, а не содержимое, если уменьшать
+# всю страницу. Поэтому уменьшаем само содержимое кадра (transform не трогает раскладку).
+INNER_FIT = ('<script>(function(){var W=380;new MutationObserver(function(){var f=document.querySelector("iframe");'
+             'if(!f||f.dataset.fit)return;f.dataset.fit=1;f.addEventListener("load",function(){var d=f.contentDocument,b=d.body;'
+             'function fit(){var k=Math.min(1,f.clientWidth/W);b.style.transformOrigin="0 0";'
+             'b.style.transform=k<1?"scale("+k+")":"";b.style.width=k<1?(100/k)+"%":"";}fit();addEventListener("resize",fit);});})'
+             '.observe(document.documentElement,{childList:true,subtree:true});})();</script>')
+
+
 def build_days_off():
     """Страница выходных: вместо сервера — ответы в самой странице."""
     import json
@@ -148,7 +157,7 @@ def build_days_off():
     row = {**days_off_app.demo_period(today), 'id': 'dddddddd-0000-4000-8000-000000000001'}
     state = {'demo': False, 'caption': widget.short_caption(row), 'note': None,
              'chat_data': widget.state(row, [], [], today), 'html': widget.HTML}
-    stub = ('<meta name="robots" content="noindex">\n' + FIT + '\n<script>\n'
+    stub = ('<meta name="robots" content="noindex">\n' + INNER_FIT + '\n<script>\n'
             '/* Демо для портфолио: настоящая страница календаря выходных, ответы сервера — здесь же. */\n'
             '(function(){var S=' + json.dumps(state, ensure_ascii=False).replace('</', '<\\/') + ';\n'
             'window.fetch=function(u){var b=String(u).indexOf("/save")>=0?{result:"ok",chat_data:null}:S;'
