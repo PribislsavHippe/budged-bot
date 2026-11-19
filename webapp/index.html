@@ -203,6 +203,7 @@
   .cal-cell[data-wish="required"],.cal-cell[data-wish="required"].today { box-shadow:inset 0 0 0 1.5px #a93232; }
   .cal-cell[data-wish="preferred"],.cal-cell[data-wish="preferred"].today { box-shadow:inset 0 0 0 1.5px #b18400; }
   #day-wish-actions { flex-wrap:wrap; }
+  .days-off-beta { display:inline-block; margin-top:6px; color:inherit; text-decoration:underline; text-underline-offset:3px; }
   #day-wish-actions[hidden] { display:none; }
   .cal-cell.empty { background:none;box-shadow:none; }
   .cal-time { font-size:11px;line-height:1.05;letter-spacing:0;white-space:normal;max-width:100%; }
@@ -530,7 +531,10 @@ function render(s) {
 let calYear = null, calMonth = null, calendarView = null;
 let monthRequest = 0;
 
+let daysOffBeta = false;   // новый календарь выходных (как виджет), пока на проверке: /app/days-off
+
 function calViewFromStats(s) {
+  daysOffBeta = !!s.days_off_beta;
   // Текущий месяц уже пришёл в /api/stats — лишний запрос не нужен.
   const now = new Date((s.operational_today || new Date().toISOString().slice(0,10)) + 'T12:00:00');
   return {
@@ -768,6 +772,11 @@ function paintCalendar(view) {
     sum.innerHTML = "Запланировано " + shiftsWord(planned);
   } else {
     sum.textContent = "Чаевые за месяц не записаны";
+  }
+  if (daysOffBeta) {
+    const link = document.createElement('a');
+    link.href = '/app/days-off'; link.className = 'days-off-beta'; link.textContent = 'Выходные: новый календарь (проба) ›';
+    sum.append(document.createElement('br'), link);
   }
   if (view.calendar_wishes?.error) {
     sum.append(document.createElement('br'), view.calendar_wishes.error);

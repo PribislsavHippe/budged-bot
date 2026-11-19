@@ -147,6 +147,8 @@ async def _stats_payload(app: web.Application, user_id: int, body: dict | None =
     payload['planned_times']=await db.get_shift_details(user_id,first,last)
     payload['worked_times']=await db.get_worked_shift_details(user_id,first,last)
     payload['calendar_wishes']=await _calendar_wishes(user_id,first,last)
+    import days_off_app
+    payload['days_off_beta']=days_off_app.allowed(user_id)
     payload['tip_entries']=[{'id':e['id'],'date':_entry_date(e).isoformat(),
                              'amount':float(e['signed_amount']),'account':e['account']}
                             for e in entries if e['kind']=='income' and e['category']=='Чаевые'
@@ -858,6 +860,8 @@ def register_webapp_routes(app: web.Application, bot_token: str, bot_username: s
     app["bot_username"] = bot_username
     from sales_api import register_sales_routes
     register_sales_routes(app)
+    import days_off_app
+    days_off_app.register(app)
     app.router.add_post("/api/service_charge/view", service_charge_view)
     from research_api import register as register_research
     register_research(app)

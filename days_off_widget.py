@@ -244,63 +244,65 @@ async def send(bot, uid, row, caption, days=(), desired=(), hours=None):
         return None
 
 
-async def handle(bot, query):
-    """Ответ из виджета: записать выбор, обновить виджет, ответить за 15 секунд. Без содержимого в журнале."""
+async def apply(uid, data, seed, source='bot'):
+    """Записать выбор из календаря (виджет в чате или мини-приложение). → (ответ, новые данные календаря или None).
+    seed делает запись идемпотентной: повтор того же нажатия не записывается дважды."""
     import roster_time_store as store
     import roster_wishes as wishes
     from workday import op_today
+    parsed = parse(data)
+    if parsed is None:
+        return 'Обнови сообщение: эта кнопка устарела.', None
+    link = await wishes.employee(uid)
+    if not link:
+        return wishes.NO_ACCESS, None
+    rows = await wishes.period_rows(link, op_today())
+    row = next((r for r in rows if UUID(str(r['id'])).hex.startswith(parsed['roster']) and wishes.migrated(r)), None)
+    if row is None:
+        return wishes.NO_PERIOD, None
+    today = op_today()
+    planned = {} if parsed['none'] else changes(row, parsed, today)
+    if planned is None:
+        return 'Обнови сообщение: эта кнопка устарела.', None
+    operation = uuid5(NAMESPACE_URL, f'roster-wish-widget:{uid}:{seed}:{data}')
+    result = await wishes.save(uid, link, row, operation, planned, clear=parsed['none'])
+    if result.get('status') != 'ok':
+        return wishes.problem(result, row), None
+    hours = hours_for(row, parsed, today)
+    try:
+        written = await store.write_period_hours(uid, uuid5(operation, 'hours'), row['id'], hours)
+    except APIError as error:
+        if error.code not in ('PGRST202', '42883'):     # нет миграции v45: без часов выходные уже записаны
+            raise
+        written = 'ok' if not hours else 'hours'
+    if written == 'hours':
+        return 'Выходные записал, а часы пока не получается. Напиши их сообщением.', None   # ЧЕРНОВИК
+    if written != 'ok':
+        return wishes.problem({'status': written}, row), None
+    import research
+    research.track(uid, 'days_off_answered', source=source, screen='schedule')
+    saved_at = datetime.now(_moscow()).strftime('%d.%m в %H:%M')
+    return 'ok', state(row, result.get('days', []), result.get('desired_days', []), today, saved_at, hours)
+
+
+async def handle(bot, query):
+    """Ответ из виджета: записать выбор, обновить виджет, ответить за 15 секунд. Без содержимого в журнале."""
     answer = 'Не получилось записать. Нажми ещё раз.'   # ЧЕРНОВИК: тексты виджета ждут согласования владельца
     try:
         uid = int(query['from']['id'])
         chat_id = int(query['chat']['id'])
         message_id = int(query['message_id'])
-        parsed = parse(query.get('data'))
-        if parsed is None or chat_id != uid:
+        if chat_id != uid:
             answer = 'Обнови сообщение: эта кнопка устарела.'
             return
-        link = await wishes.employee(uid)
-        if not link:
-            answer = wishes.NO_ACCESS
-            return
-        rows = await wishes.period_rows(link, op_today())
-        row = next((r for r in rows if UUID(str(r['id'])).hex.startswith(parsed['roster']) and wishes.migrated(r)), None)
-        if row is None:
-            answer = wishes.NO_PERIOD
-            return
-        today = op_today()
-        planned = {} if parsed['none'] else changes(row, parsed, today)
-        if planned is None:
-            answer = 'Обнови сообщение: эта кнопка устарела.'
-            return
-        operation = uuid5(NAMESPACE_URL, f'roster-wish-widget:{uid}:{message_id}:{query.get("data")}')
-        result = await wishes.save(uid, link, row, operation, planned, clear=parsed['none'])
-        if result.get('status') != 'ok':
-            answer = wishes.problem(result, row)
-            return
-        hours = hours_for(row, parsed, today)
-        try:
-            written = await store.write_period_hours(uid, uuid5(operation, 'hours'), row['id'], hours)
-        except APIError as error:
-            if error.code not in ('PGRST202', '42883'):     # нет миграции v45: без часов выходные уже записаны
-                raise
-            written = 'ok' if not hours else 'hours'
-        if written == 'hours':
-            answer = 'Выходные записал, а часы пока не получается. Напиши их сообщением.'   # ЧЕРНОВИК
-            return
-        if written != 'ok':
-            answer = wishes.problem({'status': written}, row)
-            return
-        import research
-        research.track(uid, 'days_off_answered', source='bot', screen='schedule')
-        saved_at = datetime.now(_moscow()).strftime('%d.%m в %H:%M')
-        try:
-            await bot(EditMessageWidgetData(chat_id=chat_id, message_id=message_id,
-                                            chat_data=state(row, result.get('days', []), result.get('desired_days', []),
-                                                            today, saved_at, hours)))
-        except Exception as error:
-            logging.warning('days off widget data not updated: %s', type(error).__name__)
-        answer = 'ok'
+        answer, chat_data = await apply(uid, query.get('data'), message_id)
+        if chat_data is not None:
+            try:
+                await bot(EditMessageWidgetData(chat_id=chat_id, message_id=message_id, chat_data=chat_data))
+            except Exception as error:
+                logging.warning('days off widget data not updated: %s', type(error).__name__)
     except Exception as error:
+        answer = 'Не получилось записать. Нажми ещё раз.'
         from diagnostics import failure
         failure(error, area='roster_wishes', stage='widget')
     finally:
