@@ -43,8 +43,10 @@ button:active{transform:scale(.94)}
  font:400 15px/1.1 -apple-system,system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
 .d:active{transform:none;background:rgba(255,255,252,.6)}
 .d i{font:400 10px/1 -apple-system,system-ui,sans-serif;font-style:normal}
-.d.r{box-shadow:inset 0 0 0 1.5px #a93232}.d.r i{color:#a93232}
-.d.p{box-shadow:inset 0 0 0 1.5px #b18400}.d.p i{color:#b18400}
+/* Как в «Графике»: обязательный — бледно-красное пятно, желательный — жёлтое, края размыты. */
+.d.r{background:rgba(246,217,214,.92);color:#a1261c;box-shadow:0 0 10px 2px rgba(246,217,214,.7)}
+.d.p{background:rgba(251,227,166,.92);color:#5a4300;box-shadow:0 0 10px 2px rgba(251,227,166,.7)}
+.d.r:active{background:rgba(246,217,214,1)}.d.p:active{background:rgba(251,227,166,1)}
 .d.h{background:rgba(255,255,255,.62)}
 .d.k{box-shadow:inset 0 0 0 2px #172126}
 .d.x{opacity:.55}

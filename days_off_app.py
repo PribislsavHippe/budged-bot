@@ -21,9 +21,10 @@ PAGE = '''<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Выходные</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-body{margin:0;padding:16px 12px 32px;font:15px/1.35 -apple-system,system-ui,sans-serif;color:#172126;
+body{padding:calc(16px + var(--tg-safe-area-inset-top,0px) + var(--tg-content-safe-area-inset-top,0px)) 12px
+ calc(32px + var(--tg-safe-area-inset-bottom,0px));max-width:480px;margin:0 auto;font:15px/1.35 -apple-system,system-ui,sans-serif;color:#172126;
  background:linear-gradient(160deg,#e9e4f4,#dde9ee 55%,#efe6dc);min-height:100vh;box-sizing:border-box}
-.cap{margin:4px 6px 12px;font-size:16px}.note{margin:0 6px 12px;color:#55575c;font-size:13px}
+.cap{margin:4px 6px 12px;font-size:16px}.cap[hidden]{display:none}.note{margin:0 6px 12px;color:#55575c;font-size:13px}
 iframe{border:0;width:100%;display:block;min-height:320px;background:transparent}
 </style></head><body>
 <p class="cap" id="cap">Загружаю календарь…</p><p class="note" id="note" hidden></p><div id="box"></div>
@@ -36,7 +37,7 @@ iframe{border:0;width:100%;display:block;min-height:320px;background:transparent
   body:JSON.stringify(body)}).then(function(r){return r.json().then(function(j){if(!r.ok)throw j;return j})})}
  function show(text){document.getElementById('cap').textContent=text}
  post('/api/days_off/state',{}).then(function(s){
-  show(s.caption);var n=document.getElementById('note');if(s.note){n.textContent=s.note;n.hidden=false}
+  document.getElementById('cap').hidden=true;var n=document.getElementById('note');if(s.note){n.textContent=s.note;n.hidden=false}
   var listeners=[];
   window.makeWidget=function(){return {chatData:s.chat_data,ready:function(){},
    onEvent:function(name,cb){if(name==='chatDataChanged')listeners.push(cb)},
