@@ -1,5 +1,5 @@
 /* Стеклянный вид кнопок, вкладки-таблетка и панель календаря. Подключается последним и только меняет внешний вид:
-   размеры, отступы и раскладка остаются прежними. Образец — Nimbus UI · Liquid Navbar (вода рисуется в liquid.js). */
+   размеры, отступы и раскладка остаются прежними. Образец стекла — Nimbus UI · Liquid Navbar. */
 :root {
   --g-fill: rgba(255,255,255,.26); --g-rim: rgba(255,255,255,.75); --g-ring: rgba(255,255,255,.22);
   --g-shadow: 0 8px 20px -10px rgba(40,30,80,.38), 0 1px 3px rgba(40,30,80,.08);
@@ -40,7 +40,7 @@
 #spend-submit { padding: 12px 18px; }
 .day-account span { border: 0; }
 
-/* Вкладки: таблетка с водой. Скрывать и показывать вкладки может приложение — таблетка пересчитывается сама. */
+/* Вкладки: стеклянная таблетка. Скрывать и показывать вкладки может приложение — таблетка пересчитывается сама. */
 .tabs-scroll { overflow-x: auto; scrollbar-width: none; margin: -14px -22px -14px; padding: 14px 22px 34px; }
 .tabs-scroll::-webkit-scrollbar { display: none; }
 .nimbus-nav { --n-tint: rgba(255,255,255,.14); --n-fg: #181617; --n-fg-soft: rgba(24,22,23,.58); --n-rim: rgba(255,255,255,.7);
@@ -49,20 +49,14 @@
 .nimbus-glass { position: absolute; inset: 0; border-radius: inherit; z-index: -2; overflow: hidden; background: var(--n-tint, rgba(255,255,255,.14));
   -webkit-backdrop-filter: blur(10px) saturate(1.2) brightness(1.08); backdrop-filter: blur(10px) saturate(1.2) brightness(1.08);
   box-shadow: inset 0 1px 1px var(--n-rim, rgba(255,255,255,.7)), inset 0 0 0 1px rgba(255,255,255,.2), 0 8px 18px -12px rgba(40,30,80,.4), 0 1px 3px rgba(40,30,80,.08); }
-.nimbus-water { position: absolute; left: -14px; top: -14px; z-index: -1; pointer-events: none; }
-[data-gl="off"] > .nimbus-water { display: none; }
-.nimbus-drop { display: none; position: absolute; top: 6px; bottom: 6px; left: 0; border-radius: 999px; z-index: -1; pointer-events: none;
-  background: radial-gradient(120% 140% at 30% 0%, rgba(255,255,255,.75), rgba(255,255,255,0) 55%), rgba(255,255,255,.38);
-  box-shadow: inset 0 1px 1px rgba(255,255,255,.95), inset 0 0 0 1px rgba(255,255,255,.55), 0 6px 16px -6px rgba(40,30,80,.4); }
-.nimbus-nav[data-gl="off"] > .nimbus-drop { display: block; }
 .nimbus-item { position: relative; z-index: 1; flex: 0 0 auto; display: inline-flex; align-items: center; height: 42px; padding: 0 18px; border: 0; border-radius: 999px;
   background: none; color: var(--n-fg-soft); font: 500 15px/1 'Onest',sans-serif; letter-spacing: -.01em; white-space: nowrap; cursor: pointer; transition: color .25s; }
 .nimbus-item:hover, .nimbus-item[aria-selected="true"] { color: var(--n-fg); }
 .nimbus-item[aria-selected="true"] { font-size: 15px; }
 .nimbus-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* Плашка выбранной вкладки: тёмная копия надписей, обрезанная по выбранной вкладке (clip-path едет при переключении). */
-/* Цвет выделения — общий для вкладок и периода в календаре: полупрозрачное светлое стекло, текст тёмный. */
+/* Плашка выбранной вкладки: копия надписей на стекле, обрезанная по выбранной вкладке (clip-path едет при переключении).
+   Цвет выделения — общий для вкладок и периода в календаре: полупрозрачное светлое стекло, текст тёмный. */
 :root { --sel-fill: rgba(255,255,255,.62); --sel-ink: #111; --sel-blur: blur(12px) saturate(1.3); }
 .clip-tabs { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; gap: 2px; padding: 6px; box-sizing: border-box;
   border-radius: inherit; background: var(--sel-fill); pointer-events: none; clip-path: inset(50%);
@@ -71,11 +65,8 @@
 .clip-tabs .nimbus-item { color: var(--sel-ink); cursor: default; }
 @media (prefers-reduced-motion: reduce) { .clip-tabs { transition: none; } }
 
-/* Календарь: стеклянная панель, а период в ней — капля воды. Дни внутри капли круглые. */
+/* Календарь: отступы панели (период рисует drawPeriod в index.html). */
 .cal-wrap { position: relative; isolation: isolate; padding: 12px; border-radius: 28px; margin: 6px -12px 0; }
-.cal-wrap.water .cal-cell.in:not([data-wish]) { border-radius: 50%; }
-.cal-wrap.water .cal-cell.in.shift:not([data-wish]) { box-shadow: inset 0 0 0 1.5px var(--card); }
-.cal-wrap.water .cal-cell.in.today:not([data-wish]) { box-shadow: inset 0 0 0 2px var(--ink); }
 
 @media (prefers-reduced-transparency: reduce) {
   .btn, .btn-ghost, .chip, .acc-btn, .cal-nav, .period-link, .privacy-link, .nimbus-glass { -webkit-backdrop-filter: none; backdrop-filter: none; }

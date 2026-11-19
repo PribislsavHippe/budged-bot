@@ -451,7 +451,6 @@
 
 <script src="/app/private.js"></script>
 <script src="/app/private-finance.js"></script>
-<script src="/app/liquid.js"></script>
 <script>
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 if (tg) { tg.ready(); tg.expand(); }
@@ -1638,8 +1637,8 @@ document.addEventListener("visibilitychange", async function () {
     document.querySelectorAll('.app-tabs [role=tab]').forEach(t=>t.setAttribute('aria-selected',String(t.id==='tab-'+key)));
     document.querySelectorAll('body>[role=tabpanel]').forEach(p=>{p.hidden=p.id!==key+'-panel';});
   };
-  // Вкладки: тёмная плашка переезжает под выбранную вкладку (приём «animated tabs» с 21st.dev, перенесён без React).
-  // Поверх лежит тёмная копия надписей с белым текстом, обрезанная по выбранной вкладке; при переключении
+  // Вкладки: плашка из светлого стекла переезжает под выбранную вкладку (приём «animated tabs» с 21st.dev, перенесён без React).
+  // Поверх лежит копия надписей на стекле, обрезанная по выбранной вкладке; при переключении
   // обрезка плавно едет, и текст меняет цвет прямо по ходу. Следит за aria-selected и hidden, сам ничего не переключает.
   (function(nav){
     if(!nav)return;

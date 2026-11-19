@@ -18,7 +18,7 @@ def between(s, start, end, include_end=False):
 index = read('webapp/index.html')
 css = index[index.index('<style>') + 7:index.index('</style>')]
 nav = between(index, '<div class="tabs-scroll">', '</nav>', True) + '</div>'
-tabs_js = between(index, '  // Вкладки: тёмная плашка', "})(document.querySelector('.app-tabs'));", True)
+tabs_js = between(index, '  // Вкладки: плашка из светлого стекла', "})(document.querySelector('.app-tabs'));", True)
 period_js = between(index, 'function drawPeriod()', "window.addEventListener('tips-period'")
 
 PAGE = r'''<!doctype html><html lang="ru"><head><meta charset="utf-8">
