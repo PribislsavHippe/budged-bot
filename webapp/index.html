@@ -203,7 +203,8 @@
   .cal-cell[data-wish="required"],.cal-cell[data-wish="required"].today { box-shadow:inset 0 0 0 1.5px #a93232; }
   .cal-cell[data-wish="preferred"],.cal-cell[data-wish="preferred"].today { box-shadow:inset 0 0 0 1.5px #b18400; }
   #day-wish-actions { flex-wrap:wrap; }
-  .days-off-beta { display:inline-block; margin-top:6px; color:inherit; text-decoration:underline; text-underline-offset:3px; }
+  .days-off-beta { margin:12px 0 0; font-size:15px; }
+  .days-off-beta a { color:inherit; text-decoration:underline; text-underline-offset:3px; }
   #day-wish-actions[hidden] { display:none; }
   .cal-cell.empty { background:none;box-shadow:none; }
   .cal-time { font-size:11px;line-height:1.05;letter-spacing:0;white-space:normal;max-width:100%; }
@@ -308,6 +309,7 @@
   <div class="cal-wd" id="cal-wd"></div>
   <div class="cal-wrap" id="cal-wrap"><div class="cal-grid" id="cal-grid"></div></div>
   <p class="cal-sum" id="cal-sum" role="status"></p>
+  <p class="days-off-beta" id="days-off-beta" hidden><a href="/app/days-off">Выходные: новый календарь (проба) ›</a></p>
   <p class="cal-hint" id="cal-hint">Нажми на день, чтобы добавить или исправить смену и чаевые.</p>
   <div class="iphone-calendar" id="iphone-calendar" hidden>
     <button class="iphone-calendar-toggle" id="iphone-calendar-toggle" type="button">Подключить календарь ›</button>
@@ -773,11 +775,8 @@ function paintCalendar(view) {
   } else {
     sum.textContent = "Чаевые за месяц не записаны";
   }
-  if (daysOffBeta) {
-    const link = document.createElement('a');
-    link.href = '/app/days-off'; link.className = 'days-off-beta'; link.textContent = 'Выходные: новый календарь (проба) ›';
-    sum.append(document.createElement('br'), link);
-  }
+  // Отдельной строкой: итог месяца (#cal-sum) в нынешнем оформлении скрыт.
+  document.getElementById('days-off-beta').hidden = !daysOffBeta;
   if (view.calendar_wishes?.error) {
     sum.append(document.createElement('br'), view.calendar_wishes.error);
     sum.classList.add('error');

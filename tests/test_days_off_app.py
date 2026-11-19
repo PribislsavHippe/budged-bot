@@ -71,6 +71,16 @@ class DaysOffApp(unittest.TestCase):
         self.assertIn("window.TelegramWidget=parent.makeWidget()<\\/script>'+s.html", days_off_app.PAGE)
         self.assertNotIn('</script>\'+', days_off_app.PAGE)
 
+    def test_link_in_the_mini_app_is_not_inside_the_hidden_month_summary(self):
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'webapp', 'index.html'),
+                  encoding='utf-8') as f:
+            page = f.read()
+        summary = page.index('id="cal-sum"')
+        self.assertIn('#cal-sum,#cal-hint { display:none; }', page)
+        link = page.index('id="days-off-beta"')
+        self.assertGreater(link, page.index('</p>', summary))
+        self.assertIn('/app/days-off', page[link:link + 200])
+
 
 if __name__ == '__main__':
     unittest.main()
