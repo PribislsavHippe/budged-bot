@@ -594,17 +594,18 @@ function drawPeriod() {
   const inside = range ? cells.filter(function (c) { return c.dataset.iso >= range.start && c.dataset.iso <= range.end; }) : [];
   cells.forEach(function (c) { c.classList.toggle('in', inside.includes(c)); });
   // По одной полосе на каждую неделю-строку периода; прежние полосы переиспользуются, поэтому они переезжают.
-  const all = Array.from(grid.children), wr = wrap.getBoundingClientRect(), rows = new Map();
+  const all = Array.from(grid.children), rows = new Map();
   inside.forEach(function (c) { const r = Math.floor(all.indexOf(c) / 7); (rows.get(r) || rows.set(r, []).get(r)).push(c); });
   const bands = Array.from(box.children);
   let i = 0;
+  // Координаты внутри календаря (offset*), а не на экране: не зависят от масштаба страницы (zoom в портфолио).
   rows.forEach(function (list) {
-    const r1 = list[0].getBoundingClientRect(), r2 = list[list.length - 1].getBoundingClientRect();
+    const first = list[0], last = list[list.length - 1];
     let band = bands[i];
     const fresh = !band;
     if (fresh) { band = document.createElement('span'); band.className = 'band fresh'; box.appendChild(band); }
-    band.style.left = (r1.left - wr.left) + 'px'; band.style.top = (r1.top - wr.top) + 'px';
-    band.style.width = (r2.right - r1.left) + 'px'; band.style.height = r1.height + 'px';
+    band.style.left = (grid.offsetLeft + first.offsetLeft) + 'px'; band.style.top = (grid.offsetTop + first.offsetTop) + 'px';
+    band.style.width = (last.offsetLeft + last.offsetWidth - first.offsetLeft) + 'px'; band.style.height = first.offsetHeight + 'px';
     if (fresh) { band.offsetWidth; band.classList.remove('fresh'); }
     i++;
   });
