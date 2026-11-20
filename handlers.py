@@ -115,6 +115,8 @@ async def _offer_help_if_stuck(message) -> None:
     if user is None or len(_MISSES.get(user.id,[]))<2:
         return
     _MISSES.pop(user.id,None)
+    import research
+    research.track(user.id,'help_offered')
     from ux_chat import menu_buttons
     await message.answer(HELP_AFTER_MISSES,reply_markup=menu_buttons())
 
@@ -1188,6 +1190,9 @@ async def _handle_text(message: Message, state: FSMContext):
     # Фраза о выходных («нужны выходные 17, 19») никогда не становится деньгами. Обычно её разбирает
     # days_off_chat; сюда она доходит, если человек не сотрудник ресторана или разбор не сработал.
     import days_off
+    if days_off.parse_request(text) and not days_off.chat_enabled():
+        await message.answer(days_off.APP_TEXT, reply_markup=days_off.app_markup(message.from_user.id))
+        return
     if days_off.parse_request(text):
         from ux_chat import offer_wish
         await offer_wish(message,state,lead='Похоже на просьбу о выходных, поэтому деньгами не записываю. '

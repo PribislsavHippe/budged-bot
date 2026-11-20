@@ -75,6 +75,11 @@ for(const [kind,detail] of [['shift_end_answer','understood'],['shift_end_answer
 await assert.rejects(step('message_burst','в 23'),/check constraint/);
 await assert.rejects(step('shift_end_answer','23:30'),/check constraint/);
 await db.exec('RESET ROLE');
+await db.exec(await fs.readFile(new URL('../migration_v50.sql',import.meta.url),'utf8'));
+await db.exec('SET ROLE service_role');
+await step('help_offered',null);
+await step('message_burst','unknown');
+await db.exec('RESET ROLE');
 await db.exec(`INSERT INTO users VALUES(5),(6),(7);
 INSERT INTO restaurants(id,name,owner_id) VALUES('00000000-0000-0000-0000-0000000000a1','Ресторан',5);
 INSERT INTO employee_links(id,restaurant_id,user_id,report_name,name_key,status,role) VALUES

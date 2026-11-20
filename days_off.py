@@ -233,8 +233,32 @@ def _active_request(row):
     return 'roster_id' not in row or row['roster_id'] is not None
 
 
+# Выходные через чат выключены (решение владельца 20.11.2026): только виджет или мини-приложение.
+# Вернуть прежний сбор сообщениями — DAYS_OFF_CHAT=1 на Render.
+APP_TEXT = 'Выходные теперь отмечаются в приложении: открой календарь и нажми на нужные дни. Сообщением их больше не записываю.'   # ЧЕРНОВИК
+
+
+def chat_enabled():
+    import os
+    return os.getenv('DAYS_OFF_CHAT', '0').strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def app_markup(uid, extra=None):
+    """Кнопка «Отметить выходные», открывающая мини-приложение: новый календарь выходных, если он открыт
+    этому человеку, иначе календарь под чаевыми. Без адреса приложения (локальный запуск) — только extra."""
+    import os
+    from aiogram.types import WebAppInfo
+    import days_off_app
+    host = (os.getenv('WEBHOOK_HOST') or '').rstrip('/')
+    rows = [[Button(text='Отметить выходные', web_app=WebAppInfo(
+        url=host + ('/app/days-off' if days_off_app.allowed(uid) else '/app')))]] if host else []
+    rows += extra or []
+    return Markup(inline_keyboard=rows) if rows else None
+
+
 async def ask(bot, restaurant_id, start, end, links, answered):
-    """Просит написать выходные тех, кто ещё не ответил, и запоминает, что ждёт от них числа."""
+    """Просит отметить выходные тех, кто ещё не ответил: кнопкой в приложение (или, со включённым сбором через
+    чат, — числами в ответ, и тогда бот ждёт их от человека)."""
     today = roster_today()
     sent = 0
     users = (await db._execute(db.supabase.table('employee_links').select('id,user_id,status')
@@ -244,7 +268,13 @@ async def ask(bot, restaurant_id, start, end, links, answered):
             continue
         limit = roster.off_limit((end - start).days + 1, await is_student(restaurant_id, row['id']))
         try:
-            await asyncio.wait_for(bot.send_message(row['user_id'], prompt_text(start, end, limit, today)), timeout=5)
+            if chat_enabled():
+                await asyncio.wait_for(bot.send_message(row['user_id'], prompt_text(start, end, limit, today)), timeout=5)
+            else:
+                await asyncio.wait_for(bot.send_message(
+                    row['user_id'], f'График на {period_text(start, end)}. Отметь обязательные и желательные выходные '
+                    f'в календаре приложения — до {limit} обязательных.',   # ЧЕРНОВИК
+                    reply_markup=app_markup(row['user_id'])), timeout=5)
             import research
             research.track(row['user_id'], 'reminder_sent', source='server', screen='schedule', step='days_off')
             wait = {'link_id': row['id'], 'restaurant_id': restaurant_id, 'start_date': start.isoformat(),

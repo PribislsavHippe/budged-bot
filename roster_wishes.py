@@ -202,6 +202,12 @@ async def edit(uid, body):
 def reminder_text(row):
     start, end = map(date.fromisoformat, (row['start_date'], row['end_date']))
     span = days_off.period_text(start, end)
+    if not days_off.chat_enabled():   # ЧЕРНОВИКИ: выходные только в приложении
+        if row['stage'] == 2:
+            return (f'Если есть пожелания к графику на {span}, отметь их в календаре приложения. '
+                    'Если пожеланий нет, нажми «Без изменений».')
+        return (f'Собираем пожелания к графику на {span}. Отметь в календаре приложения дни, когда нужен '
+                'или желателен выходной, и удобные часы. Если пожеланий нет, нажми «Без изменений».')
     if row['stage'] == 2:
         return (f'Если есть пожелания к графику на {span}, сейчас можно их записать в календаре под чаевыми '
                 'или сообщением сюда. Если пожеланий нет, напиши «пожеланий нет».')
@@ -280,8 +286,8 @@ async def remind(bot, roster_id=None):
             current = await notice_current(claim)
             if current is None:
                 continue
-            markup = Markup(inline_keyboard=[[Button(text='Без изменений',
-                                                      callback_data=f'off:keep:{claim["roster_id"]}')]])
+            keep = [[Button(text='Без изменений', callback_data=f'off:keep:{claim["roster_id"]}')]]
+            markup = Markup(inline_keyboard=keep) if days_off.chat_enabled() else days_off.app_markup(claim['user_id'], keep)
             # Календарь выходных прямо в чате (если включён); иначе и при любой неудаче — прежний текст.
             sent = await asyncio.wait_for(_widget(bot, claim, current), timeout=5)
             if sent is None:

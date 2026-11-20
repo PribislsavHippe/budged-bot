@@ -89,6 +89,7 @@ class Flows(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('фото',message.answer.await_args.args[0])
         self.assertNotIn('1500 ₽ записаны',message.answer.await_args.args[0])
 
+    @patch.dict(os.environ,{'DAYS_OFF_CHAT':'1'})   # прежний путь «пожелание в чате», включаемый флагом
     async def test_free_text_wish_is_not_lost_and_is_passed_on_consent(self):
         # Первый настоящий отзыв: фраза с «2/2» раньше получала ошибку про сумму и терялась.
         text='Желательные воскресенья а так мне 2/2 нравится'

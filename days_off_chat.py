@@ -4,6 +4,7 @@
 числа периода: у графика 16–30 число 5 бот не примет. Любое другое сообщение уходит в обычную обработку.
 """
 import logging
+import re
 from datetime import date
 
 from aiogram import F, Router
@@ -24,7 +25,34 @@ def no_photo_question(message):
 
 
 router = Router()
-router.message.filter(F.chat.type == 'private', F.text, StateFilter(None), no_photo_question)
+# Разбор выходных из сообщений работает, только если сбор через чат включён (DAYS_OFF_CHAT=1).
+router.message.filter(F.chat.type == 'private', F.text, StateFilter(None), no_photo_question,
+                      lambda _: days_off.chat_enabled())
+
+# Сбор через чат выключен: фразы о выходных не записываются, а получают кнопку приложения.
+# Подключается раньше остальных разборов (main.py), но после ответа о конце смены: «23» после вопроса
+# бота о смене — время, а не день выходного.
+pointer_router = Router()
+pointer_router.message.filter(F.chat.type == 'private', F.text, StateFilter(None), lambda _: not days_off.chat_enabled())
+
+
+def about_days_off(message):
+    """Похоже на выходные или удобные часы: «нужны выходные 17, 19», «17, 24», «2/2», «удобно с 12».
+    Одно число и диапазон «10-22» сюда не попадают: это может быть время смены или сумма."""
+    if getattr(message, 'forward_origin', None):
+        return False
+    text = message.text or ''
+    if days_off.parse_request(text) or roster_wish_chat.parse_wish(text) or roster_time_chat.parse(text):
+        return True
+    bare = days_off.parse(text)
+    return bool(bare and len(bare['numbers']) > 1 and not re.search(r'\d\s*[-–—]\s*\d', text))
+
+
+@pointer_router.message(about_days_off)
+async def point_to_app(message):
+    import research
+    research.track(message.from_user.id, 'message_not_understood', step='days_off')
+    await message.answer(days_off.APP_TEXT, reply_markup=days_off.app_markup(message.from_user.id))
 router.callback_query.filter(F.message.chat.type == 'private', F.data.startswith(days_off.PREFIX + ':'))
 router.message.register(roster_time_chat.begin, roster_time_chat.time_filter)
 router.callback_query.register(roster_time_chat.action, F.data.regexp(r'^off:time:[sxr]:[0-9a-f]{32}$'))
@@ -179,6 +207,10 @@ async def clear_weekday_wish(callback):
 @router.callback_query()
 async def change(callback):
     """«Изменить»: бот снова ждёт числа. Кнопки-даты прежней версии больше не работают."""
+    if not days_off.chat_enabled():
+        await callback.answer()
+        await callback.message.answer(days_off.APP_TEXT, reply_markup=days_off.app_markup(callback.from_user.id))
+        return
     parts = callback.data.split(':')
     try:
         if parts[1] != 'e':

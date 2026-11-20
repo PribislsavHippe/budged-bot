@@ -8,7 +8,7 @@ TZ=ZoneInfo('Europe/Moscow')
 ACTIVE={'activity','user_started','cabinet_opened','tab_opened','help_opened','tip_added','expense_added',
         'shift_planned','shift_closed','hours_recorded','sales_report_started','vision_started','problem_reported',
         'schedule_import_started','schedule_previewed','schedule_imported','days_off_answered','roster_viewed'}
-ERROR_EVENTS={'cabinet_load_error','sales_report_error','vision_failed','message_burst'}
+ERROR_EVENTS={'cabinet_load_error','sales_report_error','vision_failed','message_burst','help_offered'}
 STAGES=[('user_started','Пришли'),('onboarding_completed','Завершили знакомство'),
         ('first_value_action','Первое полезное действие'),('cabinet_opened','Открыли кабинет'),
         ('d1','Вернулись на следующий день'),('shift_planned','Добавили график'),('d7','Вернулись на 7-й день')]

@@ -774,6 +774,7 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         await days_off_chat.write(message, **taken)
         return message.answer.await_args
 
+    @patch.dict(os.environ, {'DAYS_OFF_CHAT': '1'})   # прежний сбор выходных через чат, включаемый флагом
     async def test_employees_write_days_off_in_telegram_and_the_builder_uses_them(self):
         import days_off_chat
         made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-30')
@@ -828,6 +829,7 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('2026-11-20', rebuilt['draft']['cells'].get('Аня', {}))
         self.assertEqual((await self.roster('offs', MANAGER, id=made['id']))['fresh'], 0)
 
+    @patch.dict(os.environ, {'DAYS_OFF_CHAT': '1'})   # прежний сбор выходных через чат, включаемый флагом
     async def test_days_off_text_comes_only_from_the_asked_employee_and_old_buttons_stop(self):
         import days_off_chat
         await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-30')

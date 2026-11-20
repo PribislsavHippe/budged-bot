@@ -57,6 +57,7 @@ def build_dispatcher() -> Dispatcher:
     # «в 23» не расход 23 ₽, если бот ждёт время смены.
     import schedule_chat
     dp.include_router(schedule_chat.answer_router)
+    dp.include_router(days_off_chat.pointer_router)
     dp.include_router(days_off_chat.router)
     dp.include_router(category_chat.router)
     dp.include_router(ux_chat.router)
