@@ -236,6 +236,31 @@ class Chat(unittest.TestCase):
         last = menu_chat._page(matches, 'egg', 20).inline_keyboard
         self.assertEqual(len(last), 3)                       # три позиции, без «Ещё»
 
+    def test_search_outcome_is_recorded_without_the_query(self):
+        message = MagicMock()
+        message.from_user.id = 1
+        message.answer = AsyncMock()
+        seen = []
+        with patch.object(menu_store, 'allowed', AsyncMock(return_value=True)), \
+                patch.object(menu_store, 'items', AsyncMock(return_value=ITEMS)), \
+                patch.object(menu_chat, 'send_card', AsyncMock()), \
+                patch('research.track', side_effect=lambda *a, **k: seen.append((a[1], k['step']))):
+            for query in ('тартар', 'щечки', 'лук', 'привет', 'кунжут'):
+                asyncio.run(menu_chat.answer(message, query))
+        self.assertEqual(seen, [('menu_search', 'menu_list'), ('menu_search', 'menu_card'),
+                                ('menu_search', 'menu_inside'), ('menu_search', 'menu_none'),
+                                ('menu_search', 'menu_card')])
+        self.assertEqual(menu_chat._kind(('list', [], 'Где есть соя', 'soy')), 'menu_allergen')
+
+    def test_search_failure_is_recorded(self):
+        message = MagicMock()
+        message.from_user.id = 1
+        with patch.object(menu_store, 'allowed', AsyncMock(return_value=True)), \
+                patch.object(menu_store, 'items', AsyncMock(side_effect=RuntimeError)), \
+                patch('diagnostics.failure'), patch('research.track') as track:
+            self.assertFalse(asyncio.run(menu_chat.answer(message, 'щечки')))
+        track.assert_called_once_with(1, 'menu_failed', step='menu_error', error_code='backend')
+
     def test_card_text_is_escaped_and_says_where_from(self):
         text = menu_chat.text({'name': 'СУП <B>', 'weight': '300 г', 'allergens': ['Лактоза'], 'composition': ['Тыква & сливки'],
                                'source': 'Основное меню', 'page': 6})

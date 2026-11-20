@@ -28,6 +28,22 @@ UPLOAD_OFF = 'Меню сейчас загружается с компьютер
 FAILED = 'Не получилось загрузить файл. Попробуй ещё раз.'
 
 
+def _track(uid, event, step, error_code=None):
+    """Исследование справочника: только вид результата, без текста запроса и названий блюд."""
+    import research
+    research.track(uid, event, step=step, **({'error_code': error_code} if error_code else {}))
+
+
+def _kind(found):
+    if found is None:
+        return 'menu_none'
+    if found[0] == 'card':
+        return 'menu_card'
+    if len(found) > 3:
+        return 'menu_allergen'
+    return 'menu_inside' if found[2].startswith('Где есть') else 'menu_list'
+
+
 def _admin(message):
     from admin import is_admin
     return bool(message.from_user) and is_admin(message.from_user.id)
@@ -95,6 +111,8 @@ async def send_card(message, item):
                 return
         except Exception as error:
             logging.warning('menu photo not sent: %s', type(error).__name__)
+            if getattr(message, 'chat', None):
+                _track(message.chat.id, 'menu_failed', 'menu_photo', 'network')
     await message.answer(text(card), protect_content=True, reply_markup=markup)
 
 
@@ -107,7 +125,9 @@ async def answer(message, query):
     except Exception as error:
         from diagnostics import failure
         failure(error, area='menu', stage='search')
+        _track(message.from_user.id, 'menu_failed', 'menu_error', 'backend')
         return False
+    _track(message.from_user.id, 'menu_search', _kind(found))
     if found is None:
         return False
     if found[0] == 'card':
@@ -141,9 +161,11 @@ async def more_with_allergen(query: CallbackQuery):
     await query.answer()
     if key not in store.ALLERGENS or not start.isdigit():
         return
+    _track(query.from_user.id, 'menu_action', 'menu_more')
     matches = store.with_allergen(await store.items(), key)
     start = int(start)
     if start >= len(matches):
+        _track(query.from_user.id, 'menu_action', 'menu_stale')
         await query.message.answer(GONE)
         return
     await query.message.answer(f'Ещё, где есть {html.escape(store.ALLERGENS[key][1])}:',
@@ -158,8 +180,10 @@ async def open_item(query: CallbackQuery):
     item = await store.item(query.data[7:])
     await query.answer()
     if item is None:
+        _track(query.from_user.id, 'menu_action', 'menu_stale')
         await query.message.answer(GONE)
         return
+    _track(query.from_user.id, 'menu_action', 'menu_description' if query.data.startswith('menu:d:') else 'menu_open')
     if query.data.startswith('menu:d:'):
         paragraphs = item['card'].get('description') or []
         body = html.escape('\n\n'.join(paragraphs))[:3800]

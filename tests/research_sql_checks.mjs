@@ -80,6 +80,15 @@ await db.exec('SET ROLE service_role');
 await step('help_offered',null);
 await step('message_burst','unknown');
 await db.exec('RESET ROLE');
+// v51: справочник по меню — только вид результата.
+await db.exec(await fs.readFile(new URL('../migration_v51.sql',import.meta.url),'utf8'));
+await db.exec('SET ROLE service_role');
+for(const [kind,detail] of [['menu_search','menu_card'],['menu_search','menu_list'],['menu_search','menu_allergen'],
+  ['menu_search','menu_inside'],['menu_search','menu_none'],['menu_action','menu_open'],['menu_action','menu_more'],
+  ['menu_action','menu_description'],['menu_action','menu_stale'],['menu_failed','menu_photo'],['menu_failed','menu_error'],
+  ['message_burst','menu_none'],['help_offered',null]])await step(kind,detail);
+await assert.rejects(step('menu_search','говяжьи щечки'),/check constraint/);
+await db.exec('RESET ROLE');
 await db.exec(`INSERT INTO users VALUES(5),(6),(7);
 INSERT INTO restaurants(id,name,owner_id) VALUES('00000000-0000-0000-0000-0000000000a1','Ресторан',5);
 INSERT INTO employee_links(id,restaurant_id,user_id,report_name,name_key,status,role) VALUES
