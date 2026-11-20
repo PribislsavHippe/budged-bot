@@ -84,12 +84,39 @@ async def today_block(user_id: int) -> str:
     return today_line(income, spent)
 
 
+# Сколько раз подряд бот не понял человека: на втором непонимании за 10 минут он предлагает помощь,
+# а не просит переписать ещё раз (советы Microsoft и IBM по «починке» разговора, 20.11.2026).
+_MISSES: dict[int, list[float]] = {}
+MISS_WINDOW = 600
+HELP_AFTER_MISSES = ('Похоже, у меня не получается тебя понять. Выбери, что нужно, кнопкой — '
+                     'или напиши владельцу бота через «Обратную связь».')   # ЧЕРНОВИК
+
+
 def _not_understood(message, reason: str) -> None:
     """Исследование: бот не понял сообщение. Только причина из короткого списка, без текста."""
     user=getattr(message,'from_user',None)
     if user is not None:
         import research
         research.track(user.id,'message_not_understood',step=reason)
+        import time
+        now=time.monotonic()
+        recent=[t for t in _MISSES.get(user.id,[]) if now-t<MISS_WINDOW]+[now]
+        _MISSES[user.id]=recent[-5:]
+        if len(_MISSES)>2000:_MISSES.clear()
+
+
+def _understood(user_id: int) -> None:
+    _MISSES.pop(user_id,None)
+
+
+async def _offer_help_if_stuck(message) -> None:
+    """После ответа «не понял»: если это второе подряд, предложить кнопки и связь с владельцем."""
+    user=getattr(message,'from_user',None)
+    if user is None or len(_MISSES.get(user.id,[]))<2:
+        return
+    _MISSES.pop(user.id,None)
+    from ux_chat import menu_buttons
+    await message.answer(HELP_AFTER_MISSES,reply_markup=menu_buttons())
 
 
 def _corrected(user_id: int, how: str, screen: str = 'chat', source: str = 'bot') -> None:
@@ -773,7 +800,7 @@ async def _send_private_record(message: Message, record: dict, index: int,
         await message.answer('Это сообщение уже обработал. Новую запись не добавляю; изменения смотри в «Статистике».')
         return True
     payload={**record,'id':f'telegram:{message.chat.id}:{message.message_id}:{index}',
-             'work_date':message_work_date(message),
+             'work_date':record.get('work_date') or message_work_date(message),
              'created_at':(getattr(message,'date',None) or datetime.now(timezone.utc)).isoformat()}
     try:
         sealed,_=private_payload.seal(message.from_user.id,
@@ -1018,7 +1045,98 @@ def bad_shift_days_text(days):
             'Напиши дни смен ещё раз, например <i>работаю 22 24 26</i>.')
 
 
+def _resolve_days(message, items):
+    """«вчера», «за 17 ноября» → work_date записи. Будущая дата — ошибка: запись туда не делаем."""
+    from datetime import date, timedelta
+    base=date.fromisoformat(message_work_date(message))
+    for item in items:
+        ref=item.pop('day',None)
+        if ref is None:
+            continue
+        if ref[0]=='offset':
+            day=base+timedelta(days=ref[1])
+        else:
+            try:day=date(base.year,ref[2],ref[1])
+            except ValueError:raise ValueError('Не понял дату. Напиши, например, «за 17 ноября чай 900».')
+            if day>base and (day-base).days>180:day=day.replace(year=base.year-1)   # «за 30 декабря» в январе
+        if day>base:
+            raise ValueError('Эта дата ещё не наступила — ничего не записал.')
+        if day!=base:
+            item['work_date']=day.isoformat()
+
+
+def _dated_intro(item):
+    if not item.get('work_date'):
+        return None
+    title='чаевые' if item['category']=='Чаевые' else ('расход' if item['kind']=='expense' else html.escape(item['category'].lower()))
+    return f"Записал {title} за {human_date(item['work_date'])}: <b>{fmt(item['amount'])} ₽</b>"
+
+
+async def _ask_kind(message, state, items):
+    """Не уверен, что это за сумма, — показать, что понял, и спросить кнопками. Ничего не записано."""
+    from uuid import uuid4
+    nonce=uuid4().hex[:10]
+    await state.update_data(money_pending={'nonce':nonce,'items':items,'chat':message.chat.id,
+                                           'message_id':message.message_id,
+                                           'date':(getattr(message,'date',None).isoformat() if getattr(message,'date',None) else None)})
+    unclear=[item for item in items if p.uncertain(item)]
+    # Цитата целыми словами, а не обрезком посреди слова («Ководство», § 98: механическая обрезка ломает смысл).
+    def quote(note):
+        note=note.strip()
+        if len(note)<=40:return note
+        return note[:40].rsplit(' ',1)[0]+'…'
+    what=', '.join(f"«{html.escape(quote(item['note']))}»" for item in unclear)
+    # Уточняющий вопрос — не провал: в счёт «не понял подряд» не идёт, в исследовании виден как «не уверен».
+    import research
+    research.track(message.from_user.id,'message_not_understood',step='unclear')
+    await message.answer(f'Не уверен, что это: {what}. Что записать?',
+                         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                             [InlineKeyboardButton(text='Чаевые',callback_data=f'money:as:tip:{nonce}'),
+                              InlineKeyboardButton(text='Расход',callback_data=f'money:as:expense:{nonce}')],
+                             [InlineKeyboardButton(text='Это не деньги',callback_data=f'money:as:none:{nonce}')]]))
+
+
+class _Origin:
+    """Исходное сообщение с суммой для записи после ответа на вопрос: те же ключи повтора и дата."""
+    def __init__(self, reply, user, pending):
+        from datetime import datetime
+        self.chat, self.message_id, self.from_user, self.bot = reply.chat, pending['message_id'], user, reply.bot
+        self.date=datetime.fromisoformat(pending['date']) if pending.get('date') else None
+        self.forward_origin=None
+        self.answer=reply.answer
+
+
+@router.callback_query(F.data.startswith('money:as:'))
+async def cb_money_kind(callback: CallbackQuery, state: FSMContext):
+    _, _, choice, nonce = callback.data.split(':', 3)
+    data=await state.get_data()
+    pending=data.get('money_pending') or {}
+    if pending.get('nonce')!=nonce:
+        await callback.answer('Этот вопрос уже закрыт.');return
+    await state.update_data(money_pending=None)
+    await callback.answer()
+    try:await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:pass
+    items=[]
+    for item in pending['items']:
+        if p.uncertain(item):
+            if choice=='none':continue
+            if choice=='tip':item={**item,'kind':'income','category':'Чаевые','account':p.detect_account(item['note']) or p.CASH}
+        items.append(item)
+    if not items:
+        _understood(callback.from_user.id)
+        import research
+        research.track(callback.from_user.id,'entry_corrected',step='delete')
+        await callback.message.answer('Хорошо, ничего не записал.');return
+    user=await db.get_or_create_user(callback.from_user.id)
+    await _save_items(_Origin(callback.message,callback.from_user,pending),user,items)
+
+
 # ЧЕРНОВИКИ текстов (20.11.2026) — до согласования с владельцем.
+UNCLEAR_NUMBERS_TEXT = ('Не понял сообщение. Если это деньги, напиши, например, «чай 500»; '
+                        'несколько сумм — через запятую: «чай 500, такси 300». Или выбери, чем помочь:')
+SEVERAL_AMOUNTS_TEXT = ('В одной записи несколько сумм — ничего не записал. Раздели их запятой или «и»: '
+                        '«чай 500, такси 300».')
 SMALL_TIME_TEXT = ('Похоже на время, поэтому деньгами не записываю. Время окончания смены пиши в ответ '
                    'на вопрос бота о смене, например 23:30.')
 SMALL_AMOUNT_TEXT = ('Суммы меньше 100 ₽ не записываю: обычно это время или опечатка. '
@@ -1029,6 +1147,14 @@ SHORT_NUMBER_TEXT = ('Не записал: одного короткого чи�
 
 @router.message(F.text)
 async def handle_text(message: Message, state: FSMContext):
+    user_id=getattr(getattr(message,'from_user',None),'id',None)
+    before=len(_MISSES.get(user_id,[]))
+    await _handle_text(message,state)
+    if len(_MISSES.get(user_id,[]))>before:
+        await _offer_help_if_stuck(message)
+
+
+async def _handle_text(message: Message, state: FSMContext):
     text = message.text or ""
     # A clock value must never become a financial amount, even if time tracking
     # is disabled or the earlier schedule router did not handle the message.
@@ -1164,15 +1290,23 @@ async def handle_text(message: Message, state: FSMContext):
     # 4. Обычные записи: «500» или «чай 500», «кофе 200, такси 350»
     try:
         items = p.parse_transactions(text)
-    except p.AmountFormatError:
-        from ux_chat import looks_like_wish, offer_wish, understand
+    except p.AmountFormatError as error:
+        from ux_chat import looks_like_wish, offer_wish, understand, menu_buttons
         if await understand(message,state,text):
             return
         if looks_like_wish(text):
             await offer_wish(message,state);return
+        # «с 11 до 23», «отпуск с 1 по 14» — о деньгах ни слова: ответ про сумму здесь только путает.
+        if not p.money_hint(text):
+            _not_understood(message,'unclear')
+            await message.answer(UNCLEAR_NUMBERS_TEXT,reply_markup=menu_buttons())
+            return
         _not_understood(message,'ambiguous_amount')
-        await message.answer('Не стал записывать: сумма неоднозначна. '
-                             'Напиши положительную сумму с копейками, например «чай 500,50».')
+        if str(error)=='several_amounts':
+            await message.answer(SEVERAL_AMOUNTS_TEXT)
+        else:
+            await message.answer('Не стал записывать: сумма неоднозначна. '
+                                 'Напиши положительную сумму с копейками, например «чай 500,50».')
         return
     # Деньги — от 100 ₽ (решение владельца 20.11.2026): «в 23», «23.30», «ушла в 23» — это время конца смены,
     # а не расход 23 ₽ или чаевые 23,30 ₽. Пересланных уведомлений банка правило не касается: их разбор выше.
@@ -1207,20 +1341,38 @@ async def handle_text(message: Message, state: FSMContext):
     if len(items)>32:
         await message.answer('В сообщении много сумм. Пришли их несколькими сообщениями — пока ничего не записал.')
         return
+    try:
+        _resolve_days(message,items)
+    except ValueError as error:
+        _not_understood(message,'unclear')
+        await message.answer(str(error))
+        return
+    # «гостей было 150», «чек 2300», «на карту 300»: раньше молча становилось расходом «Прочее».
+    # Теперь бот спрашивает кнопками — подтверждение перед записью денег, когда он не уверен (20.11.2026).
+    if any(p.uncertain(item) for item in items):
+        await _ask_kind(message,state,items)
+        return
+    await _save_items(message,user,items)
 
+
+async def _save_items(message, user, items):
+    """Записывает разобранные суммы: в личный журнал на телефоне или в базу, с кнопками «Отменить»."""
+    _understood(message.from_user.id)
     if user.get('private_money_mode'):
         all_sent=True
         for index,item in enumerate(items):
-            sent=await _send_private_record(message,{'kind':item['kind'],'account':item['account'],
+            record={'kind':item['kind'],'account':item['account'],
                 'signed_amount':item['amount']*KIND_SIGN[item['kind']],
-                'category':item['category'],'note':item['note']},index,
-                delete_source=all_sent and index==len(items)-1)
+                'category':item['category'],'note':item['note']}
+            if item.get('work_date'):record['work_date']=item['work_date']
+            sent=await _send_private_record(message,record,index,
+                delete_source=all_sent and index==len(items)-1,confirmation=_dated_intro(item))
             all_sent=all_sent and sent
         return
     is_first_tx = not await db.get_recent_entries(message.from_user.id, limit=1)
     rows=[{'kind':item['kind'],'account':item['account'],
            'signed_amount':item['amount']*KIND_SIGN[item['kind']],
-           'category':item['category'],'note':item['note'],'work_date':message_work_date(message),
+           'category':item['category'],'note':item['note'],'work_date':item.get('work_date') or message_work_date(message),
            'source_key':f'telegram:{message.chat.id}:{message.message_id}:{index}'}
           for index,item in enumerate(items)]
     try:
@@ -1236,6 +1388,9 @@ async def handle_text(message: Message, state: FSMContext):
         await message.answer('Это сообщение уже обработал. Новые записи не добавляю; изменения смотри в «Статистике».')
         return
     body = "\n".join(entry_line(e,include_note=len(saved)==1) for e in saved)
+    dated=sorted({item['work_date'] for item in items if item.get('work_date')})
+    if dated:body+='\nДата: '+', '.join(human_date(d) for d in dated)+'.'
+
     if is_first_tx:
         body += (
             "\n\n👌 Записал. Не тот способ получения — кнопка под записью, "

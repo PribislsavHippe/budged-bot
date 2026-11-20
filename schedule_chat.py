@@ -280,7 +280,9 @@ def time_of(text):
     """Время окончания из свободной фразы: «в 23» → «23:00», «23.30» → «23:30». Иначе None.
     Два отдельных числа («17, 19») и диапазоны через тире («10-22») временем не считаются."""
     t=(text or '').lower().replace('ё','е').strip()
-    if not t or len(t)>40:return None
+    if not t or len(t)>40 or '%' in t:return None          # «10%» — не 10:00
+    # «12 часов», «смена 12 часов» — длительность, а не время ухода; «ушла в 23 часа» — время.
+    if re.search(r'\bчас',t) and not re.search(r'\b(?:в|во|до|около)\b',t):return None
     numbers=re.findall(r'\d+',t)
     if not 1<=len(numbers)<=2:return None
     m=re.search(r'(?<!\d)(\d{1,2})(?:\s*[:. ]\s*(\d{2}))?(?!\d)',t)
@@ -288,6 +290,8 @@ def time_of(text):
     rest=t[:m.start()]+' '+t[m.end():]
     if re.search(r'\d',rest) or any(not _TIME_WORDS.fullmatch(w) for w in re.findall(r'[a-zа-я]+',rest)):return None
     hour,minute=int(m.group(1)),int(m.group(2) or 0)
+    # «18.11» — скорее дата; через точку время пишут кругло: «23.30», «22.45».
+    if m.group(2) is not None and '.' in m.group(0) and minute%5:return None
     if hour==24 and minute==0:hour=0
     if hour>23 or minute>59:return None
     return f'{hour:02d}:{minute:02d}'

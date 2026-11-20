@@ -98,6 +98,7 @@ class LoneShortNumbers(unittest.IsolatedAsyncioTestCase):
 
     async def send(self, text, user):
         handlers = self.handlers
+        handlers._MISSES.clear()   # каждая фраза — отдельный разговор: «помощь после двух непониманий» проверяется в test_phrase_corpus
         message = NS(text=text, from_user=NS(id=5, first_name='Test'), forward_origin=None, answer=AsyncMock(),
                      chat=NS(id=5), bot=NS(id=1, delete_message=AsyncMock()), message_id=100)
         entry = {'id': 10, 'kind': 'income', 'account': 'cash', 'signed_amount': 1, 'category': 'Чаевые', 'note': None}

@@ -139,6 +139,8 @@ def parse_reconciliation(text: str) -> dict | None:
 
 _INCOME_RULES = [
     (r"\bчаевы[ех]\b|\bчай\b", "Чаевые"),
+    # «гость оставил 500», «оставили 1000 на карту», «моя доля 700» — тоже чаевые (аудит фраз 20.11.2026).
+    (r"\bоставил\w*|\bдол[яюиь]\b", "Чаевые"),
     (r"\bзп\b|зарплат|аванс|оклад", "Зарплата"),
     (r"\bсмена\b|подработк|шабашк", "Подработка"),
     (r"преми|бонус", "Зарплата"),
@@ -191,7 +193,7 @@ def default_account(kind: str, category: str) -> str:
 
 # Числа в пояснении к записи — не суммы: номер стола, время, число гостей, год.
 _NOT_AMOUNTS = [re.compile(p, re.IGNORECASE) for p in (
-    r"(?:\bстол\w*|\bст\.|№|#)\s*№?\s*\d+",
+    r"(?:\bстол\w*|\bст\.|№|#)\s*№?\s*\d+(?:\s*(?:и|,)\s*\d+)*",
     r"\b\d{1,2}:\d{2}\b",
     r"\b\d{1,2}\.\d{1,2}\.\d{4}\b",
     r"\d+\s*(?:шт|штук|чел|человек|гост|персон)\w*",
@@ -208,7 +210,49 @@ def _amount_text(part: str) -> str:
         stripped = pattern.sub(" ", stripped)
     if len(_NUMBER.findall(stripped)) > 1:
         stripped = _YEAR.sub(" ", stripped)
+    # Во фрагменте только номер стола («стол 5 и 6») — суммы в нём нет; откат к тексту целиком сделал бы
+    # номера столов суммами. Для остальных пояснений откат прежний.
+    if not _NUMBER.search(stripped) and _NOT_AMOUNTS[0].search(text):
+        return stripped
     return stripped if _NUMBER.search(stripped) else text
+
+# Дата записи в тексте: «вчера чай 800», «за 17 ноября 900», «за 17.11 900». Без даты — день сообщения.
+# Голое «17.11» датой не считается: так пишут и время, и копейки. Решение — в handlers (day → work_date).
+_MONTHS = ('январ', 'феврал', 'март', 'апрел', 'ма', 'июн', 'июл', 'август', 'сентябр', 'октябр', 'ноябр', 'декабр')
+_DAY_WORDS = re.compile(r"(?:\bза\s+)?\b(позавчера|вчера|сегодня)\b", re.IGNORECASE)
+# Месяц — целым словом: «5 мартини», «соус 5 майонез», «12 июльских» — не даты.
+_DAY_MONTH = re.compile(r"(?:\bза\s+)?\b(\d{1,2})\s+(январ[ья]|феврал[ья]|марта?|апрел[ья]|ма[йя]|июн[ья]|июл[ья]|"
+                        r"августа?|сентябр[ья]|октябр[ья]|ноябр[ья]|декабр[ья])(?![а-яё])", re.IGNORECASE)
+_DAY_DOTTED = re.compile(r"\bза\s+(\d{1,2})\.(\d{1,2})\b(?!\.\d)", re.IGNORECASE)
+# «чай 500 и такси 300», «кофе 200 плюс такси 350» — две записи, если по обе стороны есть число.
+_AND = re.compile(r"\s+(?:и|плюс)\s+", re.IGNORECASE)
+_SHARE = re.compile(r"\bдол[яюиь]\b", re.IGNORECASE)
+_TOTAL = re.compile(r"на\s+всех|\bобщ|\bвсего\b|на\s+(?:двоих|троих|компанию|смену)", re.IGNORECASE)
+
+
+def take_date(part: str) -> tuple[str, tuple | None]:
+    """Вынимает дату записи из фрагмента: (текст без даты, ('offset', -1) | ('date', день, месяц) | None)."""
+    m = _DAY_WORDS.search(part)
+    if m:
+        offset = {'сегодня': 0, 'вчера': -1, 'позавчера': -2}[m.group(1).lower()]
+        return (part[:m.start()] + ' ' + part[m.end():]).strip(), ('offset', offset)
+    m = _DAY_MONTH.search(part)
+    if m:
+        stem = m.group(2).lower()
+        month = next(i for i, name in enumerate(_MONTHS, 1) if stem.startswith(name))
+        return (part[:m.start()] + ' ' + part[m.end():]).strip(), ('date', int(m.group(1)), month)
+    m = _DAY_DOTTED.search(part)
+    if m and 1 <= int(m.group(2)) <= 12:
+        return (part[:m.start()] + ' ' + part[m.end():]).strip(), ('date', int(m.group(1)), int(m.group(2)))
+    return part, None
+
+
+def _pieces(part: str) -> list[str]:
+    """«чай 500 и такси 300» → две записи; «стол 5 и 6» — нет: делим, только если в каждой части есть сумма от 100."""
+    pieces = _AND.split(part)
+    money = re.compile(r"\d{3}|\d\s*к\b|\d\s*тыс", re.IGNORECASE)
+    return pieces if len(pieces) > 1 and all(money.search(x) for x in pieces) else [part]
+
 
 def parse_transactions(text: str) -> list[dict]:
     """Разбирает одну или несколько операций через запятую/перенос строки.
@@ -223,10 +267,13 @@ def parse_transactions(text: str) -> list[dict]:
     items = []
     # Запятая между цифрами с одной/двумя цифрами после неё — копейки.
     # Остальные запятые, точка с запятой и перенос строки разделяют записи.
-    for part in re.split(r"[;\n]+|(?<!\d),|,(?!\d{1,2}(?:\D|$))", text):
+    parts = [x for chunk in re.split(r"[;\n]+|(?<!\d),|,(?!\d{1,2}(?:\D|$))", text) for x in _pieces(chunk)]
+    for part in parts:
         part = part.strip()
         if not part:
             continue
+        note = part
+        part, day = take_date(part)
         counted = _amount_text(part)
         # Две суммы в одном фрагменте: вторая молча пропала бы, а первая записалась бы.
         if len(_NUMBER.findall(counted)) > 1:
@@ -238,14 +285,38 @@ def parse_transactions(text: str) -> list[dict]:
         if category == "Чаевые" and any(_two_amounts_lookalike(m.group()) for m in _NUMBER.finditer(counted)):
             raise AmountFormatError("amount_format")
         account = detect_account(part) or default_account(kind, category)
-        items.append({
+        item = {
             "kind": kind,
             "account": account,
             "amount": amount,
             "category": category,
-            "note": part,
-        })
+            "note": note,
+        }
+        if day is not None:
+            item["day"] = day
+        items.append(item)
+    # «чай 3500 на всех, моя доля 700»: записывается своя доля, общая сумма — нет.
+    if any(i["category"] == "Чаевые" and _SHARE.search(i["note"]) for i in items):
+        items = [i for i in items if not (i["category"] == "Чаевые" and _TOTAL.search(i["note"])
+                                          and not _SHARE.search(i["note"]))]
     return items
+
+
+# Слова, при которых расход «Прочее» записывается без вопроса: человек сам назвал это тратой.
+GENERAL_EXPENSE = re.compile(_GENERAL_EXPENSE, re.IGNORECASE)
+
+
+def uncertain(item: dict) -> bool:
+    """Сумма с незнакомыми словами («гостей было 150», «чек 2300», «на карту 300»): спросить, а не угадывать."""
+    return item["kind"] == "expense" and item["category"] == "Прочее" and not GENERAL_EXPENSE.search(item["note"])
+
+
+# Есть ли в тексте признаки денег: без них «сумма неоднозначна» — неуместный ответ («с 11 до 23»).
+def money_hint(text: str) -> bool:
+    lower = text.lower()
+    if detect_account(text) or re.search(r"₽|руб|\d\s*к\b|тыс", lower) or GENERAL_EXPENSE.search(lower):
+        return True
+    return any(re.search(pattern, lower) for pattern, _ in _INCOME_RULES + _EXPENSE_RULES)
 
 
 # ─── банковские уведомления (пересланные или скопированные) ──────────────────
