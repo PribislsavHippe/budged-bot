@@ -111,6 +111,52 @@ class Card(unittest.TestCase):
     def test_page_without_allergens_is_not_a_dish(self):
         self.assertIsNone(menu_pdf.page_card([seg(20, 30, 'ГЛОССАРИЙ', 25), seg(20, 80, 'Пюре — это пюре.', 9)], 465))
 
+    def test_bullet_in_the_middle_of_a_line_starts_the_next_column(self):
+        page = Page(chars(20, 100, 'Хлеб (мука, вода,') + chars(124, 100, ' • Томаты'))
+        self.assertEqual([s['text'] for s in menu_pdf.segments(page)], ['Хлеб (мука, вода,', '• Томаты'])
+
+    def test_text_starting_off_the_page_is_ignored(self):
+        page = Page(chars(-6, 100, 'АЛЛЕРГЕНЫ:') + chars(200, 100, 'СОСТАВ:'))
+        self.assertEqual([s['text'] for s in menu_pdf.segments(page)], ['СОСТАВ:'])
+
+    def test_word_starting_like_a_header_is_not_a_header(self):
+        segs = [seg(20, 30, 'БУРГЕР', 25), seg(20, 100, 'Бургер уникален своими составляющими: соусом.', 9),
+                seg(20, 300, 'СОСТАВ:'), seg(300, 300, 'АЛЛЕРГЕНЫ:'), seg(20, 320, '• Булочка'), seg(300, 320, '• Глютен')]
+        card = menu_pdf.page_card(segs, 465)
+        self.assertEqual(card['composition'], ['Булочка'])
+        self.assertEqual(card['description'], ['Бургер уникален своими составляющими: соусом.'])
+
+    def test_note_far_right_of_a_list_is_not_part_of_it(self):
+        segs = [seg(20, 30, 'ГРАНОЛА', 25), seg(20, 300, 'СОСТАВ:'), seg(20, 320, '• Овсяные хлопья'),
+                seg(20, 400, 'АЛЛЕРГЕНЫ:'), seg(20, 420, '• Мед'), seg(300, 420, 'Предлагайте взять с собой', 11),
+                seg(20, 434, '• Орехи'), seg(20, 448, 'ПОДАЧА: • Красный боул')]
+        card = menu_pdf.page_card(segs, 465)
+        self.assertEqual(card['allergens'], ['Мед', 'Орехи'])
+
+    def test_several_dishes_stacked_on_one_page(self):
+        segs = [seg(260, 70, 'ПИРОЖКИ', 36), seg(260, 140, 'С капустой', 13), seg(260, 170, 'Пирожок с капустой.', 13),
+                seg(260, 220, 'СОСТАВ:', 13), seg(450, 220, 'АЛЛЕРГЕНЫ:', 13), seg(260, 240, '• Тесто', 12),
+                seg(450, 240, '• Глютен', 12), seg(260, 256, '• Капуста', 12), seg(270, 300, 'ПОДАЧА:', 13),
+                seg(270, 318, 'Тарелка', 12),
+                seg(260, 400, 'С яйцом', 13), seg(260, 425, 'Пирожок с яйцом.', 13),
+                seg(260, 470, 'СОСТАВ:', 13), seg(450, 470, 'АЛЛЕРГЕНЫ:', 13), seg(260, 490, '• Тесто', 12),
+                seg(450, 490, '• Глютен', 12), seg(260, 506, '• Яйцо', 12), seg(450, 506, '• Яйцо', 12)]
+        cards = menu_pdf.page_cards(segs, 620)
+        self.assertEqual([c['name'] for c in cards], ['Пирожки — с капустой', 'Пирожки — с яйцом'])
+        self.assertEqual(cards[1]['allergens'], ['Глютен', 'Яйцо'])
+        self.assertEqual(cards[0]['composition'], ['Тесто', 'Капуста'])
+        self.assertEqual(cards[1]['serving'], 'Тарелка')       # подача одна на страницу
+
+    def test_second_dish_in_the_right_column_gets_its_own_card(self):
+        segs = [seg(40, 120, 'Bloody Mary', 36), seg(40, 240, 'Классический коктейль для бранча.', 13),
+                seg(355, 618, 'Вёрджин Мэри', 25), seg(355, 656, 'СОСТАВ:', 15), seg(40, 675, 'СОСТАВ:', 15),
+                seg(198, 675, 'АЛЛЕРГЕНЫ:', 15), seg(355, 682, '• Томатный сок', 12), seg(40, 693, '• Текила', 12),
+                seg(198, 701, '• Алкоголь', 12), seg(40, 709, '• Томатный сок', 12)]
+        cards = menu_pdf.page_cards(segs, 620)
+        self.assertEqual([c['name'] for c in cards], ['Bloody Mary', 'Вёрджин Мэри'])
+        self.assertEqual(cards[0]['allergens'], ['Алкоголь'])
+        self.assertEqual((cards[1]['composition'], cards[1]['allergens']), (['Томатный сок'], []))
+
     def test_section_names(self):
         self.assertEqual(menu_pdf.section('СЕЗОННОЕ SEASONAL'), 'Сезонное')
         self.assertEqual(menu_pdf.section('ОСЕНЬ-ЗИМА,26/27 СЛАДКОЕ'), 'Сладкое')
@@ -157,12 +203,39 @@ class Search(unittest.TestCase):
         self.assertIn('Где есть', found[2])
         self.assertIn('остальные', found[2])
 
+    def test_allergen_question_looks_inside_not_at_names(self):
+        items = [{'id': str(n), 'card': c} for n, c in enumerate([
+            {'name': 'МОЛОКО С ПЕЧЕНЬЕМ', 'composition': ['Молоко'], 'allergens': ['Лактоза']},
+            {'name': 'ЦЕЗАРЬ', 'composition': ['Сыр грана падано', 'Соус (желтки, сливки)'], 'allergens': ['Яйцо']},
+            {'name': 'ПОКЕ', 'composition': ['Бобы эдамаме', 'Соус терияки'], 'allergens': ['Кунжут']},
+            {'name': 'СУДАК', 'composition': ['Филе судака'], 'allergens': ['Лук']},
+            {'name': 'СТЕЙК ИЗ КОРНЯ СЕЛЬДЕРЕЯ', 'composition': ['Сельдерей'], 'allergens': []},
+            {'name': 'ГОВЯДИНА', 'composition': ['Сыровяленая говядина'], 'allergens': []},
+        ])]
+        found = menu_store.search(items, 'молоко')
+        self.assertEqual((found[0], [i['card']['name'] for i in found[1]], found[3]),
+                         ('list', ['МОЛОКО С ПЕЧЕНЬЕМ', 'ЦЕЗАРЬ'], 'milk'))     # не «сыровяленая»
+        self.assertEqual(menu_store.search(items, 'соя')[1]['card']['name'], 'ПОКЕ')
+        self.assertEqual(menu_store.search(items, 'есть ли яйца')[1]['card']['name'], 'ЦЕЗАРЬ')
+        self.assertEqual(menu_store.search(items, 'рыба')[1]['card']['name'], 'СУДАК')
+        self.assertEqual(menu_store.search(items, 'сельдерей')[1]['card']['name'], 'СТЕЙК ИЗ КОРНЯ СЕЛЬДЕРЕЯ')
+        self.assertIsNone(menu_store.allergen_key('медальоны'))
+        self.assertIn('остальные', menu_store.search(items, 'без молока')[2])
+
     def test_long_or_empty_text_is_not_searched(self):
         self.assertIsNone(self.name('и в на'))
         self.assertIsNone(self.name('очень ' * 20))
 
 
 class Chat(unittest.TestCase):
+    def test_allergen_list_comes_in_pages(self):
+        matches = [{'id': str(n), 'card': {'name': f'БЛЮДО {n}'}} for n in range(23)]
+        first = menu_chat._page(matches, 'egg', 0).inline_keyboard
+        self.assertEqual((len(first), first[-1][0].text, first[-1][0].callback_data),
+                         (11, 'Ещё 10 из 13', 'menu:g:egg:10'))
+        last = menu_chat._page(matches, 'egg', 20).inline_keyboard
+        self.assertEqual(len(last), 3)                       # три позиции, без «Ещё»
+
     def test_card_text_is_escaped_and_says_where_from(self):
         text = menu_chat.text({'name': 'СУП <B>', 'weight': '300 г', 'allergens': ['Лактоза'], 'composition': ['Тыква & сливки'],
                                'source': 'Основное меню', 'page': 6})

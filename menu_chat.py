@@ -113,11 +113,41 @@ async def answer(message, query):
     if found[0] == 'card':
         await send_card(message, found[1])
         return True
-    _, matches, title = found
+    _, matches, title, *key = found
+    if key:
+        await message.answer(html.escape(title), reply_markup=_page(matches, key[0], 0), protect_content=True)
+        return True
     rows = [[Button(text=_short(i['card']), callback_data=f"menu:c:{i['id']}")] for i in matches[:LIST]]
     more = f'\nИ ещё {len(matches) - LIST} — уточни запрос.' if len(matches) > LIST else ''
     await message.answer(html.escape(title) + more, reply_markup=Markup(inline_keyboard=rows), protect_content=True)
     return True
+
+
+def _page(matches, key, start):
+    """Список по аллергену частями по LIST: кнопки позиций и «Ещё», пока не кончатся."""
+    rows = [[Button(text=_short(i['card']), callback_data=f"menu:c:{i['id']}")] for i in matches[start:start + LIST]]
+    left = len(matches) - start - LIST
+    if left > 0:
+        rows.append([Button(text=f'Ещё {min(left, LIST)} из {left}', callback_data=f'menu:g:{key}:{start + LIST}')])
+    return Markup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data.startswith('menu:g:'))
+async def more_with_allergen(query: CallbackQuery):
+    if not await store.allowed(query.from_user.id):
+        await query.answer(NO_ACCESS, show_alert=True)
+        return
+    _, _, key, start = (query.data.split(':') + ['0'])[:4]
+    await query.answer()
+    if key not in store.ALLERGENS or not start.isdigit():
+        return
+    matches = store.with_allergen(await store.items(), key)
+    start = int(start)
+    if start >= len(matches):
+        await query.message.answer(GONE)
+        return
+    await query.message.answer(f'Ещё, где есть {html.escape(store.ALLERGENS[key][1])}:',
+                               reply_markup=_page(matches, key, start), protect_content=True)
 
 
 @router.callback_query(F.data.startswith('menu:c:') | F.data.startswith('menu:d:'))

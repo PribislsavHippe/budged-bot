@@ -19,7 +19,7 @@ HEADERS = {
     'тарелка': 'serving',
     'украшение': 'garnish',
 }
-HEADER = re.compile(r'^[•○·\-–]?\s*(состав|аллергены|подача|тарелка|украшение)\s*:?\s*(.*)$', re.I)
+HEADER = re.compile(r'^[•○·\-–]?\s*(состав|аллергены|подача|тарелка|украшение)(?![а-яё])\s*:?\s*(.*)$', re.I)
 BULLET = re.compile(r'^\s*[•○·]\s*')
 WEIGHT = re.compile(r'^/?\s*(\d+(?:[.,]\d+)?)\s*(г|гр|мл|шт)\.?\s*(.*)$', re.I)
 STRENGTH = re.compile(r'^\d{1,2}(?:[.,]\d)?\s*[º°%]$')
@@ -46,7 +46,7 @@ def _row_pieces(chars):
         if not c['text'].strip():
             pending = last is not None
             continue
-        if last is not None and c['x0'] - last['x1'] > column_gap:
+        if last is not None and (c['x0'] - last['x1'] > column_gap or c['text'] in '•○' and text.strip()):
             pieces.append((text, first, last))
             text, last, pending = '', None, False
         if last is None:
@@ -91,7 +91,7 @@ def segments(page):
         if seg.pop('bullet', False) and not BULLET.match(seg['text']):
             seg['text'] = '• ' + seg['text']
         seg['text'] = re.sub(r'\s*[•○·]$', '', seg['text']).strip()
-    return [s for s in merged if s['text']]
+    return [s for s in merged if s['text'] and s['x0'] >= 0]
 
 
 def _join_letters(text):
@@ -127,44 +127,164 @@ def _paragraphs(lines):
     return [_clean(p) for p in out]
 
 
-def page_card(segs, width):
-    """Разбор одной страницы. None — на странице нет блока «Аллергены» (не блюдо)."""
-    headers, header_ids = [], set()
+def _headers(segs):
+    headers = []
     for seg in segs:
         found = HEADER.match(seg['text'])
         bulleted = bool(BULLET.match(seg['text']))
         # «• Аллергены:» бывает заголовком (в «Обеде дня» маркер стоит и перед ним), а «• Украшение: сухоцветы» —
         # пунктом состава. Заголовок с маркером — только пустой.
         if found and (':' in seg['text'] or found[1].isupper()) and not (bulleted and found[2]):
-            headers.append({**seg, 'kind': HEADERS[found[1].lower()], 'value': found[2].strip()})
-            header_ids.add(id(seg))
-    if not any(h['kind'] == 'allergens' for h in headers):
-        return None
+            headers.append({**seg, 'kind': HEADERS[found[1].lower()], 'value': found[2].strip(), 'seg': seg})
+    return headers
+
+
+def _owned(segs, headers):
+    """Строки под каждым заголовком → ({id заголовка: [строки]}, строки выше всех заголовков)."""
     first = min(h['top'] for h in headers)
-    sections = {h['kind']: [] for h in headers}
-    owner = {}
+    ids = {id(h['seg']) for h in headers}
+    owned = {id(h): [] for h in headers}
     body = []
     for seg in segs:
-        if id(seg) in header_ids:
+        if id(seg) in ids:
             continue
+        # «ПОДАЧА: • Тарелка …» — текст в той же строке сразу справа от заголовка.
+        beside = [h for h in headers if abs(h['top'] - seg['top']) < 3 and 0 < seg['x0'] - h['x1'] < 60]
         # Строка относится к ближайшей слева колонке заголовков, а в ней — к ближайшему заголовку сверху.
         above = [h for h in headers if h['top'] < seg['top'] - 1 and h['x0'] - 12 <= seg['x0']]
-        if above:
+        if beside:
+            owned[id(beside[0])].append(seg)
+        elif above:
             column = max(h['x0'] for h in above)
             h = max((h for h in above if h['x0'] >= column - 20), key=lambda h: h['top'])
-            owner[id(seg)] = h
-            sections[h['kind']].append(seg)
+            owned[id(h)].append(seg)
         elif seg['top'] < first:
             body.append(seg)
-    # Ниже последнего пункта списка может стоять подпись к блюду (как в «Основном меню») — она не пункт состава.
-    for kind in ('composition', 'allergens', 'garnish'):
-        lines = sections.get(kind, [])
+    for h in headers:
+        lines = sorted(owned[id(h)], key=lambda s: (s['top'], s['x0']))
         kept = []
         for seg in lines:
-            if kept and seg['top'] - kept[-1]['bottom'] > 3 * max(seg['size'], 8):
+            # Ниже последнего пункта может стоять подпись к блюду или следующее блюдо (его название крупнее) —
+            # это уже не этот раздел.
+            if kept and (seg['top'] - max(k['bottom'] for k in kept) > 3 * max(kept[-1]['size'], 8)
+                         or seg['size'] > kept[-1]['size'] + 4):
                 break
             kept.append(seg)
-        sections[kind] = kept
+        if h['kind'] != 'serving' and kept:
+            # Строка без маркера далеко правее списка — надпись рядом («Предлагайте взять с собой»), а не продолжение.
+            left = min(k['x0'] for k in kept)
+            kept = [k for k in kept if BULLET.match(k['text']) or k['x0'] <= left + 60]
+        owned[id(h)] = kept
+    return owned, body
+
+
+def _column_split(segs, headers, comps):
+    """Блоки «Состав», стоящие рядом в разных колонках (каша овсяная и рисовая, Bloody Mary и Вёрджин Мэри):
+    правая колонка от своего названия и ниже — отдельное блюдо. → [строки левой части, строки колонки, …]."""
+    columns = []
+    for c in sorted(comps, key=lambda c: c['x0']):
+        if columns and c['x0'] - columns[-1][0]['x0'] < 120:
+            columns[-1].append(c)
+        else:
+            columns.append([c])
+    if len(columns) < 2:
+        return [segs]
+    rest, parts = list(segs), []
+    for column in columns[1:]:
+        left = min(c['x0'] for c in column) - 20
+        top = min(c['top'] for c in column)
+        inside = sorted((s for s in rest if s['x0'] >= left), key=lambda s: -s['top'])
+        start = top
+        for s in inside:
+            if s['top'] >= top:
+                continue
+            if start - s['bottom'] > 45:
+                break
+            start = min(start, s['top'])
+        part = [s for s in rest if s['x0'] >= left and s['top'] >= start - 1]
+        rest = [s for s in rest if not any(s is p for p in part)]
+        parts.append(part)
+    return [rest] + parts
+
+
+def _stack_split(segs):
+    """Блюда друг под другом (три круассана, два милкшейка): блок кончается последней строкой своих разделов."""
+    headers = _headers(segs)
+    comps = sorted((h for h in headers if h['kind'] == 'composition'), key=lambda h: h['top'])
+    if len(comps) < 2:
+        return [segs]
+    owned, _ = _owned(segs, headers)
+    ends = []
+    for i, comp in enumerate(comps[:-1]):
+        low = -1e9 if i == 0 else comp['top'] - SAME_ROW
+        high = comps[i + 1]['top'] - SAME_ROW
+        mine = [h for h in headers if low <= h['top'] < high]
+        ends.append(max(max([h['bottom']] + [s['bottom'] for s in owned[id(h)]]) for h in mine))
+    blocks, start = [], -1e9
+    for end in ends + [1e9]:
+        blocks.append([s for s in segs if start < s['top'] <= end])
+        start = end
+    return [b for b in blocks if b]
+
+
+def page_cards(segs, width):
+    """Разбор страницы → карточки. Обычно одна; если на странице несколько блоков «Состав» — по карточке на блок.
+    Пусто — на странице нет ни блока «Аллергены», ни нескольких блюд (разделитель, содержание, глоссарий)."""
+    headers = _headers(segs)
+    comps = [h for h in headers if h['kind'] == 'composition']
+    if len(comps) < 2:
+        card = _without_temp(page_card(segs, width))
+        return [card] if card else []
+    blocks = []
+    for part in _column_split(segs, headers, comps):
+        blocks += _stack_split(part)
+    cards = [page_card(b, width, need_allergens=False) for b in blocks]
+    if not cards or cards[0] is None:
+        return []
+    main = cards[0]
+    page_title = main['name']
+    result = []
+    for n, card in enumerate(cards):
+        if card is None or not (card['composition'] or card['allergens']):
+            continue
+        sub = card.pop('sub', None)
+        if n and not card['name']:
+            card['name'] = page_title
+        if sub:
+            title = page_title[:1] + page_title[1:].lower() if page_title.isupper() else page_title
+            stems = {w[:4] for w in re.findall(r'[а-яёa-z]{4,}', page_title.lower())}
+            own = card.get('sub_size', 0) > main.get('text_size', 0) + 2 or \
+                stems & {w[:4] for w in re.findall(r'[а-яёa-z]{4,}', sub.lower())}
+            card['name'] = sub if own else f'{title} — {sub[:1].lower() + sub[1:]}'
+        for key in ('weight', 'serving', 'category'):
+            if n and not card.get(key):
+                card[key] = main.get(key)
+        if n:
+            card['notes'] = card['notes'] or main['notes']
+        result.append(card)
+    for card in result:
+        card.pop('sub', None), card.pop('sub_size', None), card.pop('text_size', None)
+    return result
+
+
+def _without_temp(card):
+    if card:
+        card.pop('text_size', None)
+    return card
+
+
+def page_card(segs, width, need_allergens=True):
+    """Разбор одного блюда. None — на странице нет блока «Аллергены» (не блюдо)."""
+    headers = _headers(segs)
+    if need_allergens and not any(h['kind'] == 'allergens' for h in headers):
+        return None
+    if not headers:
+        return None
+    owned, body = _owned(segs, headers)
+    sections = {}
+    for h in sorted(headers, key=lambda h: (h['top'], h['x0'])):
+        sections.setdefault(h['kind'], [])
+        sections[h['kind']] += owned[id(h)]
     sizes = [s['size'] for s in body] or [10]
     big = max(sizes)
     weight_by_size = {}
@@ -195,13 +315,25 @@ def page_card(segs, width):
             subtitle.append(value)
         else:
             text.append(seg)
+    sub, sub_size = None, 0
+    if not need_allergens and text:
+        first_line = text[0]['text']
+        alone = len(text) == 1 or text[1]['top'] - text[0]['bottom'] >= max(6, text[1]['size'] * .9)
+        if len(first_line) <= 45 and not first_line.endswith('.') and (not title or alone):
+            sub, sub_size = first_line, text[0]['size']
+            text = text[1:]
     title = [_join_letters(t) for t in title]
     subtitle = [_join_letters(t) for t in subtitle]
     new = any(re.search(r'\bNEW\b', t) for t in title + subtitle)
     title = [re.sub(r'\s*\bNEW\b\s*', ' ', t).strip() for t in title]
     subtitle = [t for t in (re.sub(r'\s*\bNEW\b\s*', ' ', t).strip() for t in subtitle) if t]
     serving = [h['value'] for h in headers if h['kind'] == 'serving' and h['value']]
-    serving += [s['text'] for s in sections.get('serving', [])]
+    # Несколько пунктов подачи («• Ассорти — … • Одна порция — …») — через точку с запятой.
+    for line in sections.get('serving', []):
+        if BULLET.match(line['text']) and serving:
+            serving.append('; ' + BULLET.sub('', line['text']))
+        else:
+            serving.append(BULLET.sub('', line['text']))
     name = _clean(' '.join(title))
     english = None
     # У коктейлей под русским названием стоит английское тем же кеглем — это подпись, а не часть названия.
@@ -226,8 +358,9 @@ def page_card(segs, width):
         'composition': _items(sections.get('composition', [])),
         'garnish': _items(sections.get('garnish', [])),
         'allergens': _items(sections.get('allergens', [])),
-        'serving': _clean(' '.join(serving)) or None,
+        'serving': _clean(' '.join(serving)).replace(' ; ', '; ') or None,
         'notes': notes,
+        **({'sub': sub, 'sub_size': sub_size} if sub else {}), 'text_size': common,
     }
 
 
@@ -276,21 +409,23 @@ def read(data, source, photos=True):
         for number, page in enumerate(pdf.pages, 1):
             segs = segments(page)
             text = ' '.join(s['text'] for s in segs)
-            card = page_card(segs, page.width)
-            if card is None:
+            cards = page_cards(segs, page.width)
+            if not cards:
                 page.close()
                 if 0 < len(text) < 60 and not text.isdigit():
                     category = _clean(re.sub(r'\d+', '', text)).strip(' ,.') or category
                 elif text:
                     skipped.append({'page': number, 'text': text[:80]})
                 continue
-            card['category'] = section(card['category'] or category)
-            if not card['name']:
-                skipped.append({'page': number, 'text': text[:80]})
-                continue
-            card.update(source=source, page=number)
-            if photos:
-                card['photo'] = _photo(reader.pages[number - 1])
-            dishes.append(card)
+            picture = _photo(reader.pages[number - 1]) if photos else None
+            for card in cards:
+                card['category'] = section(card['category'] or category)
+                if not card['name']:
+                    skipped.append({'page': number, 'text': text[:80]})
+                    continue
+                card.update(source=source, page=number)
+                if photos:
+                    card['photo'] = picture
+                dishes.append(card)
             page.close()        # не держать в памяти разобранные страницы: на сервере её мало
     return dishes, skipped
