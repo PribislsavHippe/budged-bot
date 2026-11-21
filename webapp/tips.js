@@ -102,9 +102,17 @@
     const w=(h.parentNode.clientWidth-12)/h.scrollWidth;if(w<1){size*=w;hero.style.setProperty('--huge',size+'px');}
     gh=glyph(h);hero.style.setProperty('--huge-top',(12+top-gh.top)+'px');
   }
-  if('ResizeObserver' in window)new ResizeObserver(fitHero).observe(root);
-  // Размеры считаются по настоящему шрифту цифр: пока он не загрузился, пересчитываем, когда придёт.
-  if(document.fonts){document.fonts.ready.then(fitHero);document.fonts.addEventListener?.('loadingdone',fitHero);document.fonts.load('400 40px Prata').then(fitHero,()=>{});}
+  if('ResizeObserver' in window){
+    let width;
+    new ResizeObserver(([entry])=>{
+      if(entry.contentRect.width===width)return;
+      width=entry.contentRect.width;
+      fitHero();
+    }).observe(root);
+  }
+  let prataLoaded=false;
+  const prataReady=document.fonts?.load('400 40px Prata','0123456789')
+    .then(faces=>{prataLoaded=faces.length>0;},()=>{});
 
   /* ---------- связь с календарём ---------- */
   const announce=()=>{const [start,end]=bounds();
@@ -259,7 +267,6 @@
     $('tips-expense').onclick=()=>showDetail('expenses');
     $('tips-result').hidden=false;$('tips-retry').hidden=true;
     fitHero();announce();
-    document.fonts?.load('400 40px Prata').then(fitHero,()=>{});
   }
   const emptyData=(start,end)=>({period:{start,end,has_data:false,gross:0,expenses:0,net:0,shifts:0,days:[]},today,custom:true,has_shift:false,hours:0,worked:[],entries:[]});
   async function load(){
@@ -273,6 +280,12 @@
       if(token!==request)return;
       // Операционный день мог начаться позже, чем думает телефон: пересчитываем период один раз.
       if(data.today&&data.today!==today&&!corrected){today=data.today;corrected=true;return load();}
+      // Подбираем кегль один раз тем шрифтом, который человек увидит.
+      if(!current){
+        if(prataReady&&!prataLoaded)await Promise.race([prataReady,new Promise(resolve=>setTimeout(resolve,350))]);
+        if(token!==request)return;
+        root.classList.toggle('tips-font-fallback',!prataLoaded);
+      }
       render(data);
     }catch(e){if(token===request){$('tips-error').textContent=e.name==='TimeoutError'?'Не удалось загрузить данные.':e.message;$('tips-retry').hidden=false;}}
     finally{if(token===request)root.setAttribute('aria-busy','false');}
@@ -280,5 +293,6 @@
   $('tips-retry').onclick=load;
   window.addEventListener('private-money-ready',load);
   window.addEventListener('earnings-updated',load);
+  announce();
   load();
 })();

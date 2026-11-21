@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" class="app-starting">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
@@ -10,12 +10,43 @@
 <link rel="stylesheet" href="/app/restaurant.css">
 <link rel="stylesheet" href="/app/schedule.css">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script>
+const tg = window.Telegram?.WebApp;
+// Сначала подготавливаем разметку и полноэкранный режим, потом убираем заставку Telegram.
+const fullscreenReady = (function () {
+  if (!tg) return;
+  tg.expand();
+  if (!['ios', 'android'].includes(tg.platform) || !tg.isVersionAtLeast?.('8.0')) return;
+  window.tgAlwaysFull = true;
+  const mark = () => document.documentElement.classList.toggle('tg-full', !!tg.isFullscreen);
+  tg.onEvent('fullscreenChanged', mark);
+  mark();
+  if (tg.isFullscreen) return;
+  return new Promise(resolve => {
+    const timer = setTimeout(finish, 2500);
+    function finish() {
+      clearTimeout(timer);
+      tg.offEvent('fullscreenChanged', finish);
+      tg.offEvent('fullscreenFailed', finish);
+      resolve();
+    }
+    tg.onEvent('fullscreenChanged', finish);
+    tg.onEvent('fullscreenFailed', finish);
+    try { tg.requestFullscreen(); } catch (_) { finish(); }
+  });
+})();
+document.addEventListener('DOMContentLoaded', async function () {
+  await fullscreenReady;
+  document.documentElement.classList.remove('app-starting');
+  tg?.ready();
+}, {once:true});
+</script>
 <script src="/app/compat.js"></script>
 <script src="/app/ux.js"></script>
 <link rel="stylesheet" href="/app/research.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=Prata&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=Prata&display=optional">
 <script src="/app/background.js" defer></script>
 <style>
   :root {
@@ -38,9 +69,10 @@
   .hero, .r .val, .r .tag, .hist-amt, .num { word-spacing: -0.3em; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html { background: var(--page, #efc1da); }
+  html.app-starting body { visibility:hidden; }
   /* До первого кадра шейдера — почти белый, как начало анимации открытия (иначе на миг виден старый градиент).
      Полосатый градиент — только запасной, если WebGL нет (background.js ставит .fallback). */
-  #bg { position:fixed;inset:0;z-index:-1;pointer-events:none;background-color:#f6f6f6; }
+  #bg { position:fixed;inset:0;z-index:-1;pointer-events:none;visibility:visible;background-color:#f6f6f6; }
   #bg.fallback {
     background-color:#EFC1DA;
     background-image:linear-gradient(90deg,#EFC1DA 0%,#EFC1DA 20%,#CEC99F 23.9%,#CEC99F 51.1%,#DCD6F6 58.9%,#DCD6F6 81.1%,#B5D0D9 85%,#B5D0D9 100%);
@@ -186,7 +218,7 @@
   #iphone-calendar-status { color:var(--ink-soft); font-size:12px; }
   .cal-grid.loading { opacity: .45; }
   .cal-wd { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-bottom: 5px; }
-  .cal-wd span { font-size: 10px; color: var(--ink-soft); text-align: center; }
+  .cal-wd span { font-size: 10px; line-height: 12px; color: var(--ink-soft); text-align: center; }
   .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
   .cal-cell { aspect-ratio: 1; border: 0; padding: 0; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); background: rgba(255,255,255,0.35); cursor: pointer; }
   .cal-cell:disabled { cursor: default; opacity: .55; }
@@ -228,7 +260,7 @@
     .iphone-calendar-toggle { background:var(--tile);-webkit-backdrop-filter:none;backdrop-filter:none; }
   }
   .calendar-disclosure { margin-top:28px; border:0; }
-  .calendar-disclosure>summary { font-size:24px; color:var(--ink); font-weight:400; padding:0 0 18px; }
+  .calendar-disclosure>summary { font-size:24px; line-height:29px; color:var(--ink); font-weight:400; padding:0 0 18px; }
   .app-footer { display:flex; flex-direction:row; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:8px; border:0; margin:48px 0 10px; padding:0; }
   .app-footer button { appearance:none; -webkit-appearance:none; border:0; border-radius:0; box-shadow:none; background:transparent; padding:8px 0; min-height:40px; color:var(--ink); font:400 clamp(10px, 3vw, 12px) 'Onest',sans-serif; white-space:nowrap; cursor:pointer; }
   #help-panel { position:fixed; inset:0; z-index:100; background:rgba(0,0,0,.35); display:none; align-items:flex-end; }
@@ -452,18 +484,6 @@
 <script src="/app/private.js"></script>
 <script src="/app/private-finance.js"></script>
 <script>
-const tg = window.Telegram ? window.Telegram.WebApp : null;
-if (tg) { tg.ready(); tg.expand(); }
-// На телефоне мини-приложение всегда во весь экран (Telegram 8.0+): шапка Telegram скрыта,
-// отступы сверху и снизу берутся из безопасных зон, которые сообщает Telegram.
-if (tg && ['ios', 'android'].includes(tg.platform) && tg.isVersionAtLeast && tg.isVersionAtLeast('8.0')) {
-  window.tgAlwaysFull = true;
-  const mark = () => document.documentElement.classList.toggle('tg-full', !!tg.isFullscreen);
-  tg.onEvent('fullscreenChanged', mark);
-  try { tg.requestFullscreen(); } catch (_) {}
-  mark();
-}
-
 let lastStats = null;
 
 const MONTHS_UP = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
@@ -1072,20 +1092,20 @@ document.getElementById("cal-prev").onclick = function () { calStep(-1); };
 document.getElementById("cal-next").onclick = function () { calStep(1); };
 // ── загрузка статистики ──
 function applyStats(s) {
+  if (!window.privateMoney.state.lost) document.getElementById("err").style.display = "none";
+  render(s);
+}
+let statsRequestSeq=0,statsAppliedSeq=0;
+function load() {
+  const requestSeq=++statsRequestSeq;
   const lost=window.privateMoney.state.lost;
-  if (!lost) document.getElementById("err").style.display = "none";
   document.getElementById('tips-dashboard').style.display=lost?'none':'';
   document.getElementById('private-open').hidden=!lost;
   document.getElementById('open-history').hidden=lost;
   document.getElementById('cal-hint').textContent=lost
     ? 'Нажми на день, чтобы добавить или исправить смену.'
     : 'Нажми на день, чтобы добавить или исправить смену и чаевые.';
-  render(s);
-}
-let statsRequestSeq=0,statsAppliedSeq=0;
-function load() {
-  const requestSeq=++statsRequestSeq;
-  if (window.privateMoney.state.lost) {
+  if (lost) {
     const el=document.getElementById('err');el.style.display='block';
     el.textContent=window.privateMoney.state.lostReason==='missing'
       ? 'Личный журнал находится на другом устройстве. Открой его там или настрой новый телефон в «Суперконфиденциальности».'
