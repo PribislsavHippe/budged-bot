@@ -8,11 +8,13 @@ from parser import (
     CARD,
     CASH,
     classify,
+    default_account,
     extract_amount,
     looks_like_bank_tips,
     parse_bank_tips,
     parse_reconciliation,
     parse_transactions,
+    uncertain,
 )
 
 REAL_BANK_NOTIFICATION = (
@@ -83,7 +85,7 @@ def test_expense_default_card():
 def test_expense_cash_marker():
     (tx,) = parse_transactions("такси 350 нал")
     assert tx["kind"] == "expense"
-    assert tx["category"] == "Транспорт"
+    assert tx["category"] == "Такси"
     assert tx["account"] == CASH
 
 
@@ -267,7 +269,7 @@ def test_ambiguous_money_is_rejected_instead_of_changed():
 
 
 def test_expense_word_beats_for_shift_phrase():
-    for text, category in (("такси 350 за смену", "Транспорт"), ("обед 400 за смену", "Еда")):
+    for text, category in (("такси 350 за смену", "Такси"), ("обед 400 за смену", "Еда")):
         (tx,) = parse_transactions(text)
         assert (tx["kind"], tx["category"], tx["amount"]) == ("expense", category, float(text.split()[1])), text
     for text in ("за смену 2500", "получил 2500 за смену", "смена 2500"):
@@ -334,12 +336,20 @@ def test_standalone_k_is_a_preposition_unless_it_ends_the_amount():
 
 
 def test_categories_match_the_start_of_a_word():
-    # Ревью 15.11.2026: «среда» — не «еда», «клубника» — не «клуб», «выиграл» — не «игр», «бармен» — не «бар».
-    for text in ("среда 2500", "клубника 300", "выиграл 1000", "бармен дал 500", "светлана 200"):
+    # Ревью 15.11.2026: «среда» — не «еда», «клубника» — не «клуб», «выиграл» — не «игр».
+    # «бармен дал 500» — деньги от бармена, не трата: бот переспросит.
+    for text in ("среда 2500", "клубника 300", "выиграл 1000", "бармен дал 500", "светлана 200", "барбершоп 1500"):
         assert classify(text) == ("expense", "Прочее"), text
-    for text, category in (("на еду 300", "Еда"), ("в баре 500", "Развлечения"), ("игрушки 700", "Развлечения"),
-                           ("свет 1500", "Жильё"), ("продукты 1500", "Еда")):
+    # 20.11.2026: категории как в приложении — Мойка, Бар, Еда, Такси; бар и мойка — наличными из чаевых.
+    for text, category in (("Бар 500", "Бар"), ("бармену 400", "Бар"), ("Мойка 100", "Мойка"), ("мойке 200", "Мойка")):
         assert classify(text) == ("expense", category), text
+        assert default_account(*classify(text)) == "cash", text
+    for text, category in (("на еду 300", "Еда"), ("продукты 1500", "Еда"), ("такси 400", "Такси"),
+                           ("игрушки 700", "Прочее"), ("свет 1500", "Прочее")):
+        assert classify(text) == ("expense", category), text
+    # Понятная трата вне категорий записывается без вопроса, незнакомые слова — с вопросом.
+    assert not uncertain(parse_transactions("метро 60")[0])
+    assert uncertain(parse_transactions("гостей было 150")[0])
 
 def load_tests(loader, suite, pattern):
     import unittest

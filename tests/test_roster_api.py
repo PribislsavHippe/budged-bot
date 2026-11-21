@@ -1034,6 +1034,7 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
     async def test_publishing_writes_waiters_shifts_into_their_personal_calendar(self):
         import asyncio
         import roster_sync
+        self.enterContext(patch.object(roster_sync, 'op_today', return_value=date(2026, 11, 10)))
         saved = []
         async def save(uid, cells): saved.append((uid, cells))
         fake_user = AsyncMock(return_value={})
