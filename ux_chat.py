@@ -5,6 +5,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup,InlineKeyboardButton
 from aiogram.fsm.state import State,StatesGroup
 import research
+from chat_tone import friend_text
 
 router=Router()
 router.message.filter(F.chat.type=='private')
@@ -386,7 +387,8 @@ async def understand(message,state,text):
     if looks_like_wish(text):
         await offer_wish(message,state);return True
     research.track(message.from_user.id,'message_not_understood',step='unclear')
-    await message.answer('Не понял сообщение. Если это чаевые или расход, пришли сумму, например <i>чай 1500</i>. '
+    opening=friend_text(message,'Не понял сообщение.','Приятель, не понял сообщение.')
+    await message.answer(opening+' Если это чаевые или расход, пришли сумму, например <i>чай 1500</i>. '
                          'Или выбери, чем помочь:',reply_markup=menu_buttons())
     return True
 

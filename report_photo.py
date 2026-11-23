@@ -16,6 +16,7 @@ import report_vision as vision
 from sales import month_key
 from sales_chat import parse_sales_message, parse_report_edit
 from chat_dates import parse_date, human_date
+from chat_tone import friend_text
 from sales_service import chat_write, save_report
 from workday import op_today
 
@@ -288,7 +289,7 @@ async def photo_callback(callback):
                     await callback.message.edit_text('Нашёл твою строку. Проверь цифры.')
                     await ask_date_or_preview(callback.message,draft)
                     return
-            await callback.message.edit_text('Выбери свою строку:', reply_markup=kb(draft,
+            await callback.message.edit_text(friend_text(callback.message,'Выбери свою строку:','Приятель, выбери свою строку:'), reply_markup=kb(draft,
                 [(row['name'] or f'Строка {i+1}', f'row{i}') for i, row in enumerate(draft.report['rows'])] + [('Отмена', 'cancel')]))
         elif action.startswith('row') and draft.phase == 'row':
             try:

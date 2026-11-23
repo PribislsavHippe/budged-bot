@@ -28,6 +28,7 @@ from aiogram.types import (
 import db
 import parser as p
 from chat_dates import human_date, human_month
+from chat_tone import friend_text
 from workday import MSK, entry_op_date, op_today
 
 router = Router()
@@ -248,7 +249,8 @@ async def show_history(message: Message):
         return
     entries = await db.get_recent_entries(message.from_user.id, limit=15)
     if not entries:
-        await message.answer("Пока пусто. Напиши первую: <i>чай 500</i>")
+        await message.answer(friend_text(message, 'Пока пусто. Напиши первую: <i>чай 500</i>',
+                                         'Приятель, пока пусто. Первую запись можно сделать так: <i>чай 500</i>'))
         return
     from datetime import date, datetime
     lines = []
@@ -1014,6 +1016,9 @@ async def save_forwarded_tips(items):
                  'Запиши вручную: <i>чай 500</i>.' if len(items)==1 else
                  f'Не нашёл сумму чаевых в {missing} из {len(items)} пересланных сообщений. '
                  'Ничего не записал. Перешли только уведомления о чаевых ещё раз.')
+        if len(items)==1:
+            warning=friend_text(first,warning,'Приятель, в уведомлении не нашёл сумму чаевых. Ничего не записал. '
+                                'Можно записать вручную: <i>чай 500</i>.')
         await first.answer(warning)
         return
     total=sum((Decimal(str(notif['amount'])) for _,notif in items),Decimal('0'))

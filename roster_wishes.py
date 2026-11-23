@@ -8,6 +8,7 @@ from postgrest.exceptions import APIError
 import days_off
 import db
 import roster
+from chat_tone import friend_text
 from workday import MSK, op_today
 
 
@@ -354,7 +355,9 @@ async def remind(bot, roster_id=None):
             # Календарь выходных прямо в чате (если включён); иначе и при любой неудаче — прежний текст.
             sent = await asyncio.wait_for(_widget(bot, claim, current), timeout=5)
             if sent is None:
-                await asyncio.wait_for(bot.send_message(claim['user_id'], reminder_text(current),
+                text = reminder_text(current)
+                text = friend_text(claim['user_id'], text, 'Приятель, ' + text[0].lower() + text[1:])
+                await asyncio.wait_for(bot.send_message(claim['user_id'], text,
                                                        reply_markup=markup, disable_notification=True), timeout=5)
             count += 1
             import research

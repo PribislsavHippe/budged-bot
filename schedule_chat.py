@@ -10,6 +10,7 @@ from aiogram.types import InlineKeyboardMarkup as Markup,InlineKeyboardButton as
 from aiogram.dispatcher.event.bases import UNHANDLED
 import db,schedule,research,report_vision as vision,schedule_sheet
 from chat_dates import human_date,human_month
+from chat_tone import friend_text
 from workday import op_today
 
 router=Router()
@@ -81,7 +82,7 @@ async def sheet_month(message):
                                  reply_markup=photo_buttons(draft,[('Отмена','cancel')]));return
         draft.report={'rows':rows,'month':month_key}
         draft.phase='schedule_sheet_name'
-        await message.answer('Выбери свою строку:',reply_markup=photo_buttons(draft,[
+        await message.answer(friend_text(message,'Выбери свою строку:','Приятель, выбери свою строку:'),reply_markup=photo_buttons(draft,[
             (row['name']+(f" · строка {row['row']}" if sum(r['name']==row['name'] for r in rows)>1 else ''),f'row{i}')
             for i,row in enumerate(rows)]+[('Отмена','cancel')]))
 
@@ -121,7 +122,8 @@ async def start_photo(callback,draft,image_bytes=None):
         names=[r['name'].strip() for r in rows]
         research.track(callback.from_user.id,'vision_completed',screen='calendar')
         draft.report=result;draft.phase='schedule_name'
-        await callback.message.edit_text('Выбери свою строку:',reply_markup=photo_buttons(draft,[(n,f'row{i}') for i,n in enumerate(names)]+[('Отмена','cancel')]))
+        await callback.message.edit_text(friend_text(callback.message,'Выбери свою строку:','Приятель, выбери свою строку:'),
+                                         reply_markup=photo_buttons(draft,[(n,f'row{i}') for i,n in enumerate(names)]+[('Отмена','cancel')]))
     except Exception as error:
         research.track(callback.from_user.id,'vision_failed',screen='calendar',error_code='vision')
         draft.image=None;draft.phase='consent'
@@ -251,7 +253,8 @@ async def ask_end(message,uid,day,state,value=None):
     if value is not None:
         await end_text(message,state)
         return
-    await message.answer(f'Смена {human_date(day)}. {previous}Во сколько заканчиваешь? Начало — {start[:5]}.\nНапиши время окончания, например 23:30.',
+    heading=friend_text(message,'Смена','Приятель, смена')
+    await message.answer(f'{heading} {human_date(day)}. {previous}Во сколько заканчиваешь? Начало — {start[:5]}.\nНапиши время окончания, например 23:30.',
                          reply_markup=buttons([('Отмена','work:cancel')]))
 
 
@@ -385,7 +388,8 @@ async def work_summary(message):
     except Exception as error:
         from diagnostics import failure
         failure(error,area='work_time',stage='summary')
-        await message.answer('Не получилось показать часы. Попробуй чуть позже.');return
+        await message.answer(friend_text(message,'Не получилось показать часы. Попробуй чуть позже.',
+                                         'Не получилось показать часы. Попробуй чуть позже, приятель.'));return
     if not rows:
         await message.answer('За '+human_month(key)+' ещё нет записанного времени работы.');return
     hours=income=0;missing=0;lines=[]
@@ -452,7 +456,8 @@ async def save_actual(callback,state):
         await callback.message.answer('Не получил подтверждение. Нажми «Да, записать» ещё раз — вторая запись не появится.')
         return
     await state.clear();research.track(callback.from_user.id,'hours_recorded',screen='calendar')
-    text=f"Записал {schedule.hours_text(result['hours'])}."
+    opening=friend_text(callback.message,'Записал','Приятель, записал')
+    text=f"{opening} {schedule.hours_text(result['hours'])}."
     end=datetime.fromisoformat(data['actual_end']).astimezone(schedule.TZ)
     text+=f" Окончание смены {human_date(data['work_day'])} — {end:%H:%M}."
     if result['income'] is not None:text+=f" Заработок по ставке: {result['income']:g} ₽. Чаевые считаются отдельно."
@@ -480,7 +485,8 @@ async def rate_command(message,state):
     await state.set_state(Work.rate);await state.set_data({})
     value=message.text.split(maxsplit=1)
     if len(value)==2:await set_rate(message,state,value[1])
-    else:await message.answer('Сколько рублей в час? Например, 350.',
+    else:await message.answer(friend_text(message,'Сколько рублей в час? Например, 350.',
+                                          'Приятель, сколько рублей в час? Например, 350.'),
                               reply_markup=buttons([('Отмена','work:cancel')]))
 
 
@@ -490,7 +496,8 @@ async def ask_rate(callback,state):
     try:day=date.fromisoformat(callback.data.rsplit(':',1)[-1]).isoformat()
     except ValueError:return
     await callback.answer();await state.set_state(Work.rate);await state.set_data({'rate_day':day})
-    await callback.message.answer('Сколько рублей в час? Например, 350.',
+    await callback.message.answer(friend_text(callback.message,'Сколько рублей в час? Например, 350.',
+                                             'Приятель, сколько рублей в час? Например, 350.'),
                                   reply_markup=buttons([('Пропустить','work:cancel')]))
 
 
@@ -510,7 +517,13 @@ async def set_rate(message,state,value):
         failure(error,area='work_time',stage='rate')
         await message.answer('Не получил подтверждение сохранения ставки. Пришли ту же ставку ещё раз.')
         return
-    await state.clear();await message.answer('Ставка сохранена для следующих смен.'+(' Добавил её и к этой смене.' if data.get('rate_day') else ''))
+    await state.clear()
+    if data.get('rate_day'):
+        text=friend_text(message,'Ставка сохранена для следующих смен. Добавил её и к этой смене.',
+                         'Ставка сохранена для следующих смен. Добавил её и к этой смене, приятель.')
+    else:
+        text=friend_text(message,'Ставка сохранена для следующих смен.','Ставка сохранена для следующих смен, приятель.')
+    await message.answer(text)
     if data.get('rate_day'):
         rows=(await db._execute(db.supabase.table('worked_shifts').select('actual_start,actual_end,hourly_rate').eq('user_id',message.from_user.id).eq('shift_date',data['rate_day']))).data
         if rows:
@@ -561,8 +574,11 @@ async def prompt_work_end(bot):
                 continue
             try:
                 from notices import send_shift_notice
+                shift_date=human_date(day)
+                question=friend_text(uid,f'Во сколько заканчиваешь смену {shift_date}?',
+                                     f'Приятель, во сколько заканчиваешь смену {shift_date}?')
                 await send_shift_notice(row['id'],'end',lambda:bot.send_message(
-                    uid,f'Во сколько заканчиваешь смену {human_date(day)}? '
+                    uid,question+' '
                         'Ответь на это сообщение временем, например 23:30.\n'
                         'А если были чаевые — напиши сумму, например «чай 1500».',
                     reply_markup=buttons([('Записать окончание',f'work:close:{day}')])),uid=uid)

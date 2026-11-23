@@ -18,6 +18,7 @@ from aiogram.types import InlineKeyboardButton as Button, InlineKeyboardMarkup a
 from postgrest.exceptions import APIError
 
 import db
+from chat_tone import friend_text
 import roster
 import schedule
 import training_sheet as sheet
@@ -105,10 +106,11 @@ def announcement(sessions):
             '\nТем, у кого в эти дни выходной, напишу лично.')
 
 
-def invitation(sessions):
+def invitation(sessions, uid=None):
     """По просьбе менеджера: «ты обязан пойти», но с иронией. ЧЕРНОВИК."""
-    head = ('Новости: в твой выходной тренинг. Ты должен идти ☠️' if len(sessions) == 1 else
-            'Новости: в твои выходные тренинги. Ты должен идти на все ☠️')
+    body = ('в твой выходной тренинг. Ты должен идти ☠️' if len(sessions) == 1 else
+            'в твои выходные тренинги. Ты должен идти на все ☠️')
+    head = friend_text(uid, 'Новости: ' + body, 'Приятель, ' + body)
     return (head + '\n' + '\n'.join(line(s) + (f", ведёт {_plain(s['host'])}" if s.get('host') else '') for s in sessions))
 
 
@@ -263,7 +265,7 @@ async def _invite(bot, bound, sessions, doc):
         if not uid:
             continue
         try:
-            await bot.send_message(uid, invitation(mine), reply_markup=invitation_markup(mine, doc))
+            await bot.send_message(uid, invitation(mine, uid), reply_markup=invitation_markup(mine, doc))
         except Exception as error:
             logging.warning('training invitation failed: %s', type(error).__name__)
             continue
