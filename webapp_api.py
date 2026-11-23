@@ -486,11 +486,15 @@ async def api_calendar_edit(request: web.Request) -> web.Response:
         import roster_wishes
         result, status = await roster_wishes.edit(user_id, body)
         return web.json_response(result, status=status, headers=NO_CACHE)
+    if body.get('action') == 'wish_hours_save':
+        import roster_wishes
+        result, status = await roster_wishes.edit_hours(user_id, body)
+        return web.json_response(result, status=status, headers=NO_CACHE)
     try:
         day=date.fromisoformat(body.get('date',''))
         if not 2000<=day.year<=2100:raise ValueError()
         action=body.get('action')
-        if action not in {'shift_save','shift_delete','tip_add','tip_delete','expense_add'}:raise ValueError()
+        if action not in {'shift_save','shift_delete','work_save','tip_add','tip_delete','expense_add'}:raise ValueError()
     except (TypeError,ValueError):
         return web.json_response({'error':'Проверь дату и действие.'},status=400,headers=NO_CACHE)
     day_iso=day.isoformat()
@@ -512,6 +516,21 @@ async def api_calendar_edit(request: web.Request) -> web.Response:
     if action=='shift_delete':
         await db.delete_shift(user_id,day_iso)
         return web.json_response({'saved':True},headers=NO_CACHE)
+    if action=='work_save':
+        now=datetime.now(schedule.TZ)
+        try:
+            start,end=(schedule.clock(body.get(key)) for key in ('start','end'))
+            if start==end or day>op_today(now):raise ValueError()
+            actual_start,actual_end=schedule.actual(day_iso,end.strftime('%H:%M'),start.strftime('%H:%M'))
+            if actual_end>now:raise ValueError()
+        except (TypeError,ValueError):
+            return web.json_response({'error':'Проверь начало и конец смены.'},status=400,headers=NO_CACHE)
+        result=await schedule.save_work(user_id,day_iso,actual_start,actual_end)
+        import research
+        research.track(user_id,'hours_recorded',source='miniapp',screen='calendar')
+        return web.json_response({'saved':True,'hours':schedule.hours_text(result['hours']),
+                                  'worked':{'shift_date':day_iso,'actual_start':actual_start.isoformat(),
+                                            'actual_end':actual_end.isoformat()}},headers=NO_CACHE)
     if action=='tip_add':
         try:
             raw=body.get('amount')

@@ -535,6 +535,38 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
             conflict = await self.post('/api/calendar_edit', WAITER, 409, **payload)
             self.assertIn('уже изменилось', conflict['error'])
 
+    async def test_calendar_availability_uses_the_signed_actor_and_one_date(self):
+        import roster_time_store
+        import roster_wishes
+        made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
+        row = self.fake.rows['rosters'][0]
+        row['collect_wishes_at'] = '2026-11-11T09:00:00Z'
+        payload = {'action':'wish_hours_save', 'date':'2026-11-18', 'start':'09:15', 'end':'17:00',
+                   'roster_id':made['id'], 'operation_id':str(uuid4())}
+        with patch.object(roster_wishes, 'op_today', return_value=date(2026, 11, 10)), \
+             patch.object(roster_time_store, 'write', new=AsyncMock(return_value='ok')) as save:
+            await self.post('/api/calendar_edit', WAITER, 401, **{**payload, 'initData':'wrong'})
+            await self.post('/api/calendar_edit', MANAGER, 403, **payload)
+            await self.post('/api/calendar_edit', WAITER, 404, **{**payload, 'date':'2026-11-23'})
+            await self.post('/api/calendar_edit', WAITER, 400, **{**payload, 'end':'01:00'})
+            save.assert_not_awaited()
+            result = await self.post('/api/calendar_edit', WAITER, user_id=MANAGER, **payload)
+            self.assertEqual(result['hours']['start_min'], 555)
+            self.assertEqual(save.await_args.args[0], WAITER)
+            self.assertEqual(save.await_args.args[1]['keys'], ['2026-11-18'])
+            self.assertEqual(save.await_args.args[1]['kind'], 'limit')
+            link = await roster_wishes.employee(WAITER)
+            rules = self.fake.rows.setdefault('shift_time_rules', [])
+            for day in ('2026-11-18','2026-11-19'):
+                rules.append({'link_id':link['id'], 'restaurant_id':PLACE, 'target':day, 'kind':'limit',
+                              'start_min':555, 'end_min':1020, 'operation_id':payload['operation_id']})
+            calendar = await roster_wishes.calendar(WAITER, date(2026,11,1), date(2026,11,30))
+            self.assertEqual(calendar['days']['2026-11-18']['hours']['start_min'], 555)
+            remove = {**payload, 'remove':True, 'previous_operation':payload['operation_id']}
+            await self.post('/api/calendar_edit', WAITER, 409, **{**remove, 'previous_operation':str(uuid4())})
+            self.assertIsNone((await self.post('/api/calendar_edit', WAITER, **remove))['hours'])
+            self.assertEqual([rule['target'] for rule in self.fake.rows['shift_time_rules']], ['2026-11-19'])
+
     async def test_shift_time_rule_survives_rebuild_and_validates_publication(self):
         made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
         day = '2026-11-18'

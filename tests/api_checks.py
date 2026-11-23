@@ -766,6 +766,25 @@ def test_calendar_shift_can_be_added_changed_and_removed():
     assert removed.status == 200 and not _db.shifts
 
 
+def test_calendar_worked_hours_use_the_signed_user_and_support_overnight_edits():
+    import schedule
+    body = {'initData': init_data(TOKEN, 42), 'action': 'work_save', 'date': '2026-10-05',
+            'start': '14:00', 'end': '00:30', 'user_id': 99}
+    with patch.object(schedule, 'save_work', new=AsyncMock(return_value={'hours': 10.5})) as save:
+        created = run(webapp_api.api_calendar_edit(Req(body)))
+        assert created.status == 200
+        assert created.data['worked']['actual_end'] == '2026-10-06T00:30:00+03:00'
+        assert created.data['hours'] == '10 ч 30 мин'
+        edited = run(webapp_api.api_calendar_edit(Req({**body, 'end': '00:45'})))
+        assert edited.status == 200
+        assert save.await_args.args[:2] == (42, '2026-10-05')
+        assert save.await_args.args[3].isoformat() == '2026-10-06T00:45:00+03:00'
+        for update in ({'end': '14:00'}, {'date': '2099-10-05'}, {'start': None}):
+            rejected = run(webapp_api.api_calendar_edit(Req({**body, **update})))
+            assert rejected.status == 400
+        assert save.await_count == 2
+
+
 def test_calendar_tip_edits_are_user_scoped_and_private_mode_stays_local():
     from uuid import uuid4
     _db.store.clear()

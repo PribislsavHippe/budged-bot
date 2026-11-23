@@ -126,6 +126,14 @@ async def calendar(uid, first, last):
         return {'error': LOAD_FAILED}
 
     answers = {r['roster_id']: r for r in rows}
+    try:
+        import roster_time_store
+        limits = {rule['target']: rule for rule in await roster_time_store.date_limits(link, first, last)}
+    except APIError as error:
+        if error.code not in days_off.MISSING:
+            from diagnostics import failure
+            failure(error, area='roster_wishes', stage='calendar_hours')
+        limits = None
     result = {}
     today = op_today()
     for period in periods:
@@ -153,8 +161,63 @@ async def calendar(uid, first, last):
                 'working': str(cells.get(key, '')).strip()[:1].isdigit() if person else None,
                 'editable': day >= today and in_roster(period, link['id']),
             }
+            if limits is not None:
+                result[key]['hours'] = limits.get(key)
             day += timedelta(days=1)
     return {'days': result}
+
+
+async def edit_hours(uid, body):
+    """Record availability for one date without replacing the rest of the period."""
+    from identity_chat import enabled
+    from schedule import clock
+    import roster_time_store
+    if not enabled():
+        return {'error': NO_ACCESS}, 403
+    try:
+        day = date.fromisoformat(body['date'])
+        roster_id = str(UUID(str(body['roster_id'])))
+        operation = UUID(str(body['operation_id']))
+        remove = body.get('remove') is True
+        if remove:
+            previous = str(UUID(str(body['previous_operation'])))
+        else:
+            first, last = (clock(body[key]) for key in ('start', 'end'))
+            start = first.hour * 60 + first.minute
+            end = last.hour * 60 + last.minute
+            if not 360 <= start < end <= 1380:
+                raise ValueError
+    except (KeyError, TypeError, ValueError):
+        return {'error': 'Проверь часы. Начало должно быть раньше окончания, ресторан закрывается в 23:00.'}, 400
+    try:
+        link = await employee(uid)
+        if not link:
+            return {'error': NO_ACCESS}, 403
+        periods = await period_rows(link, day, day)
+        period = next((row for row in periods if row['id'] == roster_id and migrated(row)), None)
+        if not period:
+            return {'error': NO_PERIOD}, 404
+        if not in_roster(period, link['id']):
+            return {'error': NO_ACCESS}, 403
+        if day < op_today():
+            return {'error': outside(period)}, 400
+        if remove:
+            if not await roster_time_store.remove_date_limit(link, day, previous):
+                return {'error': CONFLICT}, 409
+            return {'saved': True, 'message': 'Доступное время на этот день убрал.', 'hours': None}, 200
+        result = await roster_time_store.write(uid, {'op': str(operation), 'period': roster_id,
+                                                      'keys': [day.isoformat()], 'kind': 'limit',
+                                                      'start': start, 'end': end})
+    except Exception as error:
+        from diagnostics import failure
+        failure(error, area='roster_wishes', stage='edit_hours')
+        return {'error': SAVE_UNKNOWN}, 503
+    if result != 'ok':
+        return {'error': problem({'status': result}, period)}, 403 if result == 'access' else 400
+    import research
+    research.track(uid, 'days_off_answered', source='miniapp', screen='calendar')
+    return {'saved': True, 'message': f'Записал доступное время с {first:%H:%M} до {last:%H:%M}.',
+            'hours': {'start_min': start, 'end_min': end, 'operation_id': str(operation)}}, 200
 
 
 async def edit(uid, body):

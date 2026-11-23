@@ -453,6 +453,11 @@ document.addEventListener('DOMContentLoaded', async function () {
           <button type="button" class="btn btn-ghost" data-wish-kind="none">Убрать просьбу</button>
         </div>
         <p class="sheet-sub" id="day-wish-status" role="status"></p>
+        <details class="day-edit" id="day-availability" hidden>
+          <summary id="day-availability-summary">Добавить необычные часы</summary>
+          <div class="day-shift-fields"><label>Могу с<input id="day-availability-start" type="time"></label><label>Могу до<input id="day-availability-end" type="time"></label></div>
+          <div class="day-shift-actions"><button type="button" class="btn" id="day-availability-save">Сохранить</button><button type="button" class="btn btn-ghost" id="day-availability-remove" hidden>Убрать часы</button></div>
+        </details>
       </div>
       <p class="sheet-sub" id="day-status" role="status"></p>
       <details class="day-edit" id="day-tips-details">
@@ -465,6 +470,11 @@ document.addEventListener('DOMContentLoaded', async function () {
         <summary id="day-shift-summary">Добавить смену в график</summary>
         <div class="day-shift-fields"><label>Начало<input id="day-start" type="time"></label><label>Конец<input id="day-end" type="time"></label></div>
         <div class="day-shift-actions"><button class="btn" id="day-shift-save">Добавить смену</button><button class="btn btn-ghost" id="day-shift-delete" hidden>Убрать смену</button></div>
+      </details>
+      <details class="day-edit" id="day-work-details" hidden>
+        <summary id="day-work-summary">Добавить часы</summary>
+        <div class="day-shift-fields"><label>Начало<input id="day-work-start" type="time"></label><label>Конец<input id="day-work-end" type="time"></label></div>
+        <button type="button" class="btn day-primary" id="day-work-save">Записать часы</button>
       </details>
     </div>
   </div>
@@ -577,7 +587,7 @@ function calViewFromStats(s) {
   return {
     year: now.getFullYear(), month: now.getMonth() + 1,
     days: s.month_days, days_in_month: s.days_in_month,
-    scheduled_shifts: s.scheduled_shifts, today_day: s.today_day,
+    scheduled_shifts: s.scheduled_shifts, today_day: s.today_day, operational_today:s.operational_today,
     planned_times: s.planned_times, worked_times: s.worked_times,
     tip_entries: s.tip_entries, calendar_wishes: s.calendar_wishes,
     shifts_count: s.shifts_count, tips_total: s.month_tips,
@@ -811,6 +821,10 @@ function openDay(view, d) {
     if (!dayTipPending) dayTipOperation = null;
     document.getElementById('day-tips-details').open=false;
     document.getElementById('day-shift-details').open=false;
+    document.getElementById('day-work-details').open=false;
+    document.getElementById('day-availability').open=false;
+    dayWorkEdited=false;
+    dayAvailabilityEdited=false;
   }
   lastOpenedDayISO = nextDay;
   selectedDayISO = nextDay;
@@ -849,6 +863,14 @@ function openDay(view, d) {
   document.getElementById("day-shift-save").textContent = planned ? "Изменить время смены" : "Добавить смену";
   document.getElementById("day-shift-summary").textContent = planned ? "Изменить смену в графике" : "Добавить смену в график";
   document.getElementById("day-shift-delete").hidden = !planned;
+  document.getElementById('day-work-details').hidden = !view.operational_today || selectedDayISO>view.operational_today;
+  document.getElementById('day-work-summary').textContent=worked?'Изменить записанные часы':'Добавить часы';
+  document.getElementById('day-work-save').textContent=worked?'Сохранить часы':'Записать часы';
+  document.getElementById('day-work-save').disabled=dayTimeBusy;
+  if (!dayWorkEdited) {
+    document.getElementById('day-work-start').value=worked ? workClock(worked.actual_start)||'' : planned?.starts_at?.slice(0,5)||'';
+    document.getElementById('day-work-end').value=worked ? workClock(worked.actual_end)||'' : '';
+  }
   document.getElementById('day-tips-details').hidden=privateMoney.state.lost;
   document.getElementById('day-tip-inputs').hidden=privateMoney.state.lost;
   document.getElementById('day-tip-add').hidden=privateMoney.state.lost;
@@ -880,6 +902,11 @@ function calendarDate(view,day) {
 }
 
 let dayWishPending=null, dayWishNotice=null, dayWishBusy=false;
+let dayAvailabilityEdited=false, dayWishHoursPending=null;
+function minuteClock(minutes) {
+  return Number.isInteger(minutes)
+    ? String(Math.floor(minutes/60)).padStart(2,'0')+':'+String(minutes%60).padStart(2,'0') : '';
+}
 function wishDayText(wish) {
   if(wish.published) {
     if(wish.working===false) return 'По опубликованному графику у тебя выходной.';
@@ -901,7 +928,26 @@ function renderDayWishes(view) {
   panel.hidden=!(wish || wishes?.error);
   actions.hidden=!wish?.editable;
   document.getElementById('day-wish-text').textContent=wishes?.error || (wish ? wishDayText(wish) : '');
+  if (wish?.hours) {
+    const range=minuteClock(wish.hours.start_min)+'–'+minuteClock(wish.hours.end_min??1380);
+    const text=document.getElementById('day-wish-text');
+    text.append((text.textContent ? ' ' : '')+'Доступное время: '+range+'.');
+  }
   document.getElementById('day-wish-status').textContent=dayWishNotice?.date===selectedDayISO ? dayWishNotice.text : '';
+  const availability=document.getElementById('day-availability');
+  availability.hidden=!(wish?.editable && 'hours' in wish);
+  document.getElementById('day-availability-summary').textContent=wish?.hours?'Изменить необычные часы':'Добавить необычные часы';
+  if (!dayAvailabilityEdited) {
+    document.getElementById('day-availability-start').value=minuteClock(wish?.hours?.start_min);
+    document.getElementById('day-availability-end').value=minuteClock(wish?.hours && (wish.hours.end_min??1380));
+  }
+  const saveHours=document.getElementById('day-availability-save'), removeHours=document.getElementById('day-availability-remove');
+  saveHours.disabled=removeHours.disabled=dayWishBusy;
+  document.getElementById('day-availability-start').disabled=dayWishBusy;
+  document.getElementById('day-availability-end').disabled=dayWishBusy;
+  removeHours.hidden=!wish?.hours;
+  saveHours.onclick=()=>saveCalendarWish(wish,'hours');
+  removeHours.onclick=()=>saveCalendarWish(wish,'remove_hours');
   for(const button of buttons) {
     const kind=button.dataset.wishKind;
     button.disabled=dayWishBusy || kind===wish?.kind || (kind==='none'&&!wish?.kind);
@@ -915,13 +961,23 @@ async function saveCalendarWish(wish,kind) {
   const date=selectedDayISO, year=calYear, month=calMonth;
   const status=document.getElementById('day-wish-status');
   const buttons=document.querySelectorAll('#day-wish-actions button');
-  const same=dayWishPending?.date===date && dayWishPending.kind===kind && dayWishPending.roster_id===wish.roster_id
-    && dayWishPending.revision===wish.revision;
-  const payload=same ? dayWishPending : {action:'wish_save',date,kind,roster_id:wish.roster_id,
-    revision:wish.revision,operation_id:crypto.randomUUID()};
-  dayWishPending=payload;
+  const isHours=kind==='hours'||kind==='remove_hours';
+  const body=isHours
+    ? {action:'wish_hours_save',date,roster_id:wish.roster_id,remove:kind==='remove_hours',
+       start:document.getElementById('day-availability-start').value,end:document.getElementById('day-availability-end').value,
+       previous_operation:kind==='remove_hours'?wish.hours?.operation_id:undefined}
+    : {action:'wish_save',date,kind,roster_id:wish.roster_id,revision:wish.revision};
+  const bodyKey=JSON.stringify(body);
+  const pending=isHours?dayWishHoursPending:dayWishPending;
+  const payload=pending?.key===bodyKey ? pending.payload : {...body,operation_id:crypto.randomUUID()};
+  if(isHours)dayWishHoursPending={key:bodyKey,payload};
+  else dayWishPending={key:bodyKey,payload};
   dayWishBusy=true;
   buttons.forEach(button=>button.disabled=true);
+  document.getElementById('day-availability-save').disabled=true;
+  document.getElementById('day-availability-remove').disabled=true;
+  document.getElementById('day-availability-start').disabled=true;
+  document.getElementById('day-availability-end').disabled=true;
   status.textContent='';
   let refresh=false;
   try {
@@ -929,11 +985,17 @@ async function saveCalendarWish(wish,kind) {
       cache:'no-store',signal:AbortSignal.timeout(20000),body:JSON.stringify({...payload,initData:tg?.initData||''})});
     const result=await response.json();
     if(response.ok && result.saved) {
-      dayWishPending=null;
+      if(isHours) {
+        dayWishHoursPending=null;
+        if(selectedDayISO===date)dayAvailabilityEdited=false;
+      } else dayWishPending=null;
       refresh=true;
       dayWishNotice={date,text:result.message};
       const days=calendarView?.calendar_wishes?.days;
-      if(days?.[date]?.roster_id===wish.roster_id && days[date].revision<=result.revision) {
+      if(isHours && days?.[date]?.roster_id===wish.roster_id) {
+        days[date].hours=result.hours;
+        paintCalendar(calendarView);
+      } else if(!isHours && days?.[date]?.roster_id===wish.roster_id && days[date].revision<=result.revision) {
         for(const entry of Object.values(days)) {
           if(entry.roster_id===wish.roster_id)entry.revision=result.revision;
         }
@@ -942,7 +1004,10 @@ async function saveCalendarWish(wish,kind) {
         paintCalendar(calendarView);
       }
     } else {
-      if(response.status<500)dayWishPending=null;
+      if(response.status<500) {
+        if(isHours)dayWishHoursPending=null;
+        else dayWishPending=null;
+      }
       refresh=response.status===409;
       dayWishNotice={date,text:result.error||'Не получил подтверждение сохранения. Проверь пожелание перед повтором.'};
     }
@@ -958,6 +1023,7 @@ async function saveCalendarWish(wish,kind) {
 let selectedDayISO = null;
 let lastOpenedDayISO = null;
 let dayShiftEdited = false;
+let dayWorkEdited = false, dayTimeBusy = false;
 let dayTipOperation = null;
 let dayTipPending = null;
 let dayTipBusy = false;
@@ -966,6 +1032,14 @@ function calendarEdit(payload) {
   if (!selectedDayISO) return;
   if (payload.action==='tip_add' && dayTipBusy) return;
   if (payload.action==='tip_add') dayTipBusy=true;
+  const savingWork=payload.action==='work_save';
+  if(savingWork && dayTimeBusy)return;
+  if(savingWork) {
+    dayTimeBusy=true;
+    document.getElementById('day-work-save').disabled=true;
+    document.getElementById('day-work-start').disabled=true;
+    document.getElementById('day-work-end').disabled=true;
+  }
   const editDay=selectedDayISO;
   const status = document.getElementById("day-status");
   if (window.privateMoney.active && payload.action.startsWith('tip_')) {
@@ -994,9 +1068,14 @@ function calendarEdit(payload) {
     body:JSON.stringify(Object.assign({initData:tg ? tg.initData : "",date:editDay},payload))})
     .then(function (r) { return r.json().then(function (v) { if (!r.ok) throw Object.assign(new Error(v.error || "Не получилось сохранить"), {status: r.status}); return v; }); })
     .then(function (result) {
-      calendarNotice={date:editDay,text:result.warning || "Сохранено."};
+      calendarNotice={date:editDay,text:savingWork?'Записал '+result.hours+'.':result.warning || "Сохранено."};
       if(selectedDayISO===editDay)status.textContent = calendarNotice.text;
       if (payload.action === "shift_save" || payload.action === "shift_delete") dayShiftEdited = false;
+      if(savingWork && selectedDayISO===editDay)dayWorkEdited=false;
+      if(savingWork && calendarView && editDay.startsWith(calendarDate(calendarView,1).slice(0,7))) {
+        calendarView.worked_times=[...(calendarView.worked_times||[]).filter(row=>row.shift_date!==editDay),result.worked];
+        paintCalendar(calendarView);
+      }
       if (payload.action === "tip_add" && dayTipOperation===payload.operation_id) {
         dayTipOperation=null;dayTipPending=null;
         if (lastOpenedDayISO===editDay) document.getElementById("day-tip-amount").value = "";
@@ -1011,8 +1090,23 @@ function calendarEdit(payload) {
       }
       if(selectedDayISO===editDay)status.textContent = e.message || "Не получилось сохранить. Проверь данные и попробуй ещё раз.";
     })
-    .finally(function () {dayTipBusy=false;});
+    .finally(function () {
+      if(payload.action==='tip_add')dayTipBusy=false;
+      if(savingWork) {
+        dayTimeBusy=false;
+        document.getElementById('day-work-save').disabled=false;
+        document.getElementById('day-work-start').disabled=false;
+        document.getElementById('day-work-end').disabled=false;
+      }
+    });
 }
+document.getElementById('day-work-save').onclick=function () {
+  calendarEdit({action:'work_save',start:document.getElementById('day-work-start').value,end:document.getElementById('day-work-end').value});
+};
+for(const id of ['day-work-start','day-work-end'])
+  document.getElementById(id).addEventListener('input',()=>{dayWorkEdited=true;});
+for(const id of ['day-availability-start','day-availability-end'])
+  document.getElementById(id).addEventListener('input',()=>{dayAvailabilityEdited=true;});
 document.getElementById("day-shift-save").onclick = function () {
   const start=document.getElementById("day-start").value;
   const end=document.getElementById("day-end").value;

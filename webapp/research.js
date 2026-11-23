@@ -92,7 +92,7 @@
     box.textContent='Загружаю действия…';$('research-error').textContent='';
     try{
       const d=await api('journey',{subject:id,days});if(n!==serial)return;
-      const facts=user?`<div class="research-person-facts"><div><b>${user.active_days}</b><span>дней с действиями</span></div><div><b>${user.shift_saves}</b><span>сохранений смен</span></div><div><b>${user.tip_saves}</b><span>записей чаевых</span></div></div><p class="research-muted">Время через чат записано ${user.hours_saves} раз. Одно сохранение графика может содержать несколько смен.</p>`:'';
+      const facts=user?`<div class="research-person-facts"><div><b>${user.active_days}</b><span>дней с действиями</span></div><div><b>${user.shift_saves}</b><span>сохранений смен</span></div><div><b>${user.tip_saves}</b><span>записей чаевых</span></div></div><p class="research-muted">Часы записаны ${user.hours_saves} раз. Одно сохранение графика может содержать несколько смен.</p>`:'';
       const events=d.rows.filter(e=>useful.has(e.event));let current='';
       const timeline=events.map(e=>{const date=day(e.occurred_at),heading=date!==current?`<h3 class="research-person-day">${esc(date)}</h3>`:'';current=date;
         return `${heading}<div class="research-person-event"><time>${clock(e.occurred_at)}</time><div><strong>${esc(labels[e.event]||e.event)}</strong><small>${esc(sources[e.source]||e.source||'Источник не указан')} · ${esc(screens[e.screen]||e.screen||'Раздел не указан')}${e.error_code?' · '+esc(codes[e.error_code]||e.error_code):''}</small></div></div>`;}).join('');

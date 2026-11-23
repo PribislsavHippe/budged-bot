@@ -202,6 +202,7 @@ class WishFlow(unittest.IsolatedAsyncioTestCase):
                 patch.object(wishes, 'employee', new=AsyncMock(return_value=EMPLOYEE)), \
                 patch.object(wishes, 'period_rows', new=AsyncMock(return_value=[row])), \
                 patch.object(wishes.db.supabase, 'table', return_value=fake), \
+                patch('roster_time_store.date_limits', new=AsyncMock(return_value=[])), \
                 patch.object(wishes.db, '_execute', new=AsyncMock(return_value=NS(data=[
                     {'roster_id':row['id'], 'days':['2026-11-19'], 'desired_days':['2026-11-18'], 'revision':3}]))), \
                 patch.object(wishes, 'op_today', return_value=START):

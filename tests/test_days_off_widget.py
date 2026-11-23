@@ -40,13 +40,13 @@ class Parts(unittest.TestCase):
                          {'roster': ID, 'none': False, 'required': 12, 'preferred': 512, 'hours': {}})
         self.assertEqual(w.parse(f'o:{ID}:c:e8:46m'),
                          {'roster': ID, 'none': False, 'required': 12, 'preferred': 512, 'hours': {4: (540, 1020)}})
+        self.assertEqual(w.parse(f'o:{ID}:c:0:26m')['hours'], {2: (540, 1020)})
         self.assertEqual(w.parse(f'n:{ID}'), {'roster': ID, 'none': True, 'required': 0, 'preferred': 0, 'hours': {}})
         longest = f'o:{ID}:{w._b36((1 << 31) - (1 << 12))}:0:' + ''.join(w._b36(d) + '6m' for d in range(12))
         self.assertLessEqual(len(longest), 64)
         self.assertIsNotNone(w.parse(longest))
         for bad in ('', None, 'refresh', f'o:{ID}:c', f'o:{ID}:c:c',            # день не бывает и тем, и другим
                     f'o:{ID.upper()}:c:0', f'o:{ID}:-1:0', f'x:{ID}', f'o:{ID}:c:0;drop', 'o:' + HEX + ':c:0',
-                    f'o:{ID}:c:0:26m',                                   # часы на обязательный выходной
                     f'o:{ID}:0:0:4m6', f'o:{ID}:0:0:46z', f'o:{ID}:0:0:46m46m', f'o:{ID}:0:0:46',
                     longest + '06m'):
             self.assertIsNone(w.parse(bad), bad)
@@ -54,6 +54,12 @@ class Parts(unittest.TestCase):
     def test_hours_go_to_future_days_only(self):
         query = w.parse(f'o:{ID}:0:0:06m46m')
         self.assertEqual(w.hours_for(ROSTER, query, TODAY), {'2026-11-20': [540, 1020]})
+
+    def test_saving_widget_preserves_unchanged_precise_intervals(self):
+        hours = {'2026-11-20': [570, 1020]}
+        existing = {'2026-11-20': [555, 1020], '2026-11-21': [555, 568], '2026-11-22': [555, 1020]}
+        w.preserve_exact_hours(ROSTER, TODAY, hours, existing)
+        self.assertEqual(hours, {'2026-11-20': [555, 1020], '2026-11-21': [555, 568]})
         self.assertIsNone(w.changes(ROSTER, w.parse(f'o:{ID}:0:0:f6m'), TODAY))     # 16-й день периода из 15
 
     def test_every_future_day_of_the_period_gets_a_mark(self):
@@ -83,7 +89,8 @@ class Flow(unittest.IsolatedAsyncioTestCase):
         with patch.object(roster_wishes, 'employee', new=AsyncMock(return_value=employee)), \
                 patch.object(roster_wishes, 'period_rows', new=AsyncMock(return_value=[ROSTER])), \
                 patch.object(roster_wishes, 'save', new=save), patch('workday.op_today', return_value=TODAY), \
-                patch.object(roster_time_store, 'write_period_hours', new=hours), patch('research.track') as track:
+                patch.object(roster_time_store, 'write_period_hours', new=hours), \
+                patch.object(roster_time_store, 'period_hours', new=AsyncMock(return_value={})), patch('research.track') as track:
             await w.handle(bot, self.query(data, chat=chat))
         sent = [call.args[0] for call in bot.await_args_list]
         self.hours = hours

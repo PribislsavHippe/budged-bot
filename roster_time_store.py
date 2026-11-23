@@ -49,6 +49,21 @@ async def period_hours(link_id, start, end):
     return {row['target']: [row['start_min'], row['end_min'] or 1380] for row in rows}
 
 
+async def date_limits(link, first, last):
+    return await db._pages(lambda: db.supabase.table('shift_time_rules')
+                           .select('target,start_min,end_min,operation_id')
+                           .eq('link_id', link['id']).eq('restaurant_id', link['restaurant_id'])
+                           .eq('kind', 'limit').gte('target', first.isoformat()).lte('target', last.isoformat())
+                           .order('target'))
+
+
+async def remove_date_limit(link, day, operation):
+    await db._execute(db.supabase.table('shift_time_rules').delete()
+                      .eq('link_id', link['id']).eq('restaurant_id', link['restaurant_id'])
+                      .eq('target', day.isoformat()).eq('kind', 'limit').eq('operation_id', operation))
+    return not await date_limits(link, day, day)
+
+
 def rule_lines(rule, manager=False):
     keys, start, end = rule['keys'], clock(rule['start'] / 60), rule['end']
     days = [date.fromisoformat(k) for k in keys if len(k) > 1]

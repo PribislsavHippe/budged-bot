@@ -94,7 +94,7 @@ function draw(){
  $('m').textContent=S.ok?'Записал '+S.ok+'.':''}
 function tap(i){var bit=1<<i;S.ok=null;
  if(R&bit){R&=~bit;P|=bit}
- else if(P&bit){P&=~bit;if(keys().length<MAXH){H[i]=L.slice();K=i}else{draw();$('m').textContent='Часы можно указать не больше чем на '+MAXH+' дней.';return}}
+ else if(P&bit){P&=~bit;if(H[i]||keys().length<MAXH){H[i]=H[i]||L.slice();K=i}else{draw();$('m').textContent='Часы можно указать не больше чем на '+MAXH+' дней.';return}}
  else if(H[i]){if(K==i){delete H[i];K=-1}else K=i}
  else R|=bit;
  if(!H[i])K=-1;draw()}
@@ -149,7 +149,7 @@ def state(row, days, desired, today, saved_at=None, hours=None):
                               if start <= date.fromisoformat(d) <= end)
     data = {'id': UUID(str(row['id'])).hex, 's': start.isoformat(), 'e': end.isoformat(),
             'f': max(start, today).isoformat(), 'r': _b36(mask(days)), 'p': _b36(mask(desired))}
-    packed = _hours_text(start, end, hours or {})
+    packed = _hours_text(max(start, today), end, hours or {}, period_start=start)[:3 * MAX_HOURS]
     if packed:
         data['h'] = packed
     if saved_at:
@@ -166,14 +166,14 @@ def _b36(number):
     return out or '0'
 
 
-def _hours_text(start, end, hours):
+def _hours_text(start, end, hours, *, period_start=None):
     """{дата: [начало, конец] в минутах} → тройки «день, начало, конец» в 36-ричной записи, шаг 30 минут от 6:00."""
     out = ''
     for key in sorted(hours):
         day = date.fromisoformat(key)
         first, last = -(-(hours[key][0] - 360) // 30), (hours[key][1] - 360) // 30   # округляем внутрь окна
         if start <= day <= end and 0 <= first < last <= 34:
-            out += _b36((day - start).days) + _b36(first) + _b36(last)
+            out += _b36((day - (period_start or start)).days) + _b36(first) + _b36(last)
     return out
 
 
@@ -192,7 +192,7 @@ def parse(data):
     hours, packed = {}, found[4] or ''
     for i in range(0, len(packed), 3):
         day, first, last = (int(c, 36) for c in packed[i:i + 3])
-        if day in hours or not 0 <= first < last <= 34 or (required | preferred) >> day & 1:
+        if day in hours or not 0 <= first < last <= 34:
             return None
         hours[day] = (360 + first * 30, 360 + last * 30)
     if required & preferred:
@@ -205,6 +205,21 @@ def hours_for(row, query, today):
     start = date.fromisoformat(row['start_date'])
     days = {start + timedelta(days=i): span for i, span in query['hours'].items()}
     return {day.isoformat(): list(span) for day, span in sorted(days.items()) if day >= today}
+
+
+def preserve_exact_hours(row, today, hours, existing):
+    """Keep precise calendar intervals when the widget sends their unchanged 30-minute display."""
+    start, end = map(date.fromisoformat, (row['start_date'], row['end_date']))
+    first = max(start, today)
+    packed = _hours_text(first, end, existing, period_start=start)[:3 * MAX_HOURS]
+    shown = {int(packed[i], 36): [360 + int(packed[i+1], 36) * 30, 360 + int(packed[i+2], 36) * 30]
+             for i in range(0, len(packed), 3)}
+    for key, span in existing.items():
+        day = date.fromisoformat(key)
+        if first <= day <= end:
+            displayed = shown.get((day - start).days)
+            if hours.get(key) == displayed:
+                hours[key] = span
 
 
 def changes(row, query, today):
@@ -272,9 +287,13 @@ async def apply(uid, data, seed, source='bot'):
         return wishes.problem(result, row), None
     hours = hours_for(row, parsed, today)
     try:
+        if not parsed['none']:
+            first, last = map(date.fromisoformat, (row['start_date'], row['end_date']))
+            existing = await store.period_hours(link['id'], max(first, today), last)
+            preserve_exact_hours(row, today, hours, existing)
         written = await store.write_period_hours(uid, uuid5(operation, 'hours'), row['id'], hours)
     except APIError as error:
-        if error.code not in ('PGRST202', '42883'):     # нет миграции v45: без часов выходные уже записаны
+        if error.code not in ('PGRST202', '42883', 'PGRST205', '42P01'):
             raise
         written = 'ok' if not hours else 'hours'
     if written == 'hours':
