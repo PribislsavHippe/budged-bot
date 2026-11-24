@@ -84,11 +84,11 @@ class NeverMoney(unittest.IsolatedAsyncioTestCase):
 
 
 class LoneShortNumbers(unittest.IsolatedAsyncioTestCase):
-    """Одно короткое число без слов не деньги (решение владельца 13.11.2026). Деньги — от 100 ₽ (решение 20.11.2026):
-    «чай 20» и «такси 20» больше не записываются, «в 23» и «23.30» — время, а не расход и не чаевые."""
+    """Короткие числа и ответы про время не записываются. Явный расход может быть меньше 100 ₽."""
     NOT_MONEY = ('0', '1', '12', '23', '28', '31', '32', '99', ' 12 ')
-    MONEY = (('100', 100), ('300', 300), ('2000', 2000), ('чай 500', 500), ('такси 350', -350), ('кофе 120', -120))
-    SMALL = ('чай 20', 'такси 20', 'кофе 12', 'чай 99')
+    MONEY = (('100', 100), ('300', 300), ('2000', 2000), ('чай 500', 500), ('такси 350', -350),
+             ('кофе 120', -120), ('Мойка 50', -50), ('такси 20', -20), ('кофе 12', -12))
+    SMALL = ('чай 20', 'чай 99', 'такси в 23', 'такси в 23.30', 'мойка 50%', 'гостей было 50')
     TIME_LIKE = ('в 23', 'ушла в 23', '23.30', 'до 23')
 
     def setUp(self):
@@ -130,7 +130,7 @@ class LoneShortNumbers(unittest.IsolatedAsyncioTestCase):
                     for forbidden in ('✓', 'Не нашёл сумму', 'сумма неоднозначна', 'Записал'):
                         self.assertNotIn(forbidden, reply)
 
-    async def test_amounts_below_100_and_time_like_phrases_are_never_money(self):
+    async def test_small_ambiguous_amounts_and_time_like_phrases_are_never_money(self):
         for private_mode in (False, True):
             user = {'id': 5, 'onboarded': True, 'private_money_mode': private_mode}
             for text, reply in [(t, self.handlers.SMALL_AMOUNT_TEXT) for t in self.SMALL] + \

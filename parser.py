@@ -153,7 +153,7 @@ _INCOME_RULES = [
 _EXPENSE_RULES = [
     (r"\b(?:бар(?:у|е|а|ы|ов)?|бармен\w*)\b", "Бар"),
     (r"\b(?:мойк\w*|мойщ\w*|посудомо\w*)", "Мойка"),
-    (r"\b(?:продукт|ед[аыуе]\b|обед|ужин|завтрак|кофе|перекус|столов|магаз|пятероч|магнит|вкусно)", "Еда"),
+    (r"\b(?:продукт|ед[аыуе]\b|обед|ужин|завтрак|кофе|перекус|столов(?:ая|ой|ую|к[аиуе])\b|магаз|пятероч|магнит|вкусно)", "Еда"),
     (r"\b(?:такси|каршер)", "Такси"),
 ]
 # Понятные траты вне этих категорий: записываются в «Прочее» без вопроса.
@@ -256,10 +256,18 @@ def take_date(part: str) -> tuple[str, tuple | None]:
 
 
 def _pieces(part: str) -> list[str]:
-    """«чай 500 и такси 300» → две записи; «стол 5 и 6» — нет: делим, только если в каждой части есть сумма от 100."""
+    """«Чай 500 и мойка 50» — две записи. «Стол 5 и 6» — номер столов."""
     pieces = _AND.split(part)
     money = re.compile(r"\d{3}|\d\s*к\b|\d\s*тыс", re.IGNORECASE)
-    return pieces if len(pieces) > 1 and all(money.search(x) for x in pieces) else [part]
+    if len(pieces) == 1:
+        return pieces
+    for piece in pieces:
+        if money.search(piece):
+            continue
+        kind, category = classify(piece)
+        if not explicit_expense({'kind': kind, 'category': category, 'note': piece}):
+            return [part]
+    return pieces
 
 
 def parse_transactions(text: str) -> list[dict]:
@@ -318,6 +326,19 @@ def uncertain(item: dict) -> bool:
     """Сумма с незнакомыми словами («гостей было 150», «чек 2300», «на карту 300»): спросить, а не угадывать."""
     return (item["kind"] == "expense" and item["category"] == "Прочее" and not GENERAL_EXPENSE.search(item["note"])
             and not _OTHER_EXPENSE.search(_normalize(item["note"].lower())))
+
+
+_EXPENSE_TIME = re.compile(r"\b(?:в|во|с|до|к|после|около)\s+\d{1,2}(?=\b)", re.IGNORECASE)
+
+
+def explicit_expense(item: dict) -> bool:
+    """Разрешает небольшую трату с понятным назначением, сохраняя защиту для «такси в 23»."""
+    if item['kind'] != 'expense' or uncertain(item):
+        return False
+    part, _ = take_date(item['note'])
+    counted = _amount_text(part)
+    return (extract_amount(counted) is not None and '%' not in counted and not _EXPENSE_TIME.search(counted)
+            and not any(pattern.search(counted) for pattern in _NOT_AMOUNTS))
 
 
 # Есть ли в тексте признаки денег: без них «сумма неоднозначна» — неуместный ответ («с 11 до 23»).

@@ -1318,9 +1318,9 @@ async def _handle_text(message: Message, state: FSMContext):
             await message.answer('Не стал записывать: сумма неоднозначна. '
                                  'Напиши положительную сумму с копейками, например «чай 500,50».')
         return
-    # Деньги — от 100 ₽ (решение владельца 20.11.2026): «в 23», «23.30», «ушла в 23» — это время конца смены,
-    # а не расход 23 ₽ или чаевые 23,30 ₽. Пересланных уведомлений банка правило не касается: их разбор выше.
-    if items and any(item['amount'] < 100 for item in items):
+    # Явные расходы бывают меньше 100 ₽, например ежедневные 50 ₽ на мойку.
+    # Для остальных коротких сумм сохраняем защиту от записи времени как денег.
+    if any(item['amount'] < 100 and not p.explicit_expense(item) for item in items):
         if schedule_chat.time_of(text):
             _not_understood(message,'time_format')
             await message.answer(SMALL_TIME_TEXT)

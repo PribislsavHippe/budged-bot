@@ -341,7 +341,7 @@ def test_categories_match_the_start_of_a_word():
     for text in ("среда 2500", "клубника 300", "выиграл 1000", "бармен дал 500", "светлана 200", "барбершоп 1500"):
         assert classify(text) == ("expense", "Прочее"), text
     # 20.11.2026: категории как в приложении — Мойка, Бар, Еда, Такси; бар и мойка — наличными из чаевых.
-    for text, category in (("Бар 500", "Бар"), ("бармену 400", "Бар"), ("Мойка 100", "Мойка"), ("мойке 200", "Мойка")):
+    for text, category in (("Бар 500", "Бар"), ("бармену 400", "Бар"), ("Мойка 50", "Мойка"), ("мойке 200", "Мойка")):
         assert classify(text) == ("expense", category), text
         assert default_account(*classify(text)) == "cash", text
     for text, category in (("на еду 300", "Еда"), ("продукты 1500", "Еда"), ("такси 400", "Такси"),
