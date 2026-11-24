@@ -28,7 +28,7 @@ def main():
     for path in ROOT.joinpath('webapp').glob('*.js'):
         run(['node', '--check', path])
     html = ROOT.joinpath('webapp/index.html').read_text()
-    with tempfile.TemporaryDirectory(prefix='budget-bot-check-') as directory:
+    with tempfile.TemporaryDirectory(prefix='na-staffe-check-') as directory:
         for i, source in enumerate(re.findall(r'<script[^>]*>(.*?)</script>', html, re.S)):
             script = Path(directory, f'inline-{i}.js')
             script.write_text(source)

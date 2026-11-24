@@ -47,7 +47,7 @@ def _fold(line: str) -> list[str]:
 def render_shifts(rows: list[dict], user_id: int, bot_token: str) -> bytes:
     lines = [
         'BEGIN:VCALENDAR', 'VERSION:2.0',
-        'PRODID:-//Budget Bot//Shift Calendar//RU',
+        'PRODID:-//На стаффе//Shift Calendar//RU',
         'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
         'X-WR-CALNAME:Мои смены', 'X-WR-TIMEZONE:Europe/Moscow',
     ]
@@ -57,6 +57,7 @@ def render_shifts(rows: list[dict], user_id: int, bot_token: str) -> bytes:
         uid = hmac.new(bot_token.encode(), f'shift:{user_id}:{day.isoformat()}'.encode(),
                        hashlib.sha256).hexdigest()[:32]
         modified = _stamp(row.get('calendar_updated_at') or row.get('created_at'))
+        # Keep the existing event identities for subscribed calendars.
         lines.extend(['BEGIN:VEVENT', f'UID:{uid}@budgetbot',
                       f'DTSTAMP:{modified}', f'LAST-MODIFIED:{modified}',
                       'SUMMARY:Смена'])

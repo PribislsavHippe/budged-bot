@@ -1,6 +1,8 @@
-# Работа с Budget Bot
+# Работа над «На стаффе»
 
-Основные правила проекта находятся в [AGENTS.md](AGENTS.md), [docs/PRODUCT_PRINCIPLES.md](docs/PRODUCT_PRINCIPLES.md) и [docs/ENGINEERING_WORKFLOW.md](docs/ENGINEERING_WORKFLOW.md). Если краткая памятка здесь расходится с ними, следуй этим документам и указаниям владельца. Карта кода: [docs/CODEBASE_ONBOARDING.md](docs/CODEBASE_ONBOARDING.md).
+Основные правила проекта находятся в [AGENTS.md](AGENTS.md), [принципах продукта](docs/PRODUCT_PRINCIPLES.md) и [инженерном цикле](docs/ENGINEERING_WORKFLOW.md). Если краткая памятка здесь расходится с ними, следуй этим документам и указаниям владельца.
+
+[Карта кода](docs/CODEBASE_ONBOARDING.md) · [Текущие задачи](docs/ROADMAP.md) · [Журнал проекта](docs/WORK_LOG.md)
 
 ## Стек и структура
 
@@ -19,5 +21,5 @@
 
 - Настрой окружение по `env.example`; не добавляй `.env` в Git. Локальный запуск: `.venv/bin/python main.py`.
 - Основные тесты: `.venv/bin/python -m unittest discover -s tests -p 'test_*.py'`. Проверки отдельных сценариев: `.venv/bin/python tests/<name>_checks.py`.
-- Схема БД: `schema.sql`, затем миграции по версии действующей базы. Инструкция установки в `README.md` не перечисляет последние миграции; сверяй её с текущими `migration_v*.sql`.
+- Схема БД и порядок миграций описаны в [инструкции установки](README.md#установка).
 - Для развёртывания используется `render.yaml`; реальную работу Telegram, Supabase и Google локальные тесты не подтверждают.

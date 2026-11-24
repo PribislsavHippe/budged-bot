@@ -1,5 +1,5 @@
 {
-  "name": "budget-bot-checks",
+  "name": "na-staffe-checks",
   "private": true,
   "devDependencies": {
     "@electric-sql/pglite": "0.5.8"
