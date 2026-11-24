@@ -153,6 +153,7 @@ class FakeTable:
     """Запросы к Supabase по цепочке: хватает select/eq/… и выполнения через db._execute."""
     def __init__(self, store, name):
         self.store, self.name, self.filters, self.action, self.payload = store, name, [], 'select', None
+        self.conflict_keys = []
 
     def __getattr__(self, attr):
         if attr == 'not_':
@@ -162,6 +163,8 @@ class FakeTable:
     def _chain(self, attr, args, kwargs):
         if attr in ('insert', 'update', 'upsert'):
             self.action, self.payload = attr, args[0]
+            if kwargs.get('ignore_duplicates'):
+                self.conflict_keys = kwargs['on_conflict'].split(',')
         elif attr == 'eq':
             self.filters.append(args)
         return self
@@ -169,6 +172,12 @@ class FakeTable:
     def run(self):
         rows = self.store.setdefault(self.name, [])
         match = [r for r in rows if all(str(r.get(k)) == str(v) for k, v in self.filters)]
+        if self.conflict_keys:
+            if any(all(row[key] == self.payload[key] for key in self.conflict_keys) for row in rows):
+                return NS(data=[])
+            row = dict(self.payload)
+            rows.append(row)
+            return NS(data=[row])
         if self.action in ('insert', 'upsert'):
             rows.append(dict(self.payload))
         elif self.action == 'update':
@@ -180,7 +189,7 @@ class FakeTable:
 def people():
     return [{'id': 'a', 'report_name': 'Котова Аня', 'user_id': 1, 'status': 'approved', 'restaurant_id': 'r', 'role': 'staff'},
             {'id': 'v', 'report_name': 'Влад', 'user_id': 2, 'status': 'approved', 'restaurant_id': 'r', 'role': 'staff'},
-            {'id': 'o', 'report_name': 'Оля', 'user_id': 3, 'status': 'approved', 'restaurant_id': 'r', 'role': 'staff'},
+            {'id': 'o', 'report_name': 'Оля Белова', 'user_id': 3, 'status': 'approved', 'restaurant_id': 'r', 'role': 'staff'},
             {'id': 'm', 'report_name': 'Менеджер', 'user_id': 7, 'status': 'approved', 'restaurant_id': 'r', 'role': 'manager'},
             {'id': 'x', 'report_name': 'Чужой', 'user_id': 9, 'status': 'approved', 'restaurant_id': 'q', 'role': 'staff'}]
 
@@ -239,8 +248,11 @@ class Posting(Base):
         signed = [list(r) for r in ROWS]
         signed[8][2] = 'Аня Котова'                                       # вписалась сама; в боте она «Котова Аня»
         self.rows = signed
-        done, sent, _ = await self.run_sync(hour=17, day=date(2026, 11, 17))
+        with patch.dict(os.environ, {'FRIEND_TELEGRAM_ID': '1'}):
+            done, sent, _ = await self.run_sync(hour=17, day=date(2026, 11, 17))
         self.assertEqual(done['reported'], 0)
+        self.assertEqual(sent, [(3, 'Завтра тренинг „Сторителлинг“ в 12:00. Ты пока не записался. '
+                                   'В 18:00 менеджер получит список тех, кто не записался 👀')])
         done, sent, _ = await self.run_sync(hour=18, day=date(2026, 11, 17))
         self.assertEqual(done['reported'], 1)
         reports = {to: text for to, text in sent}
@@ -250,6 +262,31 @@ class Posting(Base):
         self.rows = ROWS
         done, _, _ = await self.run_sync(hour=19, day=date(2026, 11, 17))
         self.assertEqual(done['reported'], 0)
+
+    async def test_personal_reminder_precedes_the_refreshed_report(self):
+        await self.run_sync()
+        eve = date(2026, 11, 17)
+        signed = [list(row) for row in ROWS]
+        signed[8][2] = 'Аня Котова'
+        _, sent, _ = await self.run_sync(hour=16, rows=signed, day=eve)
+        self.assertEqual(sent, [])
+
+        with patch.dict(os.environ, {'FRIEND_TELEGRAM_ID': '3'}):
+            _, sent, bot = await self.run_sync(hour=17, rows=signed, day=eve)
+            _, repeated, _ = await self.run_sync(hour=17, rows=signed, day=eve)
+        self.assertEqual(sent, [(3, 'Завтра тренинг „Сторителлинг“ в 12:00. Ты пока не записался. '
+                                   'В 18:00 менеджер получит список тех, кто не записался, приятель 👀')])
+        self.assertEqual(repeated, [])
+        button = bot.send_message.await_args.kwargs['reply_markup'].inline_keyboard[0][0]
+        self.assertEqual(button.text, 'Записаться')
+        self.assertIn(f'/d/{self.BOUND["sheet_id"]}/edit', button.url)
+
+        signed[9][2] = 'Белова Оля'
+        _, sent, _ = await self.run_sync(hour=18, rows=signed, day=eve)
+        self.assertEqual({uid for uid, _ in sent}, {7, 8})
+        for _, report in sent:
+            self.assertIn('Записались: Аня, Оля.', report)
+            self.assertNotIn('но не записались:', report)
 
     async def test_the_owner_hears_about_an_unreadable_date_once(self):
         import admin

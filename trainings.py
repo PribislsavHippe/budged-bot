@@ -4,8 +4,9 @@
 - В общий чат — коротко: открыта запись, список занятий без имён.
 - Лично (чат с ботом) — тем, у кого в день занятия выходной по опубликованному графику, с кнопкой «Записаться».
   На тренинг идут только в выходной. Кнопка открывает таблицу на свободной строке занятия: люди вписывают себя сами.
-- Менеджерам накануне занятия — отчёт: кто записался и у кого был выходной, но он не записался.
-Тексты — ЧЕРНОВИКИ до согласования владельца.
+- В 17:00 накануне — личное напоминание тем, кто ещё не записался и попадёт в список менеджера.
+- В 18:00 накануне — отчёт менеджерам: кто записался и кто не записался, хотя у него выходной.
+Новые тексты согласуются с владельцем.
 """
 import asyncio
 import hashlib
@@ -28,6 +29,7 @@ MISSING = ('42P01', 'PGRST205', '42703', 'PGRST204')
 WEEK = ('пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс')
 INVITE_HOURS = (10, 21)        # личные сообщения — только днём
 REPORT_HOUR = 18               # отчёт менеджеру — накануне занятия с этого часа
+REMINDER_HOUR = REPORT_HOUR - 1
 _locks = {}
 
 
@@ -99,7 +101,7 @@ def _day(session):
     return f"{session['date'].day:02d}.{session['date'].month:02d}"
 
 
-# --- Тексты (ЧЕРНОВИКИ) ----------------------------------------------------------------------------------------
+# --- Тексты ---------------------------------------------------------------------------------------------------
 
 def announcement(sessions):
     return ('Открыта запись на тренинги:\n' + '\n'.join(line(s) for s in sessions) +
@@ -125,6 +127,12 @@ def report(session, signed, missed):
     if missed:
         lines.append('Был выходной, но не записались: ' + ', '.join(missed) + '.')
     return '\n'.join(lines)
+
+
+def reminder_text(session, uid):
+    first = f'Завтра тренинг „{_plain(session["activity"])}“ в {_clock(session["start"])}. Ты пока не записался. '
+    last = 'В 18:00 менеджер получит список тех, кто не записался'
+    return friend_text(uid, first + last + ' 👀', first + last + ', приятель 👀')
 
 
 # --- Данные ---------------------------------------------------------------------------------------------------
@@ -178,7 +186,7 @@ async def managers(restaurant_id):
 
 async def sync(bot, bound, now=None):
     """Прочитать таблицу: запомнить занятия, объявить новые в общем чате, пригласить тех, у кого выходной,
-    накануне занятия отчитаться менеджерам. Повторный вызов ничего не дублирует."""
+    накануне напомнить о записи и отчитаться менеджерам. Повторный вызов ничего не дублирует."""
     now = now or datetime.now(MSK)
     today = op_today()
     doc = document(bound)
@@ -214,10 +222,14 @@ async def sync(bot, bound, now=None):
                 logging.warning('training announcement failed: %s', type(error).__name__)
         if INVITE_HOURS[0] <= now.hour < INVITE_HOURS[1]:
             done['invited'] = await _invite(bot, bound, open_, doc)
+        tomorrow = today + timedelta(days=1)
+        pending = [s for s in open_ if s['date'] == tomorrow and not known[s['key']].get('reported_at')]
+        if pending and REMINDER_HOUR <= now.hour < REPORT_HOUR and await managers(rid):
+            for s in pending:
+                await _remind_off_staff(bot, rid, s, doc)
         if now.hour >= REPORT_HOUR:
-            for s in open_:
-                if s['date'] == today + timedelta(days=1) and not known[s['key']].get('reported_at'):
-                    done['reported'] += await _report(bot, rid, s, now)
+            for s in pending:
+                done['reported'] += await _report(bot, rid, s, now)
         return done
 
 
@@ -277,15 +289,53 @@ async def _invite(bot, bound, sessions, doc):
     return count
 
 
-async def _report(bot, rid, session, now):
+async def _attendance(rid, session):
+    """Данные для напоминания и отчёта из одной и той же сверки графика с таблицей."""
     snapshot = await published(rid, session['date'])
     if snapshot is None:
-        return 0
-    links = (await db._execute(db.supabase.table('employee_links').select('id,report_name')
+        return None
+    links = (await db._execute(db.supabase.table('employee_links').select('id,report_name,user_id,role')
                                .eq('restaurant_id', rid).eq('status', 'approved'))).data
     signed = signed_names(snapshot, session.get('names', []), {r['id']: r['report_name'] for r in links})
-    missed = [p['name'] for p in off_people(snapshot, session['date']) if p['name'] not in signed]
-    body = report(session, signed, missed)
+    missed = [p for p in off_people(snapshot, session['date']) if p['name'] not in signed]
+    return signed, missed, {link['id']: link for link in links}
+
+
+async def _remind_off_staff(bot, rid, session, doc):
+    attendance = await _attendance(rid, session)
+    if attendance is None:
+        return
+    _, missed, links = attendance
+    markup = Markup(inline_keyboard=[[Button(text='Записаться', url=sheet.link(doc, session))]])
+    for person in missed:
+        link = links.get(person['link'])
+        if not link or link.get('role') != 'staff' or not link.get('user_id'):
+            continue
+        try:
+            # Reserve once before contacting Telegram, including across restarts and parallel syncs.
+            claimed = (await db._execute(db.supabase.table('training_reminders').upsert(
+                {'restaurant_id': rid, 'session_key': session['key'], 'link_id': link['id']},
+                on_conflict='restaurant_id,session_key,link_id', ignore_duplicates=True))).data
+        except APIError as error:
+            if error.code in MISSING:
+                return
+            raise
+        if not claimed:
+            continue
+        uid = link['user_id']
+        try:
+            await asyncio.wait_for(bot.send_message(uid, reminder_text(session, uid), reply_markup=markup,
+                                                    parse_mode=None), timeout=5)
+        except Exception as error:
+            logging.warning('training reminder failed: %s', type(error).__name__)
+
+
+async def _report(bot, rid, session, now):
+    attendance = await _attendance(rid, session)
+    if attendance is None:
+        return 0
+    signed, missed, _ = attendance
+    body = report(session, signed, [person['name'] for person in missed])
     sent = 0
     for uid in await managers(rid):
         try:

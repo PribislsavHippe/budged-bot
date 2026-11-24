@@ -88,7 +88,7 @@ def setup_scheduler(bot) -> AsyncIOScheduler:
     from roster_wishes import remind
     scheduler.add_job(remind, 'interval', minutes=5, args=[bot], max_instances=1)
     from trainings import sync_all as sync_trainings
-    scheduler.add_job(sync_trainings, 'interval', minutes=30, args=[bot], max_instances=1)
+    scheduler.add_job(sync_trainings, 'cron', minute='0,30', args=[bot], max_instances=1)
     scheduler.add_job(tomorrow_shift_reminder, "cron", hour=19, minute=0, args=[bot],max_instances=1)
     scheduler.add_job(retry_tomorrow_shift_reminder, "interval", minutes=10, args=[bot],max_instances=1)
     scheduler.add_job(retry_tomorrow_shift_reminder, args=[bot],max_instances=1)
