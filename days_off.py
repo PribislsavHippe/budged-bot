@@ -243,7 +243,7 @@ def chat_enabled():
     return os.getenv('DAYS_OFF_CHAT', '0').strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
-def app_markup(uid, extra=None, *, roster_id=None, period_start=None):
+def app_markup(uid, extra=None, *, roster_id=None, period_start=None, label='Отметить выходные'):
     """Открывает календарь нужного графика, а для длинных периодов — его первый месяц в общем календаре.
     Без периода используется обычная точка входа со своим пробным доступом."""
     import os
@@ -257,7 +257,7 @@ def app_markup(uid, extra=None, *, roster_id=None, period_start=None):
         path = f'/app?calendar_month={period_start:%Y-%m}#cal-grid'
     elif days_off_app.allowed(uid):
         path = '/app/days-off'
-    rows = [[Button(text='Отметить выходные', web_app=WebAppInfo(url=host + path))]] if host else []
+    rows = [[Button(text=label, web_app=WebAppInfo(url=host + path))]] if host else []
     rows += extra or []
     return Markup(inline_keyboard=rows) if rows else None
 

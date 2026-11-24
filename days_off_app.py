@@ -9,10 +9,12 @@
 владельцу бота, `1` — всем сотрудникам, `0` — никому. Приглашение на конкретный период проверяет участие
 сотрудника в этом графике. Тексты — ЧЕРНОВИКИ.
 """
+import asyncio
 import calendar
 import os
 from datetime import date, timedelta
-from uuid import UUID
+from functools import partial
+from uuid import UUID, uuid5
 
 from aiohttp import web
 
@@ -42,16 +44,18 @@ iframe{border:0;width:100%;display:block;min-height:320px;background:transparent
  function show(text){document.getElementById('cap').textContent=text}
  post('/api/days_off/state',{}).then(function(s){
   document.getElementById('cap').hidden=true;var n=document.getElementById('note');if(s.note){n.textContent=s.note;n.hidden=false}
-  var listeners=[];
+  var listeners=[],pending=false;
   window.makeWidget=function(){return {chatData:s.chat_data,ready:function(){},
    onEvent:function(name,cb){if(name==='chatDataChanged')listeners.push(cb)},
    request:function(q){
     if(s.demo)return Promise.resolve({result:'Это пример — ничего не записал.'});
-    return post('/api/days_off/save',{data:q,nonce:Date.now()+'-'+Math.random().toString(36).slice(2)}).then(function(a){
+    if(pending)return pending;
+    pending=post('/api/days_off/save',{data:q,nonce:Date.now()+'-'+Math.random().toString(36).slice(2)}).then(function(a){
      if(a.chat_data){s.chat_data=a.chat_data;frame.contentWindow.TelegramWidget.chatData=a.chat_data;
       listeners.forEach(function(cb){cb()})}
      if(tg&&tg.HapticFeedback)tg.HapticFeedback.notificationOccurred(a.result==='ok'?'success':'error');
-     return {result:a.result}},function(e){return {result:(e&&e.error)||'Не получилось записать. Нажми ещё раз.'}})}}};
+     return {result:a.result}},function(e){return {result:(e&&e.error)||'Не получилось записать. Нажми ещё раз.'}})
+     .finally(function(){pending=false});return pending}}};
   var frame=document.createElement('iframe');frame.title='Календарь выходных';
   frame.srcdoc='<!doctype html><meta charset="utf-8"><body style="margin:0;background:transparent">'+
    '<script>window.TelegramWidget=parent.makeWidget()<\\/script>'+s.html;
@@ -158,6 +162,40 @@ async def state_api(request):
     return web.json_response({**result, 'html': widget.HTML}, headers=NO_CACHE)
 
 
+async def send_confirmation(bot, uid, link, row, result, hours, operation):
+    import days_off
+    import db
+    from roster_time import clock
+
+    try:
+        days = days_off.days_text(map(date.fromisoformat, result.get('days') or []))
+        desired = days_off.days_text(map(date.fromisoformat, result.get('desired_days') or []))
+        if not (days or desired or hours):
+            return
+        markup = days_off.app_markup(uid, roster_id=row['id'], label='Изменить')
+        if not markup:
+            return
+        lines = ['Записал пожелания.']
+        if days:
+            lines.append(f'Обязательные выходные: {days}.')
+        if desired:
+            lines.append(f'Желательные: {desired}.')
+        if hours:
+            lines.append('Необычные часы:')
+            for day, (start, end) in sorted(hours.items()):
+                day_text = days_off.days_text([date.fromisoformat(day)])
+                lines.append(f'{day_text} — с {clock(start / 60)} до {clock(end / 60)}.')
+        # A replay of the same save can return success again. Claim this receipt once.
+        claimed = (await db._execute(db.supabase.table('roster_wish_operations').upsert(
+            {'id': str(uuid5(operation, 'chat-confirmation')), 'link_id': link['id'],
+             'roster_id': row['id'], 'result': {}}, on_conflict='id', ignore_duplicates=True), retries=1)).data
+        if claimed:
+            await asyncio.wait_for(bot.send_message(uid, '\n'.join(lines), reply_markup=markup), timeout=5)
+    except Exception as error:
+        from diagnostics import failure
+        failure(error, area='days_off_app', stage='confirmation')
+
+
 async def save_api(request):
     from webapp_api import NO_CACHE, _auth
     uid, body = await _auth(request)
@@ -173,8 +211,10 @@ async def save_api(request):
     data, nonce = str(body.get('data') or '')[:64], str(body.get('nonce') or '')[:40]
     if not data or not nonce:
         return web.json_response({'error': 'Обнови страницу и попробуй ещё раз.'}, status=400, headers=NO_CACHE)
+    bot = request.app.get('bot')
     try:
-        answer, chat_data = await widget.apply(uid, data, 'app:' + nonce, source='miniapp', roster_id=roster_id)
+        answer, chat_data = await widget.apply(uid, data, 'app:' + nonce, source='miniapp', roster_id=roster_id,
+                                               on_saved=partial(send_confirmation, bot) if bot else None)
     except Exception as error:
         from diagnostics import failure
         failure(error, area='days_off_app', stage='save')

@@ -7,6 +7,7 @@ import unittest
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 patch('supabase.create_client').start()
@@ -56,7 +57,7 @@ class DaysOffApp(unittest.TestCase):
                 patch.object(days_off_app, 'allowed', return_value=True), \
                 patch.object(days_off_widget, 'apply', AsyncMock(return_value=('ok', '{"id":"x"}'))) as apply:
             response = asyncio.run(days_off_app.save_api(request))
-        apply.assert_awaited_once_with(7, 'n:abcdef12', 'app:n1', source='miniapp', roster_id=None)
+        apply.assert_awaited_once_with(7, 'n:abcdef12', 'app:n1', source='miniapp', roster_id=None, on_saved=None)
         self.assertEqual(json.loads(response.text), {'result': 'ok', 'chat_data': '{"id":"x"}'})
 
     def test_save_without_nonce_or_access_is_refused(self):
@@ -101,6 +102,48 @@ class DaysOffApp(unittest.TestCase):
             response = asyncio.run(days_off_app.save_api(request))
         save.assert_not_awaited()
         self.assertIsNone(json.loads(response.text)['chat_data'])
+
+    def test_successful_save_confirms_the_saved_days_once_in_the_private_chat(self):
+        roster_id = 'abcdef12-0000-4000-8000-000000000001'
+        row = {'id': roster_id, 'start_date': '2026-12-01', 'end_date': '2026-12-31',
+               'collect_wishes_at': 'now', 'draft': {'people': [{'link': 'own'}]}}
+        request = Request({'roster': roster_id, 'data': 'o:abcdef12:1:2:i6m', 'nonce': str(uuid4())})
+        bot = SimpleNamespace(send_message=AsyncMock())
+        request.app['bot'] = bot
+        with patch('webapp_api._auth', AsyncMock(return_value=(7, request.body))), \
+                patch.dict(os.environ, {'WEBHOOK_HOST': 'https://bot.example'}), \
+                patch('workday.op_today', return_value=date(2026, 11, 24)), \
+                patch('roster_wishes.employee', AsyncMock(return_value={'id': 'own'})), \
+                patch('roster_wishes.period_rows', AsyncMock(return_value=[row])), \
+                patch('roster_wishes.save', AsyncMock(return_value={
+                    'status': 'ok', 'days': ['2026-12-03', '2026-12-08'], 'desired_days': ['2026-12-10'],
+                })), patch('roster_time_store.period_hours', AsyncMock(return_value={})), \
+                patch('roster_time_store.write_period_hours', AsyncMock(return_value='ok')), \
+                patch('research.track'), patch('db._execute', AsyncMock(side_effect=[
+                    SimpleNamespace(data=[{'id': 'receipt'}]), SimpleNamespace(data=[]),
+                ])):
+            for _ in range(2):
+                self.assertEqual(json.loads(asyncio.run(days_off_app.save_api(request)).text)['result'], 'ok')
+
+        bot.send_message.assert_awaited_once()
+        uid, text = bot.send_message.await_args.args
+        self.assertEqual(uid, 7)
+        self.assertIn('Обязательные выходные: 3, 8 декабря.', text)
+        self.assertIn('Желательные: 10 декабря.', text)
+        self.assertIn('Необычные часы:\n19 декабря — с 09:00 до 17:00.', text)
+        button = bot.send_message.await_args.kwargs['reply_markup'].inline_keyboard[0][0]
+        self.assertEqual(button.text, 'Изменить')
+        self.assertEqual(button.web_app.url, f'https://bot.example/app/days-off?roster={roster_id}')
+
+    def test_hours_only_confirmation_shows_the_exact_minutes(self):
+        row = {'id': 'abcdef12-0000-4000-8000-000000000001'}
+        bot = SimpleNamespace(send_message=AsyncMock())
+        with patch.dict(os.environ, {'WEBHOOK_HOST': 'https://bot.example'}), \
+                patch('db._execute', AsyncMock(return_value=SimpleNamespace(data=[{'id': 'receipt'}]))):
+            asyncio.run(days_off_app.send_confirmation(bot, 7, {'id': 'own'}, row, {},
+                                                      {'2026-12-19': [545, 1035]}, uuid4()))
+        uid, text = bot.send_message.await_args.args
+        self.assertEqual((uid, text), (7, 'Записал пожелания.\nНеобычные часы:\n19 декабря — с 09:05 до 17:15.'))
 
     def test_page_defines_the_widget_bridge_before_the_widget_runs(self):
         self.assertIn("window.TelegramWidget=parent.makeWidget()<\\/script>'+s.html", days_off_app.PAGE)

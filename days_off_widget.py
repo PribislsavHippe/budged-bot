@@ -261,7 +261,7 @@ async def send(bot, uid, row, caption, days=(), desired=(), hours=None):
         return None
 
 
-async def apply(uid, data, seed, source='bot', roster_id=None):
+async def apply(uid, data, seed, source='bot', roster_id=None, on_saved=None):
     """Записать выбор из календаря (виджет в чате или мини-приложение). → (ответ, новые данные календаря или None).
     seed делает запись идемпотентной: повтор того же нажатия не записывается дважды."""
     import roster_time_store as store
@@ -303,6 +303,8 @@ async def apply(uid, data, seed, source='bot', roster_id=None):
         return wishes.problem({'status': written}, row), None
     import research
     research.track(uid, 'days_off_answered', source=source, screen='schedule')
+    if on_saved and not parsed['none']:
+        await on_saved(uid, link, row, result, hours, operation)
     saved_at = datetime.now(_moscow()).strftime('%d.%m в %H:%M')
     return 'ok', state(row, result.get('days', []), result.get('desired_days', []), today, saved_at, hours)
 
