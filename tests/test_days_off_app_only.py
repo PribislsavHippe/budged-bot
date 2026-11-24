@@ -5,7 +5,7 @@ import asyncio
 import os
 import sys
 import unittest
-from datetime import date
+from datetime import date, datetime
 from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, patch
 
@@ -46,6 +46,8 @@ class AppOnly(unittest.TestCase):
             self.assertEqual(button(days_off.app_markup(5)).web_app.url, 'https://bot.example/app/days-off')
         with patch.dict(os.environ, {**HOST, 'DAYS_OFF_MINIAPP': '0'}):
             self.assertEqual(button(days_off.app_markup(5)).web_app.url, 'https://bot.example/app')
+            markup = days_off.app_markup(5, period_start=date(2026, 12, 1))
+            self.assertEqual(button(markup).web_app.url, 'https://bot.example/app?calendar_month=2026-12#cal-grid')
 
     def test_point_to_app_answers_with_the_button(self):
         message = NS(text='нужны выходные 17, 19', from_user=NS(id=5), answer=AsyncMock())
@@ -62,6 +64,26 @@ class AppOnly(unittest.TestCase):
         self.assertIn('календаре приложения', text)
         self.assertNotIn('напиши', text.lower())
         self.assertNotIn('Можно написать', text)
+
+    def test_manual_request_sends_period_button_with_beta_disabled(self):
+        roster_id = 'abcdef12-0000-4000-8000-000000000001'
+        claim = {'roster_id': roster_id, 'link_id': 'own', 'user_id': 5, 'stage': 1,
+                 'start_date': '2026-12-01', 'end_date': '2026-12-15'}
+        bot = NS(send_message=AsyncMock())
+        with patch.dict(os.environ, {**HOST, 'DAYS_OFF_MINIAPP': '0', 'DAYS_OFF_CHAT': '1'}), \
+                patch('identity_chat.enabled', return_value=True), \
+                patch.object(roster_wishes, 'datetime') as clock, \
+                patch.object(roster_wishes, '_widget', AsyncMock()) as widget, \
+                patch('research.track'), \
+                patch('db._execute', AsyncMock(return_value=NS())):
+            clock.now.return_value = datetime(2026, 11, 24, 12)
+            self.assertEqual(asyncio.run(roster_wishes.invite(bot, {**claim, 'id': roster_id}, {5: 'own'})), 1)
+        widget.assert_not_awaited()
+        message = bot.send_message.await_args
+        self.assertIn('календаре приложения', message.args[1])
+        markup = message.kwargs['reply_markup']
+        self.assertEqual(button(markup).web_app.url, f'https://bot.example/app/days-off?roster={roster_id}')
+        self.assertEqual(markup.inline_keyboard[1][0].text, 'Без изменений')
 
 
 class HelpOffered(unittest.TestCase):

@@ -261,7 +261,7 @@ async def send(bot, uid, row, caption, days=(), desired=(), hours=None):
         return None
 
 
-async def apply(uid, data, seed, source='bot'):
+async def apply(uid, data, seed, source='bot', roster_id=None):
     """Записать выбор из календаря (виджет в чате или мини-приложение). → (ответ, новые данные календаря или None).
     seed делает запись идемпотентной: повтор того же нажатия не записывается дважды."""
     import roster_time_store as store
@@ -274,7 +274,8 @@ async def apply(uid, data, seed, source='bot'):
     if not link:
         return wishes.NO_ACCESS, None
     rows = await wishes.period_rows(link, op_today())
-    row = next((r for r in rows if UUID(str(r['id'])).hex.startswith(parsed['roster']) and wishes.migrated(r)), None)
+    row = next((r for r in rows if UUID(str(r['id'])).hex.startswith(parsed['roster']) and wishes.migrated(r)
+                and (roster_id is None or (r['id'] == roster_id and wishes.in_roster(r, link['id'])))), None)
     if row is None:
         return wishes.NO_PERIOD, None
     today = op_today()

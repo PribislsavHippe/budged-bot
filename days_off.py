@@ -243,15 +243,21 @@ def chat_enabled():
     return os.getenv('DAYS_OFF_CHAT', '0').strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
-def app_markup(uid, extra=None):
-    """Кнопка «Отметить выходные», открывающая мини-приложение: новый календарь выходных, если он открыт
-    этому человеку, иначе календарь под чаевыми. Без адреса приложения (локальный запуск) — только extra."""
+def app_markup(uid, extra=None, *, roster_id=None, period_start=None):
+    """Открывает календарь нужного графика, а для длинных периодов — его первый месяц в общем календаре.
+    Без периода используется обычная точка входа со своим пробным доступом."""
     import os
     from aiogram.types import WebAppInfo
     import days_off_app
     host = (os.getenv('WEBHOOK_HOST') or '').rstrip('/')
-    rows = [[Button(text='Отметить выходные', web_app=WebAppInfo(
-        url=host + ('/app/days-off' if days_off_app.allowed(uid) else '/app')))]] if host else []
+    path = '/app'
+    if roster_id:
+        path = f'/app/days-off?roster={roster_id}'
+    elif period_start:
+        path = f'/app?calendar_month={period_start:%Y-%m}#cal-grid'
+    elif days_off_app.allowed(uid):
+        path = '/app/days-off'
+    rows = [[Button(text='Отметить выходные', web_app=WebAppInfo(url=host + path))]] if host else []
     rows += extra or []
     return Markup(inline_keyboard=rows) if rows else None
 
@@ -274,7 +280,7 @@ async def ask(bot, restaurant_id, start, end, links, answered):
                 await asyncio.wait_for(bot.send_message(
                     row['user_id'], f'График на {period_text(start, end)}. Отметь обязательные и желательные выходные '
                     f'в календаре приложения — до {limit} обязательных.',   # ЧЕРНОВИК
-                    reply_markup=app_markup(row['user_id'])), timeout=5)
+                    reply_markup=app_markup(row['user_id'], period_start=start)), timeout=5)
             import research
             research.track(row['user_id'], 'reminder_sent', source='server', screen='schedule', step='days_off')
             wait = {'link_id': row['id'], 'restaurant_id': restaurant_id, 'start_date': start.isoformat(),

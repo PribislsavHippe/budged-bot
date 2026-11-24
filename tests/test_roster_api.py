@@ -790,6 +790,35 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, {'sent': 1, 'total': 1})
         bot.send_message.assert_awaited_once_with(WAITER, 'Проверь свои выходные на 16–22 ноября.\nОбязательно: 20 ноября.')
 
+    async def test_ask_offs_invites_both_answered_and_unanswered_waiters(self):
+        from datetime import datetime
+
+        made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-12-01', end='2026-12-15')
+        row = self.fake.rows['rosters'][0]
+        row['collect_wishes_at'] = '2026-11-24T09:00:00Z'
+        members = {member['user_id']: member for member in self.fake.rows['employee_links']}
+        allowed = {members[WAITER]['id'], members[12]['id'], members[MANAGER]['id']}
+        row['draft']['people'] = [p for p in row['draft']['people'] if p['link'] in allowed]
+        row['draft']['people'].append({'name': 'Manager', 'link': members[MANAGER]['id']})
+        answer = {'link_id': members[WAITER]['id'], 'roster_id': row['id'], 'answered': True,
+                  'days': ['2026-12-08'], 'desired_days': ['2026-12-10'], 'revision': 1}
+        self.fake.rows['day_off_requests'] = [answer.copy()]
+        bot = NS(send_message=AsyncMock())
+        self.client.server.app['bot'] = bot
+
+        with patch('identity_chat.enabled', return_value=True), \
+                patch.dict(os.environ, {'WEBHOOK_HOST': 'https://bot.example', 'DAYS_OFF_MINIAPP': '0'}), \
+                patch('roster_wishes.datetime') as clock:
+            clock.now.return_value = datetime(2026, 11, 24, 12)
+            result = await self.roster('ask_offs', MANAGER, id=row['id'])
+
+        self.assertEqual((result['sent'], result['answered']), (2, 1))
+        self.assertCountEqual([call.args[0] for call in bot.send_message.await_args_list], [WAITER, 12])
+        for call in bot.send_message.await_args_list:
+            button = call.kwargs['reply_markup'].inline_keyboard[0][0]
+            self.assertEqual(button.web_app.url, f'https://bot.example/app/days-off?roster={row["id"]}')
+        self.assertEqual(self.fake.rows['day_off_requests'], [answer])
+
     def callback(self, data, uid=WAITER):
         return NS(data=data, from_user=NS(id=uid), message=NS(chat=NS(type='private'), edit_text=AsyncMock()), answer=AsyncMock())
 

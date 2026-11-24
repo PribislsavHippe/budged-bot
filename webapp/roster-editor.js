@@ -612,7 +612,7 @@
     }
     document.addEventListener('visibilitychange',()=>{if(!document.hidden&&cur&&!root.closest('[hidden]'))refreshOffs();});
     q('.re-ask').onclick=async()=>{
-      if(!cur||!confirm('Отправить сотрудникам просьбу о пожеланиях к графику? Получат те, кто ещё не ответил.'))return;
+      if(!cur||busy||!confirm('Отправить сотрудникам просьбу о пожеланиях к графику?'))return;
       busy=true;renderState();error('');
       try{offsInfo=await api('ask_offs',{id:cur.id});toast(`Отправлено: ${offsInfo.sent}`);}
       catch(e){failed(e);}finally{busy=false;renderState();}

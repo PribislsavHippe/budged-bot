@@ -1704,6 +1704,8 @@ async function syncPrivateRecords(refresh=true) {
 // Первый запуск мог не дойти до сервера (сеть, сон телефона): повторяем его по таймеру и при возврате
 // в приложение, а не оставляем вкладку пустой до перезапуска (ревью 15.11.2026).
 let appStarting=false;
+const requestedMonth=/^(20\d{2}|2100)-(0[1-9]|1[0-2])$/.exec(new URLSearchParams(location.search).get('calendar_month') || '');
+let openedRequestedMonth=false;
 async function startApp() {
   if (appStarting) return;
   appStarting=true;
@@ -1723,6 +1725,12 @@ async function startApp() {
     if (await syncPrivateRecords(false)===null) return;
     window.dispatchEvent(new Event('private-money-ready'));
     privateButtonText();
+    if(requestedMonth && !openedRequestedMonth) {
+      const year=Number(requestedMonth[1]), month=Number(requestedMonth[2]);
+      await loadMonth(year, month);
+      openedRequestedMonth=calYear===year && calMonth===month;
+      if(openedRequestedMonth) document.getElementById('cal-grid').scrollIntoView({block:'start'});
+    }
     load();iphoneCalendarRefresh();
   } catch (error) {
     // Сеть или таймаут дают английский текст браузера («Failed to fetch»): показываем понятный.

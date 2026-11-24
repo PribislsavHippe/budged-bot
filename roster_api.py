@@ -48,6 +48,7 @@ CELL = re.compile(r'^(?:(\d{1,2}(?::[0-5]\d)?)(?:-(\d{1,2}(?::[0-5]\d)?))?)?(\*)
 # Сборка занимает процессор на десятки секунд: одна за раз на весь сервер.
 _building = asyncio.Semaphore(1)
 _checking_offs = set()
+_asking_offs = set()
 
 
 class Stale(Exception):
@@ -666,8 +667,16 @@ async def handle(request):
                 await days_off.close_period(row['restaurant_id'], start)
             return response({'ok': True, 'trash': trashed_row})
         if action in ('offs', 'ask_offs'):
-            result = await offs_action(request, uid, row, start, end, action == 'ask_offs')
-            if action == 'ask_offs' and result.get('sent'):
+            if action == 'offs':
+                return response(await offs_action(request, uid, row, start, end, False))
+            if row['id'] in _asking_offs:
+                return response({'error': 'Сообщение уже отправляется.'}, 409)
+            _asking_offs.add(row['id'])
+            try:
+                result = await offs_action(request, uid, row, start, end, True)
+            finally:
+                _asking_offs.discard(row['id'])
+            if result.get('sent'):
                 _track(uid, 'days_off_asked')
             return response(result)
         revision = body.get('revision')
@@ -790,7 +799,7 @@ async def handle(request):
 
 
 async def offs_action(request, uid, row, start, end, send):
-    """Кто уже записал обязательные выходные в Telegram; при send — просит ответить остальных."""
+    """Сводка ответов. Ручное приглашение в миниапп получают все официанты из графика."""
     draft = row['draft']
     approved = {m['id'] for m in await team(row['restaurant_id'])}
     people = [p for p in draft.get('people', []) if p.get('link') in approved]
@@ -805,9 +814,10 @@ async def offs_action(request, uid, row, start, end, send):
             if not bot:
                 raise ValueError('Бот сейчас недоступен. Попробуй позже.')
             if modern:
-                sent = await roster_wishes.remind(bot, row['id'])
+                sent = await roster_wishes.invite(bot, row, await off_recipients(row, links))
             else:
-                sent = await days_off.ask(bot, row['restaurant_id'], start, end, links, set(got))
+                sent = await days_off.ask(bot, row['restaurant_id'], start, end, links,
+                                          set(got) if days_off.chat_enabled() else set())
     except APIError as error:
         if error.code in MISSING:
             raise ValueError('Запись выходных пока недоступна: владельцу нужно обновить базу (migration_v33.sql).') from None
@@ -863,17 +873,21 @@ def off_check_text(start, end, reply, weekdays):
     return '\n'.join(lines)
 
 
+async def off_recipients(row, links):
+    if not links:
+        return {}
+    members = (await db._execute(db.supabase.table('employee_links').select('id,user_id')
+                                 .eq('restaurant_id', row['restaurant_id']).eq('status', 'approved')
+                                 .eq('role', 'staff').in_('id', sorted(links)))).data
+    return {member['user_id']: member['id'] for member in members if member['user_id'] is not None}
+
+
 async def send_off_check(bot, row):
     """Manual check of recorded days off, including staff who already answered."""
     if not bot:
         raise ValueError('Бот сейчас недоступен. Попробуй позже.')
     links = {person['link'] for person in row['draft'].get('people', []) if person.get('link')}
-    if not links:
-        return {'sent': 0, 'total': 0}
-    members = (await db._execute(db.supabase.table('employee_links').select('id,user_id')
-                                 .eq('restaurant_id', row['restaurant_id']).eq('status', 'approved')
-                                 .eq('role', 'staff').in_('id', sorted(links)))).data
-    recipients = {member['user_id']: member['id'] for member in members if member['user_id'] is not None}
+    recipients = await off_recipients(row, links)
     if not recipients:
         return {'sent': 0, 'total': 0}
     start, end = _period(row)

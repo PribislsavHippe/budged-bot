@@ -263,10 +263,10 @@ async def edit(uid, body):
     return {'saved': True, 'message': message, 'revision': result['revision']}, 200
 
 
-def reminder_text(row):
+def reminder_text(row, *, in_app=False):
     start, end = map(date.fromisoformat, (row['start_date'], row['end_date']))
     span = days_off.period_text(start, end)
-    if not days_off.chat_enabled():   # ЧЕРНОВИКИ: выходные только в приложении
+    if in_app or not days_off.chat_enabled():   # ЧЕРНОВИКИ: выходные только в приложении
         if row['stage'] == 2:
             return (f'Если есть пожелания к графику на {span}, отметь их в календаре приложения. '
                     'Если пожеланий нет, нажми «Без изменений».')
@@ -323,7 +323,42 @@ async def _widget(bot, claim, current):
                                       answer.get('desired_days') or [], hours)
 
 
-async def remind(bot, roster_id=None):
+async def invite(bot, row, recipients):
+    """Ручное приглашение всем официантам графика независимо от уже записанных ответов."""
+    import asyncio
+    from aiogram.types import InlineKeyboardButton as Button
+    from days_off_widget import MAX_DAYS
+    from identity_chat import enabled
+    import research
+
+    now = datetime.now(MSK)
+    first, last = map(date.fromisoformat, (row['start_date'], row['end_date']))
+    if not enabled() or not 10 <= now.hour < 20 or row.get('published_at') or first <= now.date():
+        return 0
+    roster_id = row['id']
+    target = roster_id if (last - first).days < MAX_DAYS else None
+    keep = [[Button(text='Без изменений', callback_data=f'off:keep:{roster_id}')]]
+    text = reminder_text({**row, 'stage': 1}, in_app=True)
+    count = 0
+    for uid, link in recipients.items():
+        markup = days_off.app_markup(uid, keep, roster_id=target, period_start=first)
+        try:
+            message = friend_text(uid, text, 'Приятель, ' + text[0].lower() + text[1:])
+            await asyncio.wait_for(bot.send_message(uid, message, reply_markup=markup, disable_notification=True), timeout=5)
+            count += 1
+            sent_at = datetime.now(timezone.utc).isoformat()
+            await db._execute(db.supabase.table('roster_wish_notices').upsert(
+                {'roster_id': roster_id, 'link_id': link, 'stage': 1, 'claimed_at': sent_at, 'sent_at': sent_at},
+                on_conflict='roster_id,link_id,stage', ignore_duplicates=True), retries=1)
+            research.track(uid, 'reminder_sent', source='server', screen='schedule', step='days_off')
+        except Exception as error:
+            from diagnostics import failure
+            failure(error, area='roster_wishes', stage='notice')
+        await asyncio.sleep(.05)
+    return count
+
+
+async def remind(bot):
     from identity_chat import enabled
     from aiogram.types import InlineKeyboardButton as Button, InlineKeyboardMarkup as Markup
     import asyncio
@@ -336,7 +371,7 @@ async def remind(bot, roster_id=None):
     for _ in range(roster.MAX_PEOPLE):
         try:
             claim = (await db._execute(db.supabase.rpc('claim_roster_wish_notice', {
-                'p_now': datetime.now(timezone.utc).isoformat(), 'p_roster': roster_id,
+                'p_now': datetime.now(timezone.utc).isoformat(), 'p_roster': None,
             }))).data
         except APIError as error:
             if error.code in (*days_off.MISSING, 'PGRST202', '42883'):
@@ -352,7 +387,6 @@ async def remind(bot, roster_id=None):
                 continue
             keep = [[Button(text='Без изменений', callback_data=f'off:keep:{claim["roster_id"]}')]]
             markup = Markup(inline_keyboard=keep) if days_off.chat_enabled() else days_off.app_markup(claim['user_id'], keep)
-            # Календарь выходных прямо в чате (если включён); иначе и при любой неудаче — прежний текст.
             sent = await asyncio.wait_for(_widget(bot, claim, current), timeout=5)
             if sent is None:
                 text = reminder_text(current)

@@ -6,16 +6,19 @@
 показывается пример на ближайшие полмесяца, который ничего не записывает.
 
 Кому видна ссылка в календаре мини-приложения — переменная `DAYS_OFF_MINIAPP`: `admin` (по умолчанию) — только
-владельцу бота, `1` — всем сотрудникам, `0` — никому. Тексты — ЧЕРНОВИКИ.
+владельцу бота, `1` — всем сотрудникам, `0` — никому. Приглашение на конкретный период проверяет участие
+сотрудника в этом графике. Тексты — ЧЕРНОВИКИ.
 """
 import calendar
 import os
 from datetime import date, timedelta
+from uuid import UUID
 
 from aiohttp import web
 
 DEMO_ID = '00000000-0000-4000-8000-000000000000'
 DEMO_NOTE = 'Сейчас выходные не собирают — это пример. Нажимай, ничего не сохранится.'
+ROSTER_UNAVAILABLE = 'График не найден или доступ изменился.'
 
 PAGE = '''<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Выходные</title>
@@ -33,7 +36,8 @@ iframe{border:0;width:100%;display:block;min-height:320px;background:transparent
  var tg=window.Telegram&&Telegram.WebApp; if(tg){tg.ready();tg.expand();
   if(tg.BackButton){tg.BackButton.show();tg.BackButton.onClick(function(){history.length>1?history.back():location.href='/app'})}}
  var init=tg&&tg.initData||'';
- function post(path,body){body.initData=init;return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},
+ var roster=new URLSearchParams(location.search).get('roster');
+ function post(path,body){body.initData=init;if(roster!==null)body.roster=roster;return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},
   body:JSON.stringify(body)}).then(function(r){return r.json().then(function(j){if(!r.ok)throw j;return j})})}
  function show(text){document.getElementById('cap').textContent=text}
  post('/api/days_off/state',{}).then(function(s){
@@ -80,8 +84,8 @@ def demo_period(today):
     return {'id': DEMO_ID, 'start_date': start.isoformat(), 'end_date': end.isoformat()}
 
 
-async def current(uid):
-    """Данные календаря на период, для которого собирают выходные; без такого периода — пример."""
+async def current(uid, roster_id=None):
+    """Приглашение открывает указанный период. Без приглашения можно посмотреть ближайший период или пример."""
     import db
     import days_off_widget as widget
     import roster_time_store
@@ -92,6 +96,7 @@ async def current(uid):
     if link:
         rows = [r for r in await wishes.period_rows(link, today)
                 if wishes.migrated(r) and wishes.in_roster(r, link['id'])
+                and (roster_id is None or r['id'] == roster_id)
                 and (date.fromisoformat(r['end_date']) - date.fromisoformat(r['start_date'])).days < widget.MAX_DAYS]
         # Сначала тот, что ещё не опубликован: выходные собирают для него.
         rows.sort(key=lambda r: (r.get('published') is not None, r['start_date']))
@@ -108,6 +113,8 @@ async def current(uid):
             return {'demo': False, 'caption': widget.short_caption(row), 'note': None,
                     'chat_data': widget.state(row, answer.get('days') or [], answer.get('desired_days') or [],
                                               today, hours=hours)}
+    if roster_id is not None:
+        return None
     row = demo_period(today)
     return {'demo': True, 'caption': widget.short_caption(row), 'note': DEMO_NOTE,
             'chat_data': widget.state(row, [], [], today)}
@@ -118,21 +125,36 @@ async def page(request):
     return web.Response(text=PAGE, content_type='text/html', headers=NO_CACHE)
 
 
+def requested_roster(body):
+    if 'roster' not in body:
+        return None
+    value = body['roster']
+    if not isinstance(value, str) or len(value) != 36:
+        raise ValueError
+    return str(UUID(value))
+
+
 async def state_api(request):
     from webapp_api import NO_CACHE, _auth
     uid, body = await _auth(request)
     if uid is None:
         return body
-    if not allowed(uid):
+    try:
+        roster_id = requested_roster(body)
+    except ValueError:
+        return web.json_response({'error': ROSTER_UNAVAILABLE}, status=404, headers=NO_CACHE)
+    if roster_id is None and not allowed(uid):
         return web.json_response({'error': 'Новый календарь выходных пока в проверке.'}, status=403, headers=NO_CACHE)
     import days_off_widget as widget
     try:
-        result = await current(uid)
+        result = await current(uid, roster_id)
     except Exception as error:
         from diagnostics import failure
         failure(error, area='days_off_app', stage='state')
         return web.json_response({'error': 'Не получилось открыть календарь. Попробуй ещё раз.'}, status=503,
                                  headers=NO_CACHE)
+    if result is None:
+        return web.json_response({'error': ROSTER_UNAVAILABLE}, status=404, headers=NO_CACHE)
     return web.json_response({**result, 'html': widget.HTML}, headers=NO_CACHE)
 
 
@@ -141,14 +163,18 @@ async def save_api(request):
     uid, body = await _auth(request)
     if uid is None:
         return body
-    if not allowed(uid):
+    try:
+        roster_id = requested_roster(body)
+    except ValueError:
+        return web.json_response({'error': ROSTER_UNAVAILABLE}, status=404, headers=NO_CACHE)
+    if roster_id is None and not allowed(uid):
         return web.json_response({'error': 'Новый календарь выходных пока в проверке.'}, status=403, headers=NO_CACHE)
     import days_off_widget as widget
     data, nonce = str(body.get('data') or '')[:64], str(body.get('nonce') or '')[:40]
     if not data or not nonce:
         return web.json_response({'error': 'Обнови страницу и попробуй ещё раз.'}, status=400, headers=NO_CACHE)
     try:
-        answer, chat_data = await widget.apply(uid, data, 'app:' + nonce, source='miniapp')
+        answer, chat_data = await widget.apply(uid, data, 'app:' + nonce, source='miniapp', roster_id=roster_id)
     except Exception as error:
         from diagnostics import failure
         failure(error, area='days_off_app', stage='save')
