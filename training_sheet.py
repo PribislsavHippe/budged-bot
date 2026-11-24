@@ -22,6 +22,14 @@ MONTH_STEMS = ('январ', 'феврал', 'март', 'апрел', 'ма[й�
 SHEET = re.compile(r'https://docs\.google\.com/spreadsheets/d/([A-Za-z0-9_-]{20,100})')
 MAX_ROWS = 400
 MAX_COLS = 60
+SHORT_NAMES = {
+    'алеша': {'алексей'}, 'леша': {'алексей'}, 'аня': {'анна'}, 'влад': {'владислав'},
+    'даня': {'даниил', 'данил', 'данила'}, 'евг': {'евгений', 'евгения', 'женя'},
+    'женя': {'евгений', 'евгения'},
+    'катя': {'екатерина'}, 'леся': {'олеся'}, 'маша': {'мария'}, 'миша': {'михаил'},
+    'оля': {'ольга'}, 'петя': {'петр'}, 'саша': {'александр', 'александра'},
+}
+ITALIANSKAYA_LABELS = {'итали', 'итальянская'}
 
 
 def sheet_id(text):
@@ -112,16 +120,17 @@ def sessions(tab, rows, today, gid=None, problems=None):
                 problems.append((tab, dated.strip()[:80]))
             if when in (None, 'old') or header is None:
                 continue
-            slots, names = [], []
+            slots, signups = [], []
+            has_restaurant = _norm(_cell(rows, header, col + 1)) == 'ресторан'
             for r in range(header + 1, bottom):
                 numbered = _cell(rows, r, col - 1).isdigit()
                 name = _cell(rows, r, col)
                 if not numbered and not name:
-                    if slots or names:
+                    if slots or signups:
                         break
                     continue
                 if name:
-                    names.append(name)
+                    signups.append((name, _cell(rows, r, col + 1) if has_restaurant else ''))
                 elif numbered:
                     slots.append(r)
             day, start, end = when
@@ -129,7 +138,7 @@ def sessions(tab, rows, today, gid=None, problems=None):
             found.append({'key': f'{day.isoformat()}|{start}|{_norm(label)[:40]}', 'tab': tab, 'gid': gid,
                           'title': title, 'activity': label, 'host': host, 'date': day,
                           'start': start, 'end': end, 'cancelled': cancelled, 'col': col, 'header': header,
-                          'slots': slots, 'names': names})
+                          'slots': slots, 'signups': signups})
     return found
 
 
@@ -137,10 +146,30 @@ def _norm(text):
     return re.sub(r'\s+', ' ', re.sub(r'[^0-9a-zа-я ]', ' ', str(text).lower().replace('ё', 'е'))).strip()
 
 
-def same_person(written, name):
-    """«Сергеев Алексей» в таблице и «Алексей Сергеев» в графике — один человек; «Леся Б» — нет уверенности."""
-    a, b = set(_norm(written).split()), set(_norm(name).split())
-    return len(a) >= 2 and a == b
+def name_words(name):
+    return frozenset(_norm(name or '').split())
+
+
+def short_name_matches(written, known):
+    if len(written) == 1:
+        word = next(iter(written))
+        return len(word) > 1 and any(_same_name_word(word, candidate) for candidate in known)
+    if len(written) != len(known):
+        return False
+    left, right = written - known, known - written
+    return len(left) == len(right) == 1 and _same_name_word(next(iter(left)), next(iter(right)))
+
+
+def _same_name_word(first, second):
+    return first == second or second in SHORT_NAMES.get(first, ()) or first in SHORT_NAMES.get(second, ())
+
+
+def signup_names(session, restaurant):
+    label = _norm(restaurant)
+    if not label:
+        return []
+    labels = ITALIANSKAYA_LABELS if label in ITALIANSKAYA_LABELS else {label}
+    return [' '.join(name.split()) for name, location in session['signups'] if _norm(location) in labels]
 
 
 def column(index):

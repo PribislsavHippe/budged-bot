@@ -163,12 +163,28 @@ async def _rows(table, restaurant_id, **filters):
     return (await db._execute(query)).data
 
 
-def signed_names(snapshot, sheet_names, reports=None):
-    """Кто из графика записан в таблице: по имени в графике или по имени, под которым человек подключён к боту."""
-    reports = reports or {}
-    return [p['name'] for p in (snapshot or {}).get('people') or []
-            if any(sheet.same_person(n, p.get('name', '')) or sheet.same_person(n, reports.get(p.get('link'), ''))
-                   for n in sheet_names)]
+def signed_names(snapshot, sheet_names, reports):
+    """Prefer an exact full name. Short forms only count when they identify one person."""
+    people = (snapshot or {}).get('people') or []
+    names = [(sheet.name_words(person['name']), sheet.name_words(reports.get(person.get('link'))))
+             for person in people]
+    signed = set()
+    for name in sheet_names:
+        words = sheet.name_words(name)
+        if not words:
+            continue
+        matches = [i for i, forms in enumerate(names) if len(words) > 1 and words in forms]
+        if not matches:
+            matches = [i for i, forms in enumerate(names) if any(sheet.short_name_matches(words, form) for form in forms)]
+        if len(matches) == 1:
+            signed.add(matches[0])
+    return [person['name'] for i, person in enumerate(people) if i in signed]
+
+
+async def _employee_links(rid):
+    links = (await db._execute(db.supabase.table('employee_links').select('id,report_name,user_id,role')
+                               .eq('restaurant_id', rid).eq('status', 'approved'))).data
+    return {link['id']: link for link in links}
 
 
 async def managers(restaurant_id):
@@ -210,6 +226,14 @@ async def sync(bot, bound, now=None):
                 row['session'] = stored(s)
         open_ = [s for s in found if not s['cancelled'] and s['date'] > today]
         done = {'announced': 0, 'invited': 0, 'reported': 0}
+        if not open_:
+            return done
+        restaurant = bound.get('label')
+        if not restaurant:
+            places = (await db._execute(db.supabase.table('restaurants').select('name').eq('id', rid))).data
+            restaurant = places[0]['name'] if places else ''
+        for session in open_:
+            session['local_signups'] = sheet.signup_names(session, restaurant)
         fresh = [s for s in open_ if not known[s['key']].get('announced_at')]
         if fresh:
             try:
@@ -258,22 +282,21 @@ async def _warn(bot, problems):
 async def _invite(bot, bound, sessions, doc):
     rid = bound['restaurant_id']
     invited = {(r['session_key'], r['link_id']) for r in await _rows('training_invites', rid)}
+    links = await _employee_links(rid)
+    reports = {link_id: link['report_name'] for link_id, link in links.items()}
     per_link = {}
     for s in sessions:
         snapshot = await published(rid, s['date'])
-        signed = set(signed_names(snapshot, s.get('names', [])))
+        signed = set(signed_names(snapshot, s['local_signups'], reports))
         for person in off_people(snapshot, s['date']):
             pair = (s['key'], person['link'])
             if person['link'] and pair not in invited and person['name'] not in signed:
                 per_link.setdefault(person['link'], []).append(s)
     if not per_link:
         return 0
-    links = (await db._execute(db.supabase.table('employee_links').select('id,user_id')
-                               .eq('restaurant_id', rid).eq('status', 'approved'))).data
-    users = {r['id']: r['user_id'] for r in links}
     count = 0
     for link, mine in per_link.items():
-        uid = users.get(link)
+        uid = links.get(link, {}).get('user_id')
         if not uid:
             continue
         try:
@@ -294,18 +317,17 @@ async def _attendance(rid, session):
     snapshot = await published(rid, session['date'])
     if snapshot is None:
         return None
-    links = (await db._execute(db.supabase.table('employee_links').select('id,report_name,user_id,role')
-                               .eq('restaurant_id', rid).eq('status', 'approved'))).data
-    signed = signed_names(snapshot, session.get('names', []), {r['id']: r['report_name'] for r in links})
+    links = await _employee_links(rid)
+    signed = signed_names(snapshot, session['local_signups'], {link_id: link['report_name'] for link_id, link in links.items()})
     missed = [p for p in off_people(snapshot, session['date']) if p['name'] not in signed]
-    return signed, missed, {link['id']: link for link in links}
+    return missed, links
 
 
 async def _remind_off_staff(bot, rid, session, doc):
     attendance = await _attendance(rid, session)
     if attendance is None:
         return
-    _, missed, links = attendance
+    missed, links = attendance
     markup = Markup(inline_keyboard=[[Button(text='Записаться', url=sheet.link(doc, session))]])
     for person in missed:
         link = links.get(person['link'])
@@ -334,12 +356,12 @@ async def _report(bot, rid, session, now):
     attendance = await _attendance(rid, session)
     if attendance is None:
         return 0
-    signed, missed, _ = attendance
-    body = report(session, signed, [person['name'] for person in missed])
+    missed, _ = attendance
+    body = report(session, session['local_signups'], [person['name'] for person in missed])
     sent = 0
     for uid in await managers(rid):
         try:
-            await bot.send_message(uid, body)
+            await bot.send_message(uid, body, parse_mode=None)
             sent += 1
         except Exception as error:
             logging.warning('training report failed: %s', type(error).__name__)

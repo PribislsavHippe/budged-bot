@@ -50,12 +50,13 @@ class Sheet(unittest.TestCase):
         found = {s['activity']: s for s in sheet.sessions('Ноябрь', ROWS, TODAY)}
         story = found['СТОРИТЕЛЛИНГ']
         self.assertEqual((story['date'], story['start'], story['end'], story['host']), (date(2026, 11, 18), 720, 870, 'ИВАНОВА'))
-        self.assertEqual((story['col'], story['slots'], story['names']), (2, [8, 9], ['Петров Пётр', 'Сергеева Анна']))
+        self.assertEqual((story['col'], story['slots']), (2, [8, 9]))
+        self.assertEqual(story['signups'], [('Петров Пётр', 'Сад'), ('Сергеева Анна', 'Река')])
         self.assertEqual((found['Welcome тренинг']['date'], found['Welcome тренинг']['start']), (date(2026, 12, 7), 660))
         reds = [s for s in sheet.sessions('Ноябрь', ROWS, TODAY) if s['activity'] == 'Красные']
         self.assertEqual([(s['date'], s['cancelled'], s['col']) for s in reds],
                          [(date(2026, 11, 20), True, 2), (date(2026, 10, 14), False, 6)])
-        self.assertEqual((found['Игристые']['slots'], found['Игристые']['names']), ([22], ['Анна Сергеева']))
+        self.assertEqual((found['Игристые']['slots'], found['Игристые']['signups']), ([22], [('Анна Сергеева', 'Река')]))
 
     def test_dates_without_a_year_take_the_nearest_one(self):
         self.assertEqual(sheet._when('05.01 с 12:00-13:00', date(2026, 12, 20))[0], date(2027, 1, 5))
@@ -101,11 +102,7 @@ class Sheet(unittest.TestCase):
         self.assertEqual([s['date'].isoformat() for s in left], ['2026-11-18', '2026-11-20', '2026-11-21', '2026-12-07'])
         self.assertEqual({s['tab'] for s in left}, {'Ноябрь'})
 
-    def test_people_and_columns(self):
-        self.assertTrue(sheet.same_person('Сергеева Анна ', 'Анна Сергеева'))
-        self.assertTrue(sheet.same_person('Сергеев Алексей', 'алексей сергеев'))
-        self.assertFalse(sheet.same_person('Леся Б', 'Леся Богуцкая'))
-        self.assertFalse(sheet.same_person('Анна', 'Анна'))
+    def test_columns_and_sheet_links(self):
         self.assertEqual([sheet.column(i) for i in (0, 2, 25, 26, 27)], ['A', 'C', 'Z', 'AA', 'AB'])
         self.assertEqual(sheet.sheet_id('вот https://docs.google.com/spreadsheets/d/10miCtSWFJadfLBS0qERYwKc/edit#gid=1'),
                          '10miCtSWFJadfLBS0qERYwKc')
@@ -122,6 +119,17 @@ class Message(unittest.TestCase):
     def test_only_people_off_that_day_can_go(self):
         self.assertEqual([p['name'] for p in trainings.off_people(SNAPSHOT, date(2026, 11, 18))], ['Аня', 'Оля'])
         self.assertEqual(trainings.off_people(None, date(2026, 11, 18)), [])
+
+    def test_exact_names_take_precedence_over_short_forms(self):
+        snapshot = {'people': [{'name': 'Даня', 'link': 'd'}, {'name': 'Данила', 'link': 'e'}]}
+        reports = {'d': 'Даниил Белоусов', 'e': 'Данила Белоусов'}
+        self.assertEqual(trainings.signed_names(snapshot, ['ДАНИИЛ белоусов'], reports), ['Даня'])
+        self.assertEqual(trainings.signed_names(snapshot, ['Белоусов', 'Белоусов Даня', 'Даня Б.'], reports), [])
+
+    def test_signup_names_require_the_correct_restaurant(self):
+        session = {'signups': [('Даня', ''), ('Даниил Белоусов', 'Река'), ('Д. Белоусов', ' САД ')]}
+        self.assertEqual(sheet.signup_names(session, 'Сад'), ['Д. Белоусов'])
+        self.assertEqual(sheet.signup_names(session, ''), [])
 
     def test_texts(self):
         found = {s['activity']: s for s in sheet.sessions('Ноябрь', ROWS, TODAY)}
@@ -145,7 +153,7 @@ class Message(unittest.TestCase):
                          'Был выходной, но не записались: Аня.')
         self.assertIn('Записались: никто.', trainings.report(story, [], ['Аня']))
         saved = trainings.stored(story)
-        self.assertNotIn('names', saved)
+        self.assertNotIn('signups', saved)
         self.assertEqual(trainings.restored(json.loads(json.dumps(saved)))['date'], story['date'])
 
 
@@ -226,6 +234,58 @@ class Posting(Base):
             done = await trainings.sync(bot, self.BOUND, now)
         return done, [(c.args[0], c.args[1]) for c in bot.send_message.await_args_list], bot
 
+    async def test_short_signup_names_work_for_invitations_reminders_and_reports(self):
+        eve = date(2026, 11, 17)
+        for written in ('Даня', 'Даниил', 'Белоусов', 'Белоусов Даня'):
+            with self.subTest(written=written):
+                self.setUp()
+                self.store['employee_links'][0]['report_name'] = 'Даниил Белоусов'
+                rows = [list(row) for row in ROWS]
+                rows[8][2:4] = [written, 'Сад']
+                _, invite, _ = await self.run_sync(rows=rows)
+                self.assertNotIn(1, [uid for uid, _ in invite])
+                _, reminder, _ = await self.run_sync(hour=17, rows=rows, day=eve)
+                self.assertEqual([uid for uid, _ in reminder], [3])
+                _, reports, _ = await self.run_sync(hour=18, rows=rows, day=eve)
+                self.assertEqual({uid for uid, _ in reports}, {7, 8})
+                self.assertTrue(all(f'Записались: Петров Пётр, {written}.' in body for _, body in reports))
+
+    async def test_short_signup_cannot_match_two_people_or_a_different_restaurant(self):
+        eve = date(2026, 11, 17)
+        self.store['employee_links'][0]['report_name'] = 'Даниил Белоусов'
+        self.store['employee_links'][1]['report_name'] = 'Данила Орлов'
+        rows = [list(row) for row in ROWS]
+        rows[8][2:4] = ['Даня', 'Сад']
+        rows[9][2:4] = ['Белоусов', 'Река']
+        _, sent, _ = await self.run_sync(hour=18, rows=rows, day=eve)
+        reports = {uid: body for uid, body in sent if uid in (7, 8)}
+        self.assertEqual(reports.keys(), {7, 8})
+        for body in reports.values():
+            self.assertIn('Записались: Петров Пётр, Даня.', body)
+            self.assertIn('Был выходной, но не записались: Аня, Оля.', body)
+            self.assertNotIn('Белоусов', body)
+
+    async def test_restaurant_signups_use_the_spelling_from_the_sheet(self):
+        eve = date(2026, 11, 17)
+        self.BOUND = {**self.BOUND, 'label': None}
+        self.store['restaurants'][0]['name'] = 'Итальянская'
+        self.store['employee_links'][0]['report_name'] = 'Евгений Орлов'
+        rows = [list(row) for row in ROWS]
+        rows[6][2:4] = ['Евг', 'Итали']
+        rows[7][2:4] = ['Евгений Волков', 'Река']
+        rows[8][2:4] = ['Новый коллега', 'Итальянская']
+        rows[9][2:4] = ['Белова Оля', '']
+        await self.run_sync(rows=rows)
+        _, reminded, _ = await self.run_sync(hour=17, rows=rows, day=eve)
+        self.assertEqual([uid for uid, _ in reminded], [3])
+        _, reports, bot = await self.run_sync(hour=18, rows=rows, day=eve)
+        self.assertEqual({uid for uid, _ in reports}, {7, 8})
+        self.assertTrue(all(call.kwargs['parse_mode'] is None for call in bot.send_message.await_args_list))
+        for _, body in reports:
+            self.assertIn('Записались: Евг, Новый коллега.', body)
+            self.assertIn('Был выходной, но не записались: Оля.', body)
+            self.assertNotIn('Евгений Волков', body)
+
     async def test_the_team_chat_gets_one_short_announcement_and_people_off_get_invitations(self):
         done, sent, bot = await self.run_sync()
         self.assertEqual(done, {'announced': 3, 'invited': 2, 'reported': 0})
@@ -234,7 +294,9 @@ class Posting(Base):
         self.assertNotIn('Аня', chat[0])                                  # в общем чате без имён
         self.assertEqual(sorted(to for to, _ in sent if to != -5), [1, 3])  # Аня и Оля, у Влада смена
         self.assertTrue(all(text.startswith('Новости: в твой выходной') for to, text in sent if to != -5))
-        self.assertNotIn('names', self.store['training_sessions'][0]['session'])
+        saved = self.store['training_sessions'][0]['session']
+        self.assertNotIn('signups', saved)
+        self.assertNotIn('local_signups', saved)
         done, sent, _ = await self.run_sync()
         self.assertEqual((done, sent), ({'announced': 0, 'invited': 0, 'reported': 0}, []))   # повтор ничего не шлёт
 
@@ -246,7 +308,7 @@ class Posting(Base):
     async def test_managers_get_a_report_the_evening_before(self):
         await self.run_sync()
         signed = [list(r) for r in ROWS]
-        signed[8][2] = 'Аня Котова'                                       # вписалась сама; в боте она «Котова Аня»
+        signed[8][2:4] = ['Аня Котова', 'Сад']                           # вписалась сама; в боте она «Котова Аня»
         self.rows = signed
         with patch.dict(os.environ, {'FRIEND_TELEGRAM_ID': '1'}):
             done, sent, _ = await self.run_sync(hour=17, day=date(2026, 11, 17))
@@ -257,7 +319,7 @@ class Posting(Base):
         self.assertEqual(done['reported'], 1)
         reports = {to: text for to, text in sent}
         self.assertEqual(sorted(reports), [7, 8])                         # менеджер и владелец
-        self.assertIn('Записались: Аня.', reports[7])
+        self.assertIn('Записались: Петров Пётр, Аня Котова.', reports[7])
         self.assertIn('Был выходной, но не записались: Оля.', reports[7])
         self.rows = ROWS
         done, _, _ = await self.run_sync(hour=19, day=date(2026, 11, 17))
@@ -267,7 +329,7 @@ class Posting(Base):
         await self.run_sync()
         eve = date(2026, 11, 17)
         signed = [list(row) for row in ROWS]
-        signed[8][2] = 'Аня Котова'
+        signed[8][2:4] = ['Аня Котова', 'Сад']
         _, sent, _ = await self.run_sync(hour=16, rows=signed, day=eve)
         self.assertEqual(sent, [])
 
@@ -281,11 +343,11 @@ class Posting(Base):
         self.assertEqual(button.text, 'Записаться')
         self.assertIn(f'/d/{self.BOUND["sheet_id"]}/edit', button.url)
 
-        signed[9][2] = 'Белова Оля'
+        signed[9][2:4] = ['Белова Оля', 'Сад']
         _, sent, _ = await self.run_sync(hour=18, rows=signed, day=eve)
         self.assertEqual({uid for uid, _ in sent}, {7, 8})
         for _, report in sent:
-            self.assertIn('Записались: Аня, Оля.', report)
+            self.assertIn('Записались: Петров Пётр, Аня Котова, Белова Оля.', report)
             self.assertNotIn('но не записались:', report)
 
     async def test_the_owner_hears_about_an_unreadable_date_once(self):
