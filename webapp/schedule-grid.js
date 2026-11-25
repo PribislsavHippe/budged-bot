@@ -91,8 +91,9 @@
       html+=`<tr class="${p.me?'sg-me':''}"><th class="sg-name" scope="row" data-r="${r}" ${o.edit?'tabindex="0"':''}>${esc(p.name)}${total!=null?`<small class="sg-cnt" title="Смен за период">${total}</small>`:''}${o.edit?`<button type="button" class="sg-x" data-remove="${r}" aria-label="Убрать из графика: ${esc(p.name)}" title="Убрать из графика">×</button>`:''}</th>`;
       days.forEach((iso,k)=>{
         // В редакторе смену можно взять и перетащить в другую клетку.
+        const editable=!o.editCell||o.editCell(p,iso);
         const drag=o.edit&&works(parse(p.cells?.[iso]))?' draggable="true"':'';
-        html+=(gap(iso,k)?g('td'):'')+`<td class="sg-c" data-r="${r}" data-day="${iso}" tabindex="0"${drag}>${shift(p,iso)}</td>`;});
+        html+=(gap(iso,k)?g('td'):'')+`<td class="sg-c" data-r="${r}" data-day="${iso}"${editable?' tabindex="0"':' aria-disabled="true"'}${drag}>${shift(p,iso)}</td>`;});
       html+=tail('td')+'</tr>';
     });
     // Итог: число людей в смене. Когда людей столько, сколько нужно, число бледное;
@@ -102,7 +103,13 @@
       // Красное — людей меньше, чем нужно. Лишний человек или неточное открытие красным не отмечаются.
       const bad=o.flagged?.[iso]||(need!=null&&have<need);
       html+=(gap(iso,k)?g('td'):'')+`<td class="${bad?'sg-bad':'sg-ok'}"${need!=null?` title="Нужно: ${need}"`:''}><b>${have}</b></td>`;});
-    return html+tail('td')+'</tr></tfoot>';
+    html+=tail('td')+'</tr>';
+    for(const row of o.totals||[]){
+      html+=`<tr class="sg-extra-total"><th class="sg-name" scope="row">${esc(row.label)}</th>`;
+      days.forEach((iso,k)=>{html+=(gap(iso,k)?g('td'):'')+`<td><b>${esc(row.value(iso))}</b></td>`;});
+      html+=tail('td')+'</tr>';
+    }
+    return html+'</tfoot>';
   }
 
   // Прокрутка: имена на месте, выбранный день встаёт к ним; хвост справа даёт довести даже последний.

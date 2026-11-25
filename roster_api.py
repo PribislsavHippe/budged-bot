@@ -841,7 +841,7 @@ async def offs_action(request, uid, row, start, end, send):
                 or dates != draft.get('wish_off', {}).get(name, [])
                 or time_rules.get(name) != draft.get('time_rules', {}).get(name)):
                 fresh += 1
-    return {'total': len(links), 'answered': len(answered), 'fresh': fresh, 'sent': sent,
+    return {'total': len(links), 'answered': len(answered), 'answered_links': answered, 'fresh': fresh, 'sent': sent,
             'requests': {links[link]: sorted(got[link]) for link in answered if got[link]},
             'desired': {links[link]: replies[link]['desired_days'] for link in answered
                         if link in replies and replies[link]['desired_days']},

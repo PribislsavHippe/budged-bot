@@ -68,6 +68,10 @@
         </div>
       </div>
       <div class="re-toast" role="status" hidden></div></div>`;
+    const normalEditor=root.firstElementChild;
+    const holidayEntry=document.createElement('button');
+    holidayEntry.type='button';holidayEntry.textContent='Новогодний график';holidayEntry.className='re-holiday';holidayEntry.hidden=true;
+    normalEditor.querySelector('.re-period').appendChild(holidayEntry);
     const q=s=>root.querySelector(s),grid=q('.sg-edit'),sc=grid.parentElement,sheet=q('.re-sheet');
     const scroll=G.scroller(grid,sc,{sheet});G.hover(grid);
     const error=t=>{q('.re-error').textContent=t||'';};
@@ -88,6 +92,11 @@
     root.querySelectorAll('.re-step').forEach(b=>b.onclick=()=>{const list=ordered(),i=list.findIndex(p=>p.id===cur?.id);const next=list[i+(+b.dataset.step)];if(next)load(next.id);});
     q('.re-jump').onchange=()=>{if(q('.re-jump').value!==cur?.id)load(q('.re-jump').value);};
     const failed=e=>error(e.name==='TimeoutError'?'Ответ задерживается. Обнови страницу и проверь, сохранилось ли.':e.message);
+    const holidayEditor=window.HolidayRoster?.attach(root,normalEditor,api,()=>list(cur?.id));
+    holidayEntry.onclick=async()=>{
+      if(busy||!(await flush()))return;
+      holidayEditor?.open(placeId,periods);
+    };
 
     // ─── список периодов ───
     function stateOf(p){return p.published_at?(p.changed?'опубликован, есть новые правки':'опубликован'):'черновик';}
@@ -96,6 +105,7 @@
     const suggested=()=>{const all=ordered();return all.length?halfAfter(all[all.length-1].end):nextHalf();};
     function renderPeriods(){
       const list=ordered(),i=list.findIndex(p=>p.id===cur?.id);
+      holidayEntry.hidden=!(holidayEditor&&window.HolidayRoster.matches(places.find(p=>p.id===placeId)?.name));
       q('.re-jump').hidden=list.length<3;
       q('.re-jump').innerHTML=list.map(p=>`<option value="${esc(p.id)}">${esc(G.period(p.start,p.end))} · ${stateOf(p)}</option>`).join('');
       if(cur)q('.re-jump').value=cur.id;
@@ -180,7 +190,7 @@
     }
     q('.re-undo').onclick=()=>travel(undo,redo);q('.re-redo').onclick=()=>travel(redo,undo);
     document.addEventListener('keydown',e=>{
-      if(!cur||busy||root.closest('[hidden]')||!(e.ctrlKey||e.metaKey)||e.key.toLowerCase()!=='z'&&e.key.toLowerCase()!=='я')return;
+      if(!cur||busy||normalEditor.hidden||root.closest('[hidden]')||!(e.ctrlKey||e.metaKey)||e.key.toLowerCase()!=='z'&&e.key.toLowerCase()!=='я')return;
       if(e.target.matches('input,textarea'))return;
       e.preventDefault();if(e.shiftKey)travel(redo,undo);else travel(undo,redo);
     });
@@ -689,10 +699,11 @@
     // Ресторан выбирает заголовок страницы (только у владельца нескольких ресторанов).
     async function setPlace(id){
       if(!id||id===placeId||!(await flush()))return;
+      holidayEditor?.close();
       placeId=id;cur=null;periods=[];q('.re-editor').hidden=true;list();
     }
     addEventListener('beforeunload',e=>{if(cur&&edits!==saved){e.preventDefault();e.returnValue='';}});
-    addEventListener('resize',()=>{if(cur&&!q('.re-editview').hidden)sizeGrid();});
+    addEventListener('resize',()=>{if(cur&&!normalEditor.hidden&&!q('.re-editview').hidden)sizeGrid();});
     list();
     root._roster={refresh:(fresh,id)=>{if(fresh?.length)places=fresh;if(id&&id!==placeId)setPlace(id);else if(!cur)list();},setPlace};
     return root._roster;
