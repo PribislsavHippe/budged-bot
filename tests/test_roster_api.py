@@ -107,12 +107,15 @@ class Query:
                 rows.append(dict(self.payload))
             return NS(data=[self.payload])
         if self.action == 'insert':
-            if self.name == 'rosters' and any(r['restaurant_id'] == self.payload['restaurant_id']
-                                              and r['start_date'] == self.payload['start_date'] for r in rows):
+            payloads = self.payload if isinstance(self.payload, list) else [self.payload]
+            if self.name == 'rosters' and any(r['restaurant_id'] == payload['restaurant_id']
+                                              and r['start_date'] == payload['start_date']
+                                              for r in rows for payload in payloads):
                 raise APIError({'code': '23505', 'message': 'duplicate'})
-            row = {'revision': 1, 'published': None, 'published_at': None, 'updated_at': 'now', **self.payload}
-            rows.append(row)
-            return NS(data=[dict(row)])
+            inserted = [{'revision': 1, 'published': None, 'published_at': None, 'updated_at': 'now', **payload}
+                        for payload in payloads]
+            rows.extend(inserted)
+            return NS(data=[dict(row) for row in inserted])
         found = [r for r in rows if all(f(r) for f in self.filters)]
         if getattr(self, 'sort', None):
             found.sort(key=lambda r: str(r.get(self.sort[0])), reverse=self.sort[1])
@@ -508,6 +511,30 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
 
     async def roster(self, action, uid, status=200, **body):
         return await self.post('/api/restaurant/roster/' + action, uid, status, **body)
+
+    async def test_holiday_wishes_can_start_before_a_schedule_is_built(self):
+        self.fake.rows['restaurants'][0]['name'] = 'Итальянская'
+        with patch('roster_api.build_all') as build, patch('roster_api._building.locked', return_value=True):
+            prepared = await self.roster('holiday_prepare', MANAGER, restaurant_id=PLACE)
+            self.assertEqual([(row['start'], row['end']) for row in prepared['periods']],
+                             [('2026-12-16', '2026-12-31'), ('2027-01-01', '2027-01-15')])
+            self.assertEqual(len(self.fake.rows['rosters']), 2)
+            for row in self.fake.rows['rosters']:
+                self.assertTrue(row['draft']['holiday_collection_only'])
+                self.assertIsNone(row['collect_wishes_at'])
+                self.assertEqual(row['draft']['cells'], {})
+                self.assertIn('Аня', {p['name'] for p in row['draft']['people']})
+            self.assertEqual(await self.roster('holiday_prepare', MANAGER, restaurant_id=PLACE), prepared)
+            self.assertEqual((await self.roster('list', MANAGER, restaurant_id=PLACE))['periods'], [])
+            self.assertCountEqual((await self.roster('list', MANAGER, restaurant_id=PLACE, holiday=True))['periods'],
+                                  prepared['periods'])
+            await self.roster('holiday_prepare', STRANGER, 403, restaurant_id=PLACE)
+            await self.roster('holiday_prepare', STRANGER, 403, restaurant_id=OTHER)
+            opened = await self.roster('open', MANAGER, id=prepared['periods'][0]['id'])
+            await self.roster('save', MANAGER, id=opened['id'], revision=opened['revision'], draft=opened['draft'])
+            self.assertEqual([row['id'] for row in (await self.roster('list', MANAGER, restaurant_id=PLACE))['periods']],
+                             [opened['id']])
+            build.assert_not_called()
 
     async def test_calendar_wish_edit_checks_signed_actor_and_period(self):
         import roster_wishes

@@ -564,6 +564,7 @@ def _track(uid, event, **extra):
 async def handle(request):
     from webapp_api import _auth, NO_CACHE
     from identity_chat import enabled
+    from holiday_offs import collection_only, is_holiday_restaurant, prepare_periods
     uid, body = await _auth(request)
     if uid is None:
         return body
@@ -587,8 +588,19 @@ async def handle(request):
             rows = await db._pages(lambda: db.supabase.table('rosters')
                                    .select('id,start_date,end_date,published_at,updated_at,draft,published')
                                    .eq('restaurant_id', restaurant_id).order('start_date', desc=True).order('id'))
+            include_collection = body.get('holiday') is True and any(
+                place['id'] == restaurant_id and is_holiday_restaurant(place['name']) for place in places)
+            if not include_collection:
+                rows = [row for row in rows if not collection_only(row)]
             return response({'restaurants': places, 'restaurant_id': restaurant_id,
                              'periods': [_summary(r) for r in rows], 'trash': await trashed(restaurant_id)})
+        if action == 'holiday_prepare':
+            restaurant_id = str(UUID(str(body.get('restaurant_id', ''))))
+            if not any(place['id'] == restaurant_id and is_holiday_restaurant(place['name']) for place in places):
+                return response({'error': 'Новогодний график недоступен для этого ресторана.'}, 403)
+            stage = 'holiday_prepare'
+            periods = await prepare_periods(restaurant_id, uid)
+            return response({'periods': [_summary(row) for row in periods]})
         if action == 'restore':
             stage = 'restore'
             trash_id = str(UUID(str(body.get('id', ''))))
@@ -615,11 +627,17 @@ async def handle(request):
                 raise ValueError(f'Период — от одного до {roster.MAX_DAYS} дней.')
             stage = 'create'
             # Периоды не пересекаются: иначе команде непонятно, какой график действует.
-            clash = (await db._execute(db.supabase.table('rosters').select('start_date,end_date')
+            clash = (await db._execute(db.supabase.table('rosters').select('*')
                                        .eq('restaurant_id', restaurant_id).lte('start_date', end.isoformat())
                                        .gte('end_date', start.isoformat()).limit(1))).data
             if clash:
-                a, b = date.fromisoformat(clash[0]['start_date']), date.fromisoformat(clash[0]['end_date'])
+                existing = clash[0]
+                a, b = _period(existing)
+                if (start, end) == (a, b) and collection_only(existing):
+                    draft = normalize(existing['draft'], start, end)
+                    created = await _save(existing, uid, existing['revision'], {'draft': draft})
+                    _track(uid, 'roster_created')
+                    return response(_opened(created))
                 raise ValueError(f'Даты пересекаются с графиком {a.day}.{a.month:02d}–{b.day}.{b.month:02d}.')
             seed = await carry_over(restaurant_id, start, await team(restaurant_id))
             draft = normalize(seed, start, end)

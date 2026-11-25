@@ -1,9 +1,10 @@
 """One combined invitation for the two New Year rosters at Italianskaya."""
 import asyncio
-from datetime import datetime, timezone
-from uuid import NAMESPACE_URL, uuid5
+from datetime import date, datetime, timezone
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from postgrest.exceptions import APIError
 
 from workday import MSK
 
@@ -11,6 +12,63 @@ PERIODS = (('2026-12-16', '2026-12-31'), ('2027-01-01', '2027-01-15'))
 INVITATION = ('Друзья, кому важно отдыхать в новогодний период — отмечайте нужный вам период. '
               'По кнопке откроется календарь с 16 декабря по 15 января. Когда соберем, сможем найти решение.')
 _launch_lock = asyncio.Lock()
+
+
+def is_holiday_restaurant(name):
+    return name.strip().casefold() in {'итали', 'итальянская'}
+
+
+def collection_only(row):
+    return not row.get('published_at') and (row.get('draft') or {}).get('holiday_collection_only') is True
+
+
+async def prepare_periods(restaurant_id, actor):
+    """Reuse exact periods or reserve dates for collecting wishes, without calculating a draft."""
+    import db
+    from roster_api import carry_over, normalize, team
+
+    async def covering_rows():
+        return (await db._execute(db.supabase.table('rosters').select('*').eq('restaurant_id', restaurant_id)
+                                  .gte('end_date', PERIODS[0][0]).lte('start_date', PERIODS[-1][1]))).data
+
+    def by_period(rows):
+        exact = {}
+        for row in rows:
+            bounds = (row['start_date'], row['end_date'])
+            if bounds not in PERIODS:
+                start, end = map(date.fromisoformat, bounds)
+                raise ValueError(f'Новогодние даты пересекаются с графиком {start:%d.%m}–{end:%d.%m}. Проверь его даты.')
+            exact[bounds] = row
+        return exact
+
+    found = by_period(await covering_rows())
+    if all(period in found for period in PERIODS):
+        return [found[period] for period in PERIODS]
+    members = await team(restaurant_id)
+    if not members:
+        raise ValueError('В ресторане пока нет подключённых официантов.')
+    new_rows = []
+    for bounds in PERIODS:
+        if bounds in found:
+            continue
+        start, end = map(date.fromisoformat, bounds)
+        seed = await carry_over(restaurant_id, start, members)
+        draft = normalize(seed, start, end)
+        draft['holiday_collection_only'] = True
+        new_rows.append({'id': str(uuid4()), 'restaurant_id': restaurant_id,
+                         'start_date': bounds[0], 'end_date': bounds[1], 'draft': draft,
+                         'updated_by': actor, 'collect_wishes_at': None})
+    try:
+        created = (await db._execute(db.supabase.table('rosters').insert(new_rows))).data
+    except APIError as error:
+        if error.code not in ('23505', '23P01') and 'roster_overlap' not in str(error):
+            raise
+        found = by_period(await covering_rows())
+        if all(period in found for period in PERIODS):
+            return [found[period] for period in PERIODS]
+        raise ValueError('Графики изменились. Запусти сбор ещё раз.') from None
+    found.update(by_period(created))
+    return [found[period] for period in PERIODS]
 
 
 async def launch(bot, actor):
@@ -39,17 +97,14 @@ async def launch(bot, actor):
     if _launch_lock.locked():
         return 'Рассылка уже идёт.'
     async with _launch_lock:
-        places = [place for place in await roles.places(actor)
-                  if place['name'].strip().casefold() in {'итали', 'итальянская'}]
+        places = [place for place in await roles.places(actor) if is_holiday_restaurant(place['name'])]
         if len(places) != 1:
             return 'Не получилось однозначно найти Итальянскую. Приглашения не отправлены.'
         restaurant_id = places[0]['id']
-        rows = (await db._execute(db.supabase.table('rosters').select('*').eq('restaurant_id', restaurant_id)
-                                  .in_('start_date', [start for start, _ in PERIODS]))).data
-        by_dates = {(row['start_date'], row['end_date']): row for row in rows}
-        if any(period not in by_dates for period in PERIODS):
-            return 'Создай черновики на 16–31 декабря и 1–15 января в разделе «График». Приглашения не отправлены.'
-        periods = [by_dates[period] for period in PERIODS]
+        try:
+            periods = await prepare_periods(restaurant_id, actor)
+        except ValueError as error:
+            return f'{error} Приглашения не отправлены.'
         if any(row.get('published_at') or not roster_wishes.migrated(row) for row in periods):
             return 'Сбор доступен для двух неопубликованных графиков с календарём пожеланий. Приглашения не отправлены.'
         members = {}

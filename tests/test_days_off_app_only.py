@@ -85,6 +85,32 @@ class AppOnly(unittest.TestCase):
         self.assertEqual(button(markup).web_app.url, f'https://bot.example/app/days-off?roster={roster_id}')
         self.assertEqual(markup.inline_keyboard[1][0].text, 'Без изменений')
 
+    def test_automatic_reminders_open_the_exact_period_from_the_message(self):
+        roster_id = 'abcdef12-0000-4000-8000-000000000001'
+        for stage, end_date, expected in (
+            (1, '2026-12-31', f'/app/days-off?roster={roster_id}'),
+            (2, '2026-12-31', f'/app/days-off?roster={roster_id}'),
+            (1, '2027-01-16', '/app?calendar_month=2026-12#cal-grid'),
+        ):
+            with self.subTest(stage=stage, end_date=end_date):
+                claim = {'roster_id': roster_id, 'link_id': 'own', 'user_id': 5, 'stage': stage,
+                         'start_date': '2026-12-16', 'end_date': end_date}
+                bot = NS(send_message=AsyncMock())
+                with patch.dict(os.environ, {**HOST, 'DAYS_OFF_MINIAPP': '1'}), \
+                        patch('identity_chat.enabled', return_value=True), \
+                        patch.object(roster_wishes, 'datetime') as clock, \
+                        patch.object(roster_wishes, 'notice_current', AsyncMock(return_value=claim)), \
+                        patch.object(roster_wishes, '_widget', AsyncMock(return_value=None)), \
+                        patch('research.track'), \
+                        patch('db._execute', AsyncMock(side_effect=[NS(data=claim), NS(data=[]), NS(data=None)])):
+                    clock.now.return_value = datetime(2026, 11, 24, 12)
+                    self.assertEqual(asyncio.run(roster_wishes.remind(bot)), 1)
+                message = bot.send_message.await_args
+                self.assertIn('16', message.args[1])
+                markup = message.kwargs['reply_markup']
+                self.assertEqual(button(markup).web_app.url, 'https://bot.example' + expected)
+                self.assertEqual(markup.inline_keyboard[1][0].callback_data, f'off:keep:{roster_id}')
+
 
 class HelpOffered(unittest.TestCase):
     def test_help_after_two_misses_is_recorded(self):

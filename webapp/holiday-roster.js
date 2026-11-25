@@ -25,7 +25,7 @@
       <div class="re-actions">
         <button type="button" class="re-holiday" data-back>К обычному графику</button>
         <button type="button" class="re-build" data-build hidden>Собрать заново</button>
-        <button type="button" class="btn" data-create hidden>Создать черновики</button>
+        <button type="button" class="btn" data-create hidden>Подготовить график</button>
       </div></div>
       <p class="re-error" role="alert"></p><p role="status" data-status hidden></p>
       <section class="sg-sheet" hidden><div class="sg-scroll"><table></table></div></section>`;
@@ -68,20 +68,27 @@
         if (!sameView(active)) return;
         rows = current;
         draw();
-        status(rows.some(row => !row) ? 'Для недостающих дат создай черновики.' : '');
+        status('');
       } catch (err) {
         if (sameView(active)) {error(err.message);status('');}
       } finally {
         if (sameView(active)) {busy = false;controls();}
       }
     }
-    function open(restaurantId, periods) {
+    async function open(restaurantId) {
       generation++;
+      const active = generation;
       normal.hidden = true;
       view.hidden = false;
       sheet.hidden = build.hidden = create.hidden = true;
       rows = [];people = [];editing = null;placeId = restaurantId;
-      load(periods);
+      busy = true;controls();error('');status('Загружаю график…');
+      try {
+        const {periods} = await api('list',{restaurant_id:restaurantId,holiday:true});
+        if (sameView(active)) await load(periods);
+      } catch (err) {
+        if (sameView(active)) {error(err.message);status('');busy = false;controls();}
+      }
     }
     function draw() {
       const named = new Map();
@@ -126,15 +133,9 @@
 
     create.onclick = async () => {
       const active = generation, restaurant = placeId;
-      busy = true;controls();error('');status('Создаю черновики…');
+      busy = true;controls();error('');status('Готовлю график…');
       try {
-        let data = await api('list',{restaurant_id:restaurant});
-        for (const range of ranges) {
-          if (!sameView(active)) return;
-          if (knownPeriod(range,data.periods)) continue;
-          const row = await api('create',{restaurant_id:restaurant,...range},120000);
-          data.periods.push(row);
-        }
+        const data = await api('holiday_prepare',{restaurant_id:restaurant});
         if (sameView(active)) await load(data.periods);
       } catch (err) {
         if (sameView(active)) {error(err.message);status('');busy = false;controls();}

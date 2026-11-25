@@ -323,11 +323,16 @@ async def _widget(bot, claim, current):
                                       answer.get('desired_days') or [], hours)
 
 
+def _period_markup(uid, roster_id, first, last, keep):
+    from days_off_widget import MAX_DAYS
+    target = roster_id if (last - first).days < MAX_DAYS else None
+    return days_off.app_markup(uid, keep, roster_id=target, period_start=first)
+
+
 async def invite(bot, row, recipients):
     """Ручное приглашение всем официантам графика независимо от уже записанных ответов."""
     import asyncio
     from aiogram.types import InlineKeyboardButton as Button
-    from days_off_widget import MAX_DAYS
     from identity_chat import enabled
     import research
 
@@ -336,12 +341,11 @@ async def invite(bot, row, recipients):
     if not enabled() or not 10 <= now.hour < 20 or row.get('published_at') or first <= now.date():
         return 0
     roster_id = row['id']
-    target = roster_id if (last - first).days < MAX_DAYS else None
     keep = [[Button(text='Без изменений', callback_data=f'off:keep:{roster_id}')]]
     text = reminder_text({**row, 'stage': 1}, in_app=True)
     count = 0
     for uid, link in recipients.items():
-        markup = days_off.app_markup(uid, keep, roster_id=target, period_start=first)
+        markup = _period_markup(uid, roster_id, first, last, keep)
         try:
             message = friend_text(uid, text, 'Приятель, ' + text[0].lower() + text[1:])
             await asyncio.wait_for(bot.send_message(uid, message, reply_markup=markup, disable_notification=True), timeout=5)
@@ -385,13 +389,18 @@ async def remind(bot):
             current = await notice_current(claim)
             if current is None:
                 continue
-            keep = [[Button(text='Без изменений', callback_data=f'off:keep:{claim["roster_id"]}')]]
-            markup = Markup(inline_keyboard=keep) if days_off.chat_enabled() else days_off.app_markup(claim['user_id'], keep)
             sent = await asyncio.wait_for(_widget(bot, claim, current), timeout=5)
             if sent is None:
+                roster_id, uid = claim['roster_id'], claim['user_id']
+                keep = [[Button(text='Без изменений', callback_data=f'off:keep:{roster_id}')]]
+                if days_off.chat_enabled():
+                    markup = Markup(inline_keyboard=keep)
+                else:
+                    first, last = map(date.fromisoformat, (current['start_date'], current['end_date']))
+                    markup = _period_markup(uid, roster_id, first, last, keep)
                 text = reminder_text(current)
-                text = friend_text(claim['user_id'], text, 'Приятель, ' + text[0].lower() + text[1:])
-                await asyncio.wait_for(bot.send_message(claim['user_id'], text,
+                text = friend_text(uid, text, 'Приятель, ' + text[0].lower() + text[1:])
+                await asyncio.wait_for(bot.send_message(uid, text,
                                                        reply_markup=markup, disable_notification=True), timeout=5)
             count += 1
             import research

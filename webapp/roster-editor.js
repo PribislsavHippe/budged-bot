@@ -95,7 +95,7 @@
     const holidayEditor=window.HolidayRoster?.attach(root,normalEditor,api,()=>list(cur?.id));
     holidayEntry.onclick=async()=>{
       if(busy||!(await flush()))return;
-      holidayEditor?.open(placeId,periods);
+      holidayEditor?.open(placeId);
     };
 
     // ─── список периодов ───

@@ -35,16 +35,19 @@ class HolidayInvitation(unittest.IsolatedAsyncioTestCase):
         ]
         recipients = [{11: 'both', 22: 'december'}, {11: 'both', 33: 'january'}]
         bot = SimpleNamespace(send_message=AsyncMock())
-        db_results = [[*rows], ['claimed'], [], ['claimed'], [], ['claimed'], [], [*rows], [], [], []]
+        db_results = [['claimed'], [], ['claimed'], [], ['claimed'], [], [], [], []]
         with patch('admin.is_admin', return_value=True), patch('identity_chat.enabled', return_value=True), \
                 patch('roles.places', AsyncMock(return_value=[{'id': 'r', 'name': 'Итальянская'}])), \
                 patch('roster_api.off_recipients', AsyncMock(side_effect=recipients * 2)), patch('research.track'), \
+                patch('holiday_offs.prepare_periods', AsyncMock(return_value=rows)) as prepare, \
                 patch.dict(os.environ, {'WEBHOOK_HOST': 'https://bot.example'}), \
                 patch('holiday_offs.datetime', wraps=datetime) as clock, \
                 patch('db._execute', AsyncMock(side_effect=[SimpleNamespace(data=data) for data in db_results])):
             clock.now.return_value = datetime(2026, 11, 25, 16, tzinfo=holiday_offs.MSK)
             self.assertIn('3 из 3', await holiday_offs.launch(bot, 7))
             self.assertIn('Повторно не отправлял: 3.', await holiday_offs.launch(bot, 7))
+        self.assertEqual(prepare.await_count, 2)
+        prepare.assert_awaited_with('r', 7)
         self.assertEqual([call.args[0] for call in bot.send_message.await_args_list], [11, 22, 33])
         for call in bot.send_message.await_args_list:
             self.assertIn('с 16 декабря по 15 января', call.args[1])
