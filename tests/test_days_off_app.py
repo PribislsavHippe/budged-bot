@@ -4,7 +4,7 @@ import json
 import os
 import sys
 import unittest
-from datetime import date
+from datetime import date, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -14,6 +14,7 @@ patch('supabase.create_client').start()
 
 import days_off_app  # noqa: E402
 import days_off_widget  # noqa: E402
+import holiday_offs  # noqa: E402
 
 
 class Request(dict):
@@ -23,6 +24,41 @@ class Request(dict):
 
     async def json(self):
         return self.body
+
+
+class HolidayInvitation(unittest.IsolatedAsyncioTestCase):
+    async def test_one_message_per_staff_member_with_both_periods(self):
+        rows = [
+            {'id': str(uuid4()), 'start_date': start, 'end_date': end, 'draft': {'people': []},
+             'collect_wishes_at': None}
+            for start, end in holiday_offs.PERIODS
+        ]
+        recipients = [{11: 'both', 22: 'december'}, {11: 'both', 33: 'january'}]
+        bot = SimpleNamespace(send_message=AsyncMock())
+        db_results = [[*rows], ['claimed'], [], ['claimed'], [], ['claimed'], [], [*rows], [], [], []]
+        with patch('admin.is_admin', return_value=True), patch('identity_chat.enabled', return_value=True), \
+                patch('roles.places', AsyncMock(return_value=[{'id': 'r', 'name': 'Итальянская'}])), \
+                patch('roster_api.off_recipients', AsyncMock(side_effect=recipients * 2)), patch('research.track'), \
+                patch.dict(os.environ, {'WEBHOOK_HOST': 'https://bot.example'}), \
+                patch('holiday_offs.datetime', wraps=datetime) as clock, \
+                patch('db._execute', AsyncMock(side_effect=[SimpleNamespace(data=data) for data in db_results])):
+            clock.now.return_value = datetime(2026, 11, 25, 16, tzinfo=holiday_offs.MSK)
+            self.assertIn('3 из 3', await holiday_offs.launch(bot, 7))
+            self.assertIn('Повторно не отправлял: 3.', await holiday_offs.launch(bot, 7))
+        self.assertEqual([call.args[0] for call in bot.send_message.await_args_list], [11, 22, 33])
+        for call in bot.send_message.await_args_list:
+            self.assertIn('с 16 декабря по 15 января', call.args[1])
+            button = call.kwargs['reply_markup'].inline_keyboard[0][0]
+            self.assertEqual(button.text, 'Отметить выходные')
+            self.assertEqual(button.web_app.url,
+                             f"https://bot.example/app/days-off?roster={rows[0]['id']}&roster={rows[1]['id']}")
+
+    async def test_only_the_bot_owner_can_launch(self):
+        bot = SimpleNamespace(send_message=AsyncMock())
+        with patch('admin.is_admin', return_value=False), patch('roles.places', AsyncMock()) as places:
+            await holiday_offs.launch(bot, 7)
+        bot.send_message.assert_not_awaited()
+        places.assert_not_awaited()
 
 
 class DaysOffApp(unittest.TestCase):
@@ -146,7 +182,7 @@ class DaysOffApp(unittest.TestCase):
         self.assertEqual((uid, text), (7, 'Записал пожелания.\nНеобычные часы:\n19 декабря — с 09:05 до 17:15.'))
 
     def test_page_defines_the_widget_bridge_before_the_widget_runs(self):
-        self.assertIn("window.TelegramWidget=parent.makeWidget()<\\/script>'+s.html", days_off_app.PAGE)
+        self.assertIn("window.TelegramWidget=window.frameElement.makeWidget()<\\/script>'+s.html", days_off_app.PAGE)
         self.assertNotIn('</script>\'+', days_off_app.PAGE)
 
     def test_link_in_the_mini_app_is_not_inside_the_hidden_month_summary(self):

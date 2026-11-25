@@ -81,7 +81,8 @@ function day(i){var d=new Date(at(S.s).getTime()+i*864e5);return d.getUTCDate()+
 function draw(){
  if(!S.s){$('t').textContent='График';return}
  var a=at(S.s),z=at(S.e),f=at(S.f||S.s),n=Math.round((z-a)/864e5)+1,h='';
- $('t').textContent='График на '+a.getUTCDate()+(a.getUTCMonth()==z.getUTCMonth()?'':' '+M[a.getUTCMonth()])+'–'+z.getUTCDate()+' '+M[z.getUTCMonth()];
+ $('t').textContent=a.getUTCMonth()==z.getUTCMonth()?'График на '+a.getUTCDate()+'–'+z.getUTCDate()+' '+M[z.getUTCMonth()]:
+  'График с '+a.getUTCDate()+' '+M[a.getUTCMonth()]+' по '+z.getUTCDate()+' '+M[z.getUTCMonth()];
  ['пн','вт','ср','чт','пт','сб','вс'].forEach(function(w){h+='<div class="w">'+w+'</div>'});
  for(var k=(a.getUTCDay()+6)%7;k>0;k--)h+='<div></div>';
  for(var i=0;i<n;i++){var d=new Date(a.getTime()+i*864e5),bit=1<<i,past=d<f,c=R&bit?'r':P&bit?'p':H[i]?'h':'';
@@ -94,7 +95,8 @@ function draw(){
  $('m').textContent=S.ok?'Записал '+S.ok+'.':''}
 function tap(i){var bit=1<<i;S.ok=null;
  if(R&bit){R&=~bit;P|=bit}
- else if(P&bit){P&=~bit;if(H[i]||keys().length<MAXH){H[i]=H[i]||L.slice();K=i}else{draw();$('m').textContent='Часы можно указать не больше чем на '+MAXH+' дней.';return}}
+ else if(P&bit){var samePeriod=keys().filter(function(index){return !S.split||(index<S.split)===(i<S.split)});
+  P&=~bit;if(H[i]||samePeriod.length<MAXH){H[i]=H[i]||L.slice();K=i}else{draw();$('m').textContent='Часы можно указать не больше чем на '+MAXH+' дней.';return}}
  else if(H[i]){if(K==i){delete H[i];K=-1}else K=i}
  else R|=bit;
  if(!H[i])K=-1;draw()}

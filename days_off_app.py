@@ -38,31 +38,101 @@ iframe{border:0;width:100%;display:block;min-height:320px;background:transparent
  var tg=window.Telegram&&Telegram.WebApp; if(tg){tg.ready();tg.expand();
   if(tg.BackButton){tg.BackButton.show();tg.BackButton.onClick(function(){history.length>1?history.back():location.href='/app'})}}
  var init=tg&&tg.initData||'';
- var roster=new URLSearchParams(location.search).get('roster');
- function post(path,body){body.initData=init;if(roster!==null)body.roster=roster;return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},
-  body:JSON.stringify(body)}).then(function(r){return r.json().then(function(j){if(!r.ok)throw j;return j})})}
- function show(text){document.getElementById('cap').textContent=text}
- post('/api/days_off/state',{}).then(function(s){
-  document.getElementById('cap').hidden=true;var n=document.getElementById('note');if(s.note){n.textContent=s.note;n.hidden=false}
+ var rosters=Array.from(new Set(new URLSearchParams(location.search).getAll('roster')));
+ if(!rosters.length)rosters=[null];
+ function post(path,body,roster){body.initData=init;if(roster!==null)body.roster=roster;return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},
+  body:JSON.stringify(body)}).then(function(r){return r.json().then(function(j){if(!r.ok)throw {status:r.status,error:j.error};return j})})}
+ var cap=document.getElementById('cap'),loadError='Не получилось открыть календарь. Открой приложение заново через бота.';
+ if(rosters.length>2){cap.textContent=loadError;return}
+ function nonce(){return Date.now()+'-'+Math.random().toString(36).slice(2)}
+ function save(roster,data,key){return post('/api/days_off/save',{data:data,nonce:key},roster)}
+ function dayNumber(day){return Date.parse(day+'T00:00:00Z')/86400000}
+ function joinedPeriod(items){
+  var parts=items.map(function(item){return {roster:item.roster,state:JSON.parse(item.data.chat_data)}});
+  parts.sort(function(a,b){return a.state.s.localeCompare(b.state.s)});
+  var first=parts[0].state,last=parts[1].state,split=dayNumber(last.s)-dayNumber(first.s);
+  var size=dayNumber(last.e)-dayNumber(first.s)+1;
+  if(split<1||dayNumber(first.e)+1!==dayNumber(last.s)||size>31)return null;
+  function merge(){
+   var combined={...first,e:last.e,f:last.f>last.s?last.f:first.f,split:split};
+   ['r','p'].forEach(function(key){
+    combined[key]=(parseInt(first[key],36)|(parseInt(last[key],36)<<split)).toString(36);
+   });
+   combined.h=(first.h||'')+(last.h||'').replace(/(.)(..)/g,function(_,day,hours){
+    return (parseInt(day,36)+split).toString(36)+hours;
+   });
+   combined.ok=first.ok&&last.ok?last.ok:null;
+   return JSON.stringify(combined);
+  }
+  var previous=[];
+  async function saveBoth(query){
+   var fields=query.split(':'),none=fields[0]==='n';
+   var results=await Promise.all(parts.map(async function(part,i){
+    var offset=i?split:0,length=i?size-split:split,mask=(1<<length)-1;
+    var id=part.state.id.slice(0,8),data='n:'+id;
+    if(!none){
+     var required=((parseInt(fields[2],36)>>>offset)&mask).toString(36);
+     var desired=((parseInt(fields[3],36)>>>offset)&mask).toString(36);
+     var hours=(fields[4]||'').replace(/(.)(..)/g,function(_,day,span){
+      var index=parseInt(day,36)-offset;
+      return index>=0&&index<length?index.toString(36)+span:'';
+     });
+     data='o:'+id+':'+required+':'+desired+(hours?':'+hours:'');
+    }
+    var entry=previous[i];
+    if(!entry||entry.data!==data)entry=previous[i]={data:data,key:nonce()};
+    if(entry.result)return entry.result;
+    var result=await save(part.roster,data,entry.key).catch(function(error){return {result:error?.error}});
+    if(result.result==='ok'&&result.chat_data){entry.result=result}
+    return result;
+   }));
+   var failed=results.findIndex(function(result){return result.result!=='ok'||!result.chat_data});
+   if(failed!==-1){
+    var detail=results[failed].result||'Не получилось записать. Нажми ещё раз.';
+    return {result:items.find(function(item){return item.roster===parts[failed].roster}).data.caption+' '+detail};
+   }
+   Object.assign(first,JSON.parse(results[0].chat_data));
+   Object.assign(last,JSON.parse(results[1].chat_data));
+   previous=[];
+   return {result:'ok',chat_data:merge()};
+  }
+  return {data:{chat_data:merge(),html:items[0].data.html},save:saveBoth};
+ }
+ function render(s,saveSelection){
+  var n=document.getElementById('note');if(s.note){n.textContent=s.note;n.hidden=false}
   var listeners=[],pending=false;
-  window.makeWidget=function(){return {chatData:s.chat_data,ready:function(){},
+  var frame=document.createElement('iframe');frame.title=s.caption||'Календарь выходных';
+  frame.makeWidget=function(){return {chatData:s.chat_data,ready:function(){},
    onEvent:function(name,cb){if(name==='chatDataChanged')listeners.push(cb)},
    request:function(q){
     if(s.demo)return Promise.resolve({result:'Это пример — ничего не записал.'});
     if(pending)return pending;
-    pending=post('/api/days_off/save',{data:q,nonce:Date.now()+'-'+Math.random().toString(36).slice(2)}).then(function(a){
+    pending=saveSelection(q).then(function(a){
      if(a.chat_data){s.chat_data=a.chat_data;frame.contentWindow.TelegramWidget.chatData=a.chat_data;
       listeners.forEach(function(cb){cb()})}
      if(tg&&tg.HapticFeedback)tg.HapticFeedback.notificationOccurred(a.result==='ok'?'success':'error');
      return {result:a.result}},function(e){return {result:(e&&e.error)||'Не получилось записать. Нажми ещё раз.'}})
      .finally(function(){pending=false});return pending}}};
-  var frame=document.createElement('iframe');frame.title='Календарь выходных';
   frame.srcdoc='<!doctype html><meta charset="utf-8"><body style="margin:0;background:transparent">'+
-   '<script>window.TelegramWidget=parent.makeWidget()<\\/script>'+s.html;
-  frame.onload=function(){var d=frame.contentDocument;function fit(){frame.style.height=d.documentElement.scrollHeight+'px'}
+   '<script>window.TelegramWidget=window.frameElement.makeWidget()<\\/script>'+s.html;
+  frame.onload=function(){var d=frame.contentDocument;function fit(){frame.style.height=Math.ceil(d.body.getBoundingClientRect().height)+'px'}
    fit();if(window.ResizeObserver)new ResizeObserver(fit).observe(d.body)};
   document.getElementById('box').appendChild(frame);
- },function(e){show((e&&e.error)||'Не получилось открыть календарь. Открой приложение заново через бота.')});
+ }
+ Promise.allSettled(rosters.map(function(roster){return post('/api/days_off/state',{},roster)})).then(function(results){
+  var items=results.flatMap(function(result,i){return result.status==='fulfilled'?[{data:result.value,roster:rosters[i]}]:[]});
+  var failed=results.find(function(result){return result.status==='rejected'&&(!items.length||result.reason?.status!==404)});
+  if(failed){cap.textContent=failed.reason?.error||loadError;return}
+  if(items.length===2){
+   var joined=joinedPeriod(items);
+   if(!joined){cap.textContent=loadError;return}
+   render(joined.data,joined.save);
+  }else{
+   var item=items[0];
+   render(item.data,function(data){return save(item.roster,data,nonce())});
+  }
+  cap.hidden=true;
+ });
 })();
 </script></body></html>'''
 
