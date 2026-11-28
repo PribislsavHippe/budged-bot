@@ -28,21 +28,34 @@
         <button type="button" class="btn" data-create hidden>Подготовить график</button>
       </div></div>
       <p class="re-error" role="alert"></p><p role="status" data-status hidden></p>
+      <section class="re-day" hidden>
+        <h4 class="re-sub" data-day-label></h4>
+        <div class="re-fields"><label>Людей<input type="number" min="0" max="60" data-day-count></label></div>
+        <label class="re-check-row"><input type="checkbox" data-approve-count> Утвердить число людей в смене</label>
+      </section>
       <section class="sg-sheet" hidden><div class="sg-scroll"><table></table></div></section>`;
     root.appendChild(view);
     const q = selector => view.querySelector(selector);
     const sheet = q('.sg-sheet'), grid = q('table'), scroller = grid.parentElement;
     const build = q('[data-build]'), create = q('[data-create]'), back = q('[data-back]');
+    const daySettings = q('.re-day'), dayCount = q('[data-day-count]');
+    const approval = q('[data-approve-count]');
     const sc = G.scroller(grid,scroller,{sheet});
     const error = text => {q('.re-error').textContent = text || '';};
     const status = text => {q('[data-status]').textContent = text || '';q('[data-status]').hidden = !text;};
-    let generation = 0, placeId, rows = [], people = [], busy = false, editing = null;
+    let generation = 0, placeId, rows = [], people = [], busy = false, editing = null, selectedDay = null;
 
     const knownPeriod = (range, list) => list.find(p => p.start === range.start && p.end === range.end);
     const partFor = day => rows[day <= ranges[0].end ? 0 : 1];
+    const settingsFor = day => partFor(day)?.draft.draft.days?.[day];
+    const approvedCount = day => settingsFor(day)?.approved_count;
+    const need = day => {
+      const row = partFor(day);
+      if (row) return G.staffingNeed(day,settingsFor(day),row.draft.holidays);
+    };
     const sameView = current => generation === current && !view.hidden;
     function controls() {
-      build.disabled = create.disabled = back.disabled = busy;
+      build.disabled = create.disabled = back.disabled = dayCount.disabled = approval.disabled = busy;
     }
     function close() {
       generation++;
@@ -80,8 +93,8 @@
       const active = generation;
       normal.hidden = true;
       view.hidden = false;
-      sheet.hidden = build.hidden = create.hidden = true;
-      rows = [];people = [];editing = null;placeId = restaurantId;
+      sheet.hidden = build.hidden = create.hidden = daySettings.hidden = true;
+      rows = [];people = [];editing = selectedDay = null;placeId = restaurantId;
       busy = true;controls();error('');status('Загружаю график…');
       try {
         const {periods} = await api('list',{restaurant_id:restaurantId,holiday:true});
@@ -119,7 +132,7 @@
       const events = Object.assign({}, ...rows.filter(Boolean).map(row => row.draft.draft.events));
       const holidays = Object.assign({}, ...rows.filter(Boolean).map(row => row.draft.holidays));
       const left = scroller.scrollLeft;
-      grid.innerHTML = G.table({days,people,events,holidays,counts:true,weekGap:false,scrolls:true,
+      grid.innerHTML = G.table({days,people,events,holidays,counts:true,weekGap:false,scrolls:true,need,approvedCount,editDay:true,
         editCell:(person,day) => !!person.parts[indexOf(day)],
         totals:[
           {label:'Ответили без обязательного выходного',value:day => count(day,p => p.answered && !p.required.includes(day))},
@@ -129,6 +142,7 @@
       build.hidden = !rows.every(Boolean);
       create.hidden = rows.every(Boolean);
       if (!sheet.hidden) {sc.size();scroller.scrollLeft = left;}
+      if (selectedDay) showDaySettings();
     }
 
     create.onclick = async () => {
@@ -200,9 +214,58 @@
       input.addEventListener('blur',commit);
       editing = input;cell.replaceChildren(input);input.focus();input.select();
     }
-    grid.addEventListener('click',event => edit(event.target.closest('td.sg-c')));
+    function selectDay(day) {
+      if (busy || editing || !partFor(day)) return;
+      selectedDay = day;
+      q('[data-day-label]').textContent = G.dayName(day);
+      daySettings.hidden = false;
+      showDaySettings();
+      dayCount.focus();
+    }
+    function showDaySettings() {
+      dayCount.value = need(selectedDay) ?? '';
+      approval.checked = approvedCount(selectedDay) != null;
+    }
+    async function saveDaySettings(settings) {
+      const day = selectedDay, row = partFor(day);
+      if (busy || !day || !row) return;
+      const {id,revision,draft} = row.draft;
+      const days = {...draft.days};
+      if (Object.keys(settings).length) days[day] = settings;else delete days[day];
+      const active = generation;
+      busy = true;controls();error('');status('Сохраняю…');
+      try {
+        const updated = await api('save',{id,revision,draft:{...draft,days}});
+        row.draft = {...row.draft,...updated};
+        if (sameView(active)) {draw();status('Сохранено.');}
+      } catch (err) {
+        if (sameView(active)) {showDaySettings();error(err.message);status('');}
+      } finally {
+        if (sameView(active)) {busy = false;controls();}
+      }
+    }
+    dayCount.onchange = () => {
+      if (!dayCount.checkValidity()) {dayCount.reportValidity();return;}
+      const settings = {...settingsFor(selectedDay)};
+      if (dayCount.value === '') delete settings.count;else settings.count = dayCount.valueAsNumber;
+      delete settings.approved_count;
+      return saveDaySettings(settings);
+    };
+    approval.onchange = () => {
+      const settings = {...settingsFor(selectedDay)};
+      if (approval.checked) settings.approved_count = G.onDay(people,selectedDay);else delete settings.approved_count;
+      return saveDaySettings(settings);
+    };
+    grid.addEventListener('click',event => {
+      const header = event.target.closest('th.sg-day');
+      if (header) selectDay(header.dataset.day);
+      else edit(event.target.closest('td.sg-c'));
+    });
     grid.addEventListener('keydown',event => {
       if (event.key === 'Enter' && event.target.matches('td.sg-c')) {event.preventDefault();edit(event.target);}
+      if (['Enter',' '].includes(event.key) && event.target.matches('th.sg-day')) {
+        event.preventDefault();selectDay(event.target.dataset.day);
+      }
     });
     return {open,close};
   }

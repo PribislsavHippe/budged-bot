@@ -176,7 +176,8 @@
     const holiday=day=>D().days[day]?.holiday??!!cur.holidays?.[day];
     const holidayLabels=()=>Object.fromEntries(cur.days.filter(holiday).map(d=>[d,cur.holidays?.[d]||'Праздник']));
     const money=day=>[0,5,6].includes(G.at(day).getDay())||holiday(day);
-    const need=day=>D().days[day]?.count??(money(day)?6:5);
+    const need=day=>G.staffingNeed(day,D().days[day],cur.holidays);
+    const approvedCount=day=>D().days[day]?.approved_count;
     function changed(){
       const now=JSON.stringify(D());
       if(last!==null&&last!==now){undo.push(last);if(undo.length>100)undo.shift();redo=[];}
@@ -291,7 +292,7 @@
     }
     function renderGrid(){
       const left=sc.scrollLeft;
-      grid.innerHTML=G.table({days:cur.days,people:people(),removed:gone(),counts:true,events:D().events,holidays:holidayLabels(),today:iso(new Date()),scrolls:true,edit:true,weekGap:false,need,flagged:cur.check?.days});
+      grid.innerHTML=G.table({days:cur.days,people:people(),removed:gone(),counts:true,events:D().events,holidays:holidayLabels(),today:iso(new Date()),scrolls:true,edit:true,weekGap:false,need,approvedCount});
       sizeGrid();sc.scrollLeft=left;
       if(sel)grid.querySelector(`td.sg-c[data-r="${sel.r}"][data-day="${sel.day}"]`)?.classList.add('sg-sel');
       renderReport();
@@ -325,7 +326,7 @@
           ${chosen?.id===v.id?'<button type="button" class="btn" data-edit>Править этот</button>':`<button type="button" class="btn btn-ghost" data-variant="${esc(v.id)}">Выбрать</button>`}</article></section>`;}).join('');
       list.forEach(v=>{
         const people=D().people.map(p=>({name:p.name,cells:v.cells[p.name]||{},off:D().off[p.name]||[]}));
-        box.querySelector(`[data-id="${v.id}"] table`).innerHTML=G.table({days:cur.days,people,events:D().events,holidays:holidayLabels(),weekGap:false,need});
+        box.querySelector(`[data-id="${v.id}"] table`).innerHTML=G.table({days:cur.days,people,events:D().events,holidays:holidayLabels(),weekGap:false,need,approvedCount});
       });
     }
     function pick(id){
@@ -415,6 +416,7 @@
         <div class="re-fields"><label>Людей<input type="number" min="0" max="60" data-day-field="count"${dis} value="${day?need(day):''}"></label>
         <label>Открывают<input type="number" min="0" max="10" data-day-field="openers"${dis} value="${opening}"></label>
         <label>Закрывают<input type="number" min="0" max="10" data-day-field="closers"${dis} value="${day?s.closers??3:''}"></label></div>
+        <label class="re-check-row"><input type="checkbox" data-approve-count${dis} ${s.approved_count!=null?'checked':''}> Утвердить число людей в смене</label>
         <label class="re-check-row"><input type="checkbox" data-holiday${dis} ${day&&holiday(day)?'checked':''}> Праздник</label>
         <label>Событие дня<input list="re-events" data-event maxlength="40"${dis} value="${esc(event)}" placeholder="Генуборка, собрание…"></label>
         <datalist id="re-events">${EVENTS.map(x=>`<option value="${x}">`).join('')}</datalist>`;
@@ -573,8 +575,17 @@
     }
     q('.re-day').addEventListener('change',e=>{
       const t=e.target,day=focusOf().day;if(!day)return;
+      if(t.dataset.dayField&&!t.checkValidity()){t.reportValidity();return;}
+      if('approveCount' in t.dataset)commitTyped();
       const s=D().days[day]||(D().days[day]={});
-      if(t.dataset.dayField){const n=parseInt(t.value,10);if(Number.isFinite(n)&&n>=0)s[t.dataset.dayField]=n;else delete s[t.dataset.dayField];}
+      if(t.dataset.dayField){
+        const field=t.dataset.dayField;
+        if(t.value==='')delete s[field];else s[field]=t.valueAsNumber;
+        if(field==='count')delete s.approved_count;
+      }
+      if('approveCount' in t.dataset){
+        if(t.checked)s.approved_count=G.onDay(people(),day);else delete s.approved_count;
+      }
       // Явная отметка хранится, только если она расходится с календарём России.
       if('holiday' in t.dataset){if(t.checked===!!cur.holidays?.[day])delete s.holiday;else s.holiday=t.checked;}
       if('event' in t.dataset){const v=t.value.trim();if(v)D().events[day]=v;else delete D().events[day];}

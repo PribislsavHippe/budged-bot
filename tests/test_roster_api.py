@@ -303,6 +303,25 @@ class DraftTests(unittest.TestCase):
         self.assertEqual(draft['off'], {'Аня': ['2026-11-16']})
         self.assertEqual(draft['off_auto'], {})
 
+    def test_rebuild_keeps_approved_headcount_and_reports_shortage(self):
+        day = '2026-11-17'
+        draft = self.draft(days={day: {'count': 5, 'approved_count': 6}})
+        with fast():
+            self.api.build_all(draft, START, END)
+        self.assertEqual(sum(day in row for row in draft['cells'].values()), 6)
+
+        # Only four people are available after new requests. Approval retains the target.
+        requested = {p['name']: [day] for p in draft['people'][4:]}
+        draft = self.api.normalize(draft, START, END)
+        with fast():
+            self.api.build_all(draft, START, END, requested)
+        self.assertEqual(draft['days'][day], {'count': 5, 'approved_count': 6})
+        self.assertTrue(self.api.check(draft, START, END)['days'][day])
+        self.assertIn('4 из 6', self.api.check(draft, START, END)['text'])
+
+        del draft['days'][day]['approved_count']
+        self.assertEqual(self.api.to_request(draft, START, END).count(date.fromisoformat(day)), 5)
+
     def test_requested_days_off_come_first_and_are_capped(self):
         draft = self.draft()
         draft['people'][0]['student'] = True
@@ -1023,12 +1042,11 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         made = await self.roster('create', MANAGER, restaurant_id=PLACE, start='2026-11-16', end='2026-11-22')
         self.assertEqual(made['draft']['wish_off'], {'Аня': ['2026-11-17']})
         self.assertEqual(made['draft']['off'], {})
-        # Пожелание мягкое: в плотной неделе (7 человек на 7 дней) правило о сериях смен важнее, и его можно не выполнить.
-        # Тогда оно видно в разборе и в таблице (точечная обводка), а не теряется молча.
+        # Еженедельное пожелание хранится отдельно, но автосборка оставляет этот день свободным.
         report = made['check']['text']
         self.assertIn('Пожелания: выполнено', report)
-        if all('2026-11-17' in v['cells'].get('Аня', {}) for v in made['draft']['variants']):
-            self.assertIn('Аня: выходной не получился 17 ноября', report)
+        for variant in made['draft']['variants']:
+            self.assertNotIn('2026-11-17', variant['cells'].get('Аня', {}))
         opened = await self.roster('open', MANAGER, id=made['id'])
         self.assertEqual(list(opened['wishes'].values()), [{'days': [1], 'pattern': None}])
         # «Убрать пожелание» стирает его; следующая сборка его уже не учитывает.

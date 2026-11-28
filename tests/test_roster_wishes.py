@@ -69,8 +69,10 @@ class WishParsing(unittest.TestCase):
                                  counts={START + timedelta(days=i):1 for i in range(4)},
                                  wish_dates={'Аня': {START}}, wish_patterns={'Аня':'2/2'})
         shifts = roster.as_schedule(request, roster.build(request, iterations=100, restarts=1))
-        self.assertEqual(len(shifts['Аня']), 4)
-        self.assertEqual(roster.audit(request, shifts).missed_off, [('Аня', START)])
+        self.assertEqual(len(shifts['Аня']), 3)
+        found = roster.audit(request, shifts)
+        self.assertEqual(found.missed_off, [])
+        self.assertEqual(found.shortages, [(START, 0, 1, [])])
 
 
 class WishFlow(unittest.IsolatedAsyncioTestCase):

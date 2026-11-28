@@ -1,10 +1,10 @@
 """Прототип: сборка графика официантов и разбор его слабых мест. Только правила, без нейросети.
 
 Правила владельца (2 ноября 2026): смена 12 часов, ресторан закрывается в 23;
-в будни 5 человек, в выходные 6, число можно менять на дату, и его нужно набрать всегда;
+в будни 5 человек, в выходные 6, число можно менять на дату;
 в закрытии всегда 3 (приход с 11 и позже); в пт–вс открывают двое, в будни один;
-обязательных выходных до 3 на 15 дней, у студентов больше; из обязательного выходного
-выходят, только если иначе не набрать людей; в смены подряд приход не раньше, чем накануне;
+запрошенные выходные при автосборке сохраняются даже при недоборе людей;
+в смены подряд приход не раньше, чем накануне;
 денежные дни поровну. Уточнение 12 ноября: стремимся к двум сменам и двум выходным
 подряд. Три и более смен подряд допустимы, если иначе график не сходится. Число
 смен распределяем примерно поровну с учётом доступных дней каждого сотрудника.
@@ -42,9 +42,6 @@ MAX_DAYS = 62
 MAX_PEOPLE = 60
 
 # Веса подобраны так, чтобы нарушение правила владельца всегда стоило дороже любой неравномерности.
-RECALL_COST = 5000.0
-RECALL_PROTECTED_COST = 20000.0
-RECALL_SPREAD_COST = 400.0
 RISE_COST = 1000.0
 STREAK_COST = 320.0
 LONELY_COST = 10.0
@@ -52,7 +49,6 @@ SHIFT_COST = 150.0
 RHYTHM_COST = 40.0
 MONEY_COST = 60.0
 HOUR_COST = 0.4
-WISH_OFF_COST = 200.0
 WISH_START_COST = 30.0
 REFUSAL_COST = 8.0
 # Открытия и закрытия делятся между всеми: никто не открывает и не закрывает всегда (решение владельца 16.11.2026).
@@ -79,7 +75,7 @@ class Request:
     days_off: dict[str, set[date]] = field(default_factory=dict)
     counts: dict[date, int] = field(default_factory=dict)
     holidays: set[date] = field(default_factory=set)
-    # Пожелания: выполняются по возможности, правила и обязательные выходные важнее.
+    # Пожелания о выходных защищены при автосборке. Часы прихода остаются предпочтением.
     wish_off: dict[str, set[date]] = field(default_factory=dict)
     wish_starts: dict[str, set[int]] = field(default_factory=dict)
     # У студентов обязательных выходных может быть больше нормы из-за учёбы.
@@ -107,6 +103,9 @@ class Request:
 
     def is_off(self, person, day):
         return day in self.days_off.get(person, ())
+
+    def has_day_off(self, person, day):
+        return self.is_off(person, day) or day in self.wish_off.get(person, ()) or day in self.wish_dates.get(person, ())
 
     def is_present(self, person):
         """Кто выходной весь период, тот в отпуске: его не вызывают."""
@@ -177,13 +176,6 @@ def day_slots(day, count, holiday=False, closing=CLOSERS, opening=None):
 
 # ─── сборка ──────────────────────────────────────────────────────────────────
 
-def _recall_price(request, name):
-    """Студентов вызывают с обязательного выходного в последнюю очередь. Нормы выходных больше нет
-    (решение владельца 16.11.2026), поэтому «больше нормы» не защищает."""
-    protected = name in request.students
-    return RECALL_PROTECTED_COST if protected else RECALL_COST
-
-
 def pattern_masks(pattern, size, history=''):
     """All cycle phases, scored against the end of the preceding published period."""
     if not pattern:
@@ -204,13 +196,13 @@ def pattern_misses(mask, patterns):
     return min(((mask ^ desired).bit_count() + prior for desired, prior in patterns), default=0)
 
 
-def _person_cost(row, money, target, wish_off, wish_starts, off, recall_price, w=None, patterns=(), time_rules=(),
+def _person_cost(row, money, target, wish_starts, off, w=None, patterns=(), time_rules=(),
                  rhythm=(), prior_streak=0, opens_at=(), prior_rest=0, worked_before=False):
     """Штраф одного человека. row — приход по дням или None. w — веса целей (1 по умолчанию)."""
     w = w or {}
     streak_c, lonely_c, rise_c = STREAK_COST * w.get('streak', 1), LONELY_COST * w.get('lonely', 1), RISE_COST * w.get('rise', 1)
     shift_c, money_c, hour_c = SHIFT_COST * w.get('shift', 1), MONEY_COST * w.get('money', 1), HOUR_COST * w.get('hour', 1)
-    cost = shifts = paid = hours = refused = recalled = opens = closes = 0
+    cost = shifts = paid = hours = refused = opens = closes = 0
     streak = prior_streak
     rest_c = REST_COST * w.get('rest', 1)
     lone_c = LONE_REST_COST * w.get('lone_rest', 1)
@@ -225,7 +217,7 @@ def _person_cost(row, money, target, wish_off, wish_starts, off, recall_price, w
     for index, shift in enumerate(row):
         if shift is None:
             rest += 1
-            excused += bool(off[index] or wish_off[index])
+            excused += bool(off[index])
             if streak > MAX_STREAK:
                 cost += streak_c * (streak - MAX_STREAK) ** 2
             elif streak == 1:
@@ -252,11 +244,6 @@ def _person_cost(row, money, target, wish_off, wish_starts, off, recall_price, w
             closes += start >= LAST_CLOSER_START and end >= CLOSE_HOUR
         if money[index]:
             paid += 1
-        if off[index]:
-            recalled += 1
-        if wish_off[index]:
-            cost += WISH_OFF_COST
-            refused += 1
         rule = time_rules[index] if time_rules else None
         if (rule.misses(start, end) if rule and rule.preferred_start is not None
             else wish_starts and start not in wish_starts):
@@ -267,7 +254,6 @@ def _person_cost(row, money, target, wish_off, wish_starts, off, recall_price, w
     elif streak == 1:
         cost += lonely_c
     cost += rest_penalty()
-    cost += recall_price * recalled + RECALL_SPREAD_COST * recalled * recalled
     if rhythm:
         cost += RHYTHM_COST * pattern_misses(worked, rhythm)
     if patterns:
@@ -310,26 +296,24 @@ def _search(request, iterations, seed):
     people = request.people
     money = [request.is_money(day) for day in days]
     rules = [[request.time_rules.get(name, {}).get(day) for day in days] for name in people]
-    present = [p for p, name in enumerate(people) if request.is_present(name)]
-    available, pool, slots, realized, coverage = [], [], [], [], []
+    off = [[request.has_day_off(name, day) for day in days] for name in people]
+    pool, slots, realized, coverage = [], [], [], []
     for d, day in enumerate(days):
         opener = open_hour(day, day in request.holidays)
-        candidates = [p for p in present if not rules[p][d] or rules[p][d].latest > max(opener, rules[p][d].earliest)]
-        free = [p for p in candidates if not request.is_off(people[p], day)]
-        available.append(free)
-        # Число людей обязательно: если свободных мало, выходят из обязательного выходного.
-        pool.append(free if len(free) >= request.count(day) else candidates)
+        free = [p for p in range(len(people)) if not off[p][d]
+                and (not rules[p][d] or rules[p][d].latest > max(opener, rules[p][d].earliest))]
+        pool.append(free)
         full = day_slots(day, request.count(day), day in request.holidays, request.closing(day), request.opening(day))
-        slots.append(full[:len(pool[d])])
+        slots.append(full[:len(free)])
         realized.append({p: {h: rules[p][d].shift(h, opener, LAST_CLOSER_START, end_of) for h in set(slots[d])}
-                         for p in candidates if rules[p][d]})
+                         for p in free if rules[p][d]})
         coverage.append((opener, request.opening(day), request.closing(day)) if realized[d] else None)
 
     total_shifts = sum(len(s) for s in slots)
     total_money = sum(len(s) for d, s in enumerate(slots) if money[d])
     total_hours = sum(shift_hours(h) for s in slots for h in s)
-    free_days = [sum(p in available[d] for d in range(len(days))) for p in range(len(people))]
-    free_money = [sum(p in available[d] for d in range(len(days)) if money[d]) for p in range(len(people))]
+    free_days = [sum(p in pool[d] for d in range(len(days))) for p in range(len(people))]
+    free_money = [sum(p in pool[d] for d in range(len(days)) if money[d]) for p in range(len(people))]
     shift_share = _fair_shares(total_shifts, free_days)
     money_share = _fair_shares(total_money, free_money)
     hours_per_shift = total_hours / total_shifts if total_shifts else 0
@@ -340,11 +324,7 @@ def _search(request, iterations, seed):
     targets = [(shift_share[p], money_share[p], shift_share[p] * hours_per_shift, part(p, total_opens), part(p, total_closes))
                for p in range(len(people))]
 
-    wish_off = [[day in request.wish_off.get(name, ()) or day in request.wish_dates.get(name, ())
-                 for day in days] for name in people]
     wish_starts = [request.wish_starts.get(name) or None for name in people]
-    off = [[request.is_off(name, day) for day in days] for name in people]
-    prices = [_recall_price(request, name) for name in people]
     history = [request.pattern_history.get(name, '') for name in people]
     prior_streaks = [request.prior_streak(name) for name in people]
     prior_rests = [request.prior_rest(name) for name in people]
@@ -354,7 +334,7 @@ def _search(request, iterations, seed):
                 for name, bits in zip(people, history)]
 
     def person_cost(p):
-        return _person_cost(table[p], money, targets[p], wish_off[p], wish_starts[p], off[p], prices[p],
+        return _person_cost(table[p], money, targets[p], wish_starts[p], off[p],
                             request.weights, patterns[p], rules[p] if request.time_rules else (),
                             rhythms[p], prior_streaks[p], opens_at if total_opens and total_closes else (),
                             prior_rests[p], worked_before[p])
@@ -384,18 +364,12 @@ def _search(request, iterations, seed):
         phase[p] = rank % 4 if not history[p] else min(range(4), key=lambda k: masks[k][1] if k < len(masks) else 99)
     in_rhythm = lambda p, d: (d + phase[p]) % 4 < 2
     for d in range(len(days)):
-        missing = len(slots[d]) - len(available[d])
-        if missing > 0:
-            standby = [p for p in pool[d] if off[p][d]]
-            chosen = available[d] + rng.sample(standby, missing)
-            rng.shuffle(chosen)
-        else:
-            first = [p for p in pool[d] if in_rhythm(p, d)]
-            rest = [p for p in pool[d] if not in_rhythm(p, d)]
-            rng.shuffle(first)
-            rng.shuffle(rest)
-            chosen = (first + rest)[:len(slots[d])]
-            rng.shuffle(chosen)
+        first = [p for p in pool[d] if in_rhythm(p, d)]
+        rest = [p for p in pool[d] if not in_rhythm(p, d)]
+        rng.shuffle(first)
+        rng.shuffle(rest)
+        chosen = (first + rest)[:len(slots[d])]
+        rng.shuffle(chosen)
         for person, start in zip(chosen, slots[d]):
             assigned[person][d] = start
             table[person][d] = actual(d, person, start)
@@ -417,10 +391,6 @@ def _search(request, iterations, seed):
         sa, sb = assigned[a][d], assigned[b][d]
         if a == b or sa == sb or a not in pool_sets[d] or b not in pool_sets[d]:
             return None
-        adds_recall = (sa is None and off[a][d] and not off[b][d]
-                       or sb is None and off[b][d] and not off[a][d])
-        if adds_recall and not coverage[d]:
-            return None
         old_a, old_b = table[a][d], table[b][d]
         table[a][d], table[b][d] = (actual(d, a, sb), actual(d, b, sa)) if realized[d] else (sb, sa)
         gap_change = 0
@@ -430,10 +400,6 @@ def _search(request, iterations, seed):
             na, nb = role_delta(d, table[a][d]), role_delta(d, table[b][d])
             next_counts = tuple(c - a - b + x + y for c, a, b, x, y in zip(counts[d], oa, ob, na, nb))
             gap_change = gap(d, next_counts) - gap(d, counts[d])
-            # Лишний вызов с выходного допустим только ради открытия или закрытия.
-            if adds_recall and gap_change >= 0:
-                table[a][d], table[b][d] = old_a, old_b
-                return None
         return d, a, b, sa, sb, old_a, old_b, next_counts, gap_change
 
     def undo(move):
@@ -632,7 +598,7 @@ def audit(request, schedule):
         opening = sum(start_of(s) == open_hour(day, holiday) for s in shifts)
         if opening != request.opening(day):
             result.openers.append((day, opening, request.opening(day)))
-        if len(request.people) - len(off) - len(working) <= 0:
+        if not any(name not in working and not request.has_day_off(name, day) for name in request.people):
             result.no_reserve.append(day)
     for name in request.people:
         own = schedule.get(name, {})
@@ -743,12 +709,6 @@ def report(request, schedule, findings=None, *, editor=False):
         by_start = {}
         for name, day, start in found.missed_starts:
             by_start.setdefault(name, []).append((day, start))
-        for day in request.days:
-            asking = [n for n in request.people if day in (request.wish_off.get(n, set()) | request.wish_dates.get(n, set())) and not request.is_off(n, day)]
-            free = sum(not request.is_off(n, day) for n in request.people)
-            spare = max(0, free - request.count(day))
-            if len(asking) > spare:
-                lines.append(f'• {_day(day)}: выходной просят {len(asking)}, отпустить можно только {spare}.')
         for name, shifts in by_start.items():
             lines.append(f'• {name}: не тот приход в {len(shifts)} из {found.people[name]["shifts"]} смен: '
                          + ', '.join(f'{day.day}.{day.month:02d} в {start}' for day, start in shifts) + '.')

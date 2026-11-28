@@ -29,4 +29,9 @@ assert.match(marked,/<span class="sg-s wish" title="Желательный вы�
 assert.ok(!/sg-s off">вых<\/span>[^<]*<span class="sg-s wish/.test(marked),'mandatory day off wins over a wish');
 assert.deepEqual([...marked.matchAll(/<small class="sg-cnt"[^>]*>([^<]+)<\/small>/g)].map(m=>m[1]),['смен','1','0'],'shift counts per person');
 assert.ok(!G.table({days,people:[{name:'Аня',cells:{}}]}).includes('sg-cnt'),'team view has no counter');
+const staffing=G.table({days,people:[{name:'Аня',cells:{[days[0]]:'9',[days[1]]:'9'}}],
+  need:day=>day===days[0]?1:2,approvedCount:day=>day===days[0]?1:2});
+assert.match(staffing,/class="sg-approved" title="Утверждено: 1"><b>1<\/b>/);
+assert.match(staffing,/class="sg-bad" title="Утверждено: 2"><b>1<\/b>/);
+assert.equal(G.staffingNeed(days[0],{count:5,approved_count:0},{}),0);
 console.log('Roster grid UI checks passed: greyed row in place, not editable, not counted, escaped; wished days marked; shift counts.');

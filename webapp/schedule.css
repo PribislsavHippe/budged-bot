@@ -59,6 +59,7 @@
 .sg tfoot td b{font-weight:600}
 .sg tfoot td.sg-ok b{font-weight:400;color:var(--sg-muted)}
 .sg tfoot td.sg-bad b{color:var(--sg-off-ink)}
+.sg tfoot td.sg-approved b{color:#18733d}
 .sg :focus-visible{outline:2px solid var(--sg-ink);outline-offset:2px}
 .sg-legend{display:flex;flex-wrap:wrap;gap:10px 18px;color:var(--sg-muted);font-size:13px;align-items:center;margin-top:14px}
 .sg-legend .sg-s{min-width:34px;height:24px;font-size:11px;border-radius:6px}

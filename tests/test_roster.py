@@ -149,16 +149,17 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(found.streaks, [(NAMES[0], START - timedelta(days=2), 3)])
         self.assertEqual(roster.audit(request, {}).streaks, [])
 
-    def test_avoiding_long_streak_does_not_cause_extra_recalls(self):
+    def test_all_variants_keep_days_off_when_short_of_people(self):
         days = [START + timedelta(days=i) for i in range(13)]
         names = NAMES[:3]
-        counts = {day: 2 if day == days[6] else 1 for day in days}
+        short_day = days[6]
+        counts = {day: 2 if day == short_day else 1 for day in days}
         request = roster.Request(START, days[-1], names, days_off={name: set(days[1:-1]) for name in names[1:]},
                                  counts=counts, openers=dict.fromkeys(days, 0), closers=counts)
         for variant in roster.build_variants(request, iterations=10000, restarts=1):
             found = roster.audit(request, variant['schedule'])
-            self.assertEqual(found.shortages, [])
-            self.assertEqual(len(found.forced), 1)
+            self.assertEqual([item[:3] for item in found.shortages], [(short_day, 1, 2)])
+            self.assertEqual(found.forced, [])
 
     def test_same_input_gives_the_same_schedule(self):
         request = fortnight({NAMES[0]: [0, 1]})
@@ -174,15 +175,14 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(sum(h >= 11 for h in working), 3)
         self.assertIn(day, [d for d in request.days if request.is_money(d)])
 
-    def test_count_is_filled_from_days_off_with_the_fewest_people_named(self):
+    def test_shortage_is_visible_when_mandatory_days_off_prevent_filling_the_shift(self):
         request = fortnight({name: [0] for name in NAMES[4:]})
         schedule = solved(request)
         found = roster.audit(request, schedule)
-        self.assertEqual(found.shortages, [])
-        self.assertEqual(sorted(p[START] for p in schedule.values() if START in p), [9, 10, 11, 12, 14])
-        self.assertEqual(len(found.forced), 1)
-        self.assertIn(found.forced[0][0], NAMES[4:])
-        self.assertIn('вместо обязательного выходного: свободных только 4, нужно 5', roster.report(request, schedule, found))
+        self.assertEqual(found.shortages, [(START, 4, 5, NAMES[4:])])
+        self.assertEqual(sorted(p[START] for p in schedule.values() if START in p), [9, 11, 12, 14])
+        self.assertEqual(found.forced, [])
+        self.assertIn('не хватает людей, 4 из 5', roster.report(request, schedule, found))
         self.assertIn(START, found.no_reserve)
 
     def test_day_off_is_not_touched_while_free_people_are_enough(self):
@@ -190,35 +190,15 @@ class BuildTests(unittest.TestCase):
         found = roster.audit(request, solved(request))
         self.assertEqual((found.shortages, found.forced), ([], []))
 
-    def test_students_are_called_after_everyone_else(self):
-        request = fortnight({name: [0] for name in NAMES[4:]})
-        request.students = set(NAMES[4:-1])
-        found = roster.audit(request, solved(request))
-        self.assertEqual([name for name, _ in found.forced], [NAMES[-1]])
-
-    def test_students_are_called_when_nobody_else_is_left(self):
-        request = fortnight({name: [0] for name in NAMES[4:]})
-        request.students = set(NAMES[4:])
-        schedule = solved(request)
-        found = roster.audit(request, schedule)
-        self.assertEqual((len(found.forced), found.shortages), (1, []))
-        self.assertIn('(учёба): выход', roster.report(request, schedule, found))
-
-    def test_recalls_are_spread_across_people(self):
-        request = fortnight({name: [0, 7] for name in NAMES[4:]})
-        found = roster.audit(request, solved(request))
-        self.assertEqual(len(found.forced), 2)
-        self.assertNotEqual(found.forced[0][0], found.forced[1][0])
-
     def test_person_on_vacation_is_never_called(self):
         request = fortnight({NAMES[0]: list(range(14)), **{name: [0] for name in NAMES[4:]}})
         found = roster.audit(request, solved(request))
         self.assertEqual(found.people[NAMES[0]]['shifts'], 0)
-        self.assertEqual(found.shortages, [])
+        self.assertEqual([item[:3] for item in found.shortages], [(START, 3, 5)])
 
-    def test_shortage_remains_only_when_there_are_too_few_people(self):
+    def test_shortage_with_a_team_smaller_than_the_target(self):
         names = NAMES[:4]
-        request = roster.Request(START, START + timedelta(days=13), names, {names[0]: {START}})
+        request = roster.Request(START, START + timedelta(days=13), names)
         schedule = solved(request)
         working = sorted(p[START] for p in schedule.values() if START in p)
         self.assertEqual(working, [9, 11, 12, 14])
@@ -257,13 +237,15 @@ class WishTests(unittest.TestCase):
         self.assertEqual(len(refusals), len(NAMES))
         self.assertLessEqual(max(refusals.values()) - min(refusals.values()), 1)
 
-    def test_impossible_day_off_wish_is_explained(self):
+    def test_recurring_and_dated_wishes_are_kept_even_when_short_of_people(self):
         saturday = START + timedelta(days=5)
-        request = fortnight(wish_off={name: {saturday} for name in NAMES})
+        request = fortnight(wish_off={name: {saturday} for name in NAMES[:6]},
+                            wish_dates={name: {saturday} for name in NAMES[6:]})
         schedule = solved(request)
         found = roster.audit(request, schedule)
-        self.assertEqual(len(found.missed_off), roster.WEEKEND_COUNT)
-        self.assertIn('выходной просят 11, отпустить можно только 5', roster.report(request, schedule, found))
+        self.assertEqual(found.missed_off, [])
+        self.assertEqual(found.shortages, [(saturday, 0, roster.WEEKEND_COUNT, [])])
+        self.assertIn('не хватает людей, 0 из 6', roster.report(request, schedule, found))
 
     def test_many_mandatory_days_off_in_a_row_are_not_an_error(self):
         # Решение владельца 16.11.2026: лимита на обязательные выходные нет, три и больше подряд — не ошибка.

@@ -160,10 +160,11 @@ def normalize(draft, start, end):
         if not isinstance(setting, dict):
             continue
         clean = {}
-        for field, high in (('count', roster.MAX_PEOPLE), ('closers', 10), ('openers', 10)):
+        fields = {'count': (roster.MAX_PEOPLE, 'Людей в смене'), 'approved_count': (roster.MAX_PEOPLE, 'Людей в смене'),
+                  'closers': (10, 'Закрывают'), 'openers': (10, 'Открывают')}
+        for field, (high, label) in fields.items():
             if setting.get(field) is not None:
-                clean[field] = _int(setting[field], 0, high, {'count': 'Людей в смене', 'closers': 'Закрывают',
-                                                               'openers': 'Открывают'}[field])
+                clean[field] = _int(setting[field], 0, high, label)
         # Праздник: True или False — явное решение менеджера; без него берётся календарь России.
         if isinstance(setting.get('holiday'), bool):
             clean['holiday'] = setting['holiday']
@@ -301,8 +302,9 @@ def to_request(draft, start, end):
     request.students = {p['name'] for p in draft['people'] if p['student']}
     for key, setting in draft['days'].items():
         day = date.fromisoformat(key)
-        if 'count' in setting:
-            request.counts[day] = setting['count']
+        count = setting.get('approved_count', setting.get('count'))
+        if count is not None:
+            request.counts[day] = count
         if 'closers' in setting:
             request.closers[day] = setting['closers']
         if 'openers' in setting:

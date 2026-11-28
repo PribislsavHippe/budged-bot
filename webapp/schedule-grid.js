@@ -7,6 +7,8 @@
   const NAMES=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
   const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const at=iso=>new Date(iso+'T12:00:00');
+  const staffingNeed=(iso,settings,holidays)=>settings?.approved_count??settings?.count??
+    ((settings?.holiday??!!holidays?.[iso])||[0,5,6].includes(at(iso).getDay())?6:5);
   const dayName=iso=>{const d=at(iso);return `${WD[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]}`;};
   const period=(a,b)=>{const x=at(a),y=at(b);return x.getMonth()===y.getMonth()?`${x.getDate()}–${y.getDate()} ${MONTHS[y.getMonth()]}`:`${x.getDate()} ${MONTHS[x.getMonth()]} – ${y.getDate()} ${MONTHS[y.getMonth()]}`;};
   function parse(value){
@@ -72,7 +74,7 @@
     // o.counts (редактор): число смен у каждого справа в колонке имён — видно при любой прокрутке.
     html+=`<tr class="sg-hd"><th class="sg-name" scope="col">${o.corner??''}${o.counts?'<small class="sg-cnt">смен</small>':''}</th>`;
     days.forEach((iso,k)=>{const d=at(iso),rel=ti>=0?k-ti:-1;
-      html+=(gap(iso,k)?g('th'):'')+`<th scope="col" data-day="${iso}" tabindex="0" class="sg-day ${iso===o.today?'sg-today':''}" title="${o.edit?'Настройки дня':'Поставить этот день рядом с именами'}">`
+      html+=(gap(iso,k)?g('th'):'')+`<th scope="col" data-day="${iso}" tabindex="0" class="sg-day ${iso===o.today?'sg-today':''}" title="${o.edit||o.editDay?'Настройки дня':'Поставить этот день рядом с именами'}">`
         +`${o.near?(o.events?.[iso]?`<em class="ev">${esc(o.events[iso])}</em>`:`<em>${rel>=0&&rel<3?labels[rel]:runLabel[iso]?esc(runLabel[iso]):'&nbsp;'}</em>`):''}<span class="sg-wd">${WD[d.getDay()]}</span><b>${d.getDate()}</b></th>`;});
     html+=tail('th')+'</tr></thead><tbody>';
     // o.removed (только редактор): убранные из черновика стоят серыми на своих местах и не правятся,
@@ -99,10 +101,12 @@
     // Итог: число людей в смене. Когда людей столько, сколько нужно, число бледное;
     // отклонение — красное: заметно только то, что требует внимания.
     html+=`</tbody><tfoot><tr><th class="sg-name" scope="row">В смене</th>`;
-    days.forEach((iso,k)=>{const have=onDay(o.people,iso),need=o.need?.(iso);
+    days.forEach((iso,k)=>{const have=onDay(o.people,iso),need=o.need?.(iso),approved=o.approvedCount?.(iso);
       // Красное — людей меньше, чем нужно. Лишний человек или неточное открытие красным не отмечаются.
       const bad=o.flagged?.[iso]||(need!=null&&have<need);
-      html+=(gap(iso,k)?g('td'):'')+`<td class="${bad?'sg-bad':'sg-ok'}"${need!=null?` title="Нужно: ${need}"`:''}><b>${have}</b></td>`;});
+      const status=have===approved?'sg-approved':bad?'sg-bad':'sg-ok';
+      const hint=approved!=null?`Утверждено: ${approved}`:need!=null?`Нужно: ${need}`:'';
+      html+=(gap(iso,k)?g('td'):'')+`<td class="${status}"${hint?` title="${hint}"`:''}><b>${have}</b></td>`;});
     html+=tail('td')+'</tr>';
     for(const row of o.totals||[]){
       html+=`<tr class="sg-extra-total"><th class="sg-name" scope="row">${esc(row.label)}</th>`;
@@ -239,5 +243,5 @@
     return {expand,collapse,refresh:layout};
   }
 
-  window.ScheduleGrid={table,scroller,hover,landscape,parse,clock,works,esc,dayName,period,at,WD,MONTHS};
+  window.ScheduleGrid={table,scroller,hover,landscape,parse,clock,works,onDay,esc,dayName,period,at,staffingNeed,WD,MONTHS};
 })();
